@@ -1,0 +1,284 @@
+'use strict';
+
+// Static game data + spatial constants. The server is the single source of
+// truth. The client only sends intents (positions, "buy X", "engage Y"); every
+// quantity, range, yield and reward is computed here.
+
+// Combat stats are a real-time simulation: each ship has a shield pool (front
+// damage buffer), a hull pool (last resort) and a damage-per-second figure. A
+// fight lasts until one side's hull is destroyed, so the outcome is visible in
+// real time rather than a hidden coin-flip.
+//
+// `slots` is the number of fitting slots per module type a ship has. Bigger
+// ships carry more slots, so there's more to fit. A slot holds one module of
+// its type (see MODULES); the ship's effective stat is its base (scaled by
+// level and loadout) plus the flat bonus of every module fitted in that type.
+const SHIPS = {
+  rifter:    { key: 'rifter',    name: 'Rifter',    cost: 0,      mining: 6,   combat: 5,   sellValue: 0,      cargo: 60,   shield: 50,  hull: 100,  dps: 10, slots: { weapon: 1, shield: 1, armor: 0, mining: 1, cargo: 1 } },
+  falcon:    { key: 'falcon',    name: 'Falcon',    cost: 5000,   mining: 14,  combat: 12,  sellValue: 2500,   cargo: 200,  shield: 120, hull: 200,  dps: 25, slots: { weapon: 2, shield: 2, armor: 1, mining: 1, cargo: 1 } },
+  raptor:    { key: 'raptor',    name: 'Raptor',    cost: 15000,  mining: 8,   combat: 30,  sellValue: 7500,   cargo: 120,  shield: 80,  hull: 250,  dps: 40, slots: { weapon: 3, shield: 1, armor: 1, mining: 0, cargo: 1 } },
+  vexor:     { key: 'vexor',     name: 'Vexor',     cost: 20000,  mining: 30,  combat: 25,  sellValue: 10000,  cargo: 500,  shield: 150, hull: 300,  dps: 35, slots: { weapon: 2, shield: 2, armor: 1, mining: 3, cargo: 2 } },
+  gnosis:    { key: 'gnosis',    name: 'Gnosis',    cost: 75000,  mining: 70,  combat: 40,  sellValue: 37500,  cargo: 1200, shield: 300, hull: 500,  dps: 60, slots: { weapon: 2, shield: 2, armor: 2, mining: 4, cargo: 4 } },
+  manticore: { key: 'manticore', name: 'Manticore', cost: 100000, mining: 12,  combat: 80,  sellValue: 50000,  cargo: 250,  shield: 200, hull: 600,  dps: 90, slots: { weapon: 4, shield: 2, armor: 2, mining: 0, cargo: 1 } },
+  brutix:    { key: 'brutix',    name: 'Brutix',    cost: 250000, mining: 170, combat: 60,  sellValue: 125000, cargo: 3000, shield: 400, hull: 800,  dps: 70, slots: { weapon: 2, shield: 3, armor: 3, mining: 5, cargo: 5 } },
+};
+
+// Fitting modules. Each module type boosts one stat by a flat bonus. A module
+// has three tiers (I/II/III) with rising cost and bonus. Fitting a slot to a
+// tier costs that tier's price; downgrading refunds the difference, so a slot
+// can be re-fitted at any time.
+const MODULES = {
+  weapon: { key: 'weapon', name: 'Weapon',            stat: 'dps',    tiers: [ { tier: 1, cost: 1000,  bonus: 6 },   { tier: 2, cost: 4000,  bonus: 18 },  { tier: 3, cost: 12000, bonus: 45 } ] },
+  shield: { key: 'shield', name: 'Shield Extender',   stat: 'shield', tiers: [ { tier: 1, cost: 800,   bonus: 25 },  { tier: 2, cost: 3000,  bonus: 75 },  { tier: 3, cost: 9000,  bonus: 180 } ] },
+  armor:  { key: 'armor',  name: 'Armor Plate',       stat: 'hull',   tiers: [ { tier: 1, cost: 800,   bonus: 35 },  { tier: 2, cost: 3000,  bonus: 100 }, { tier: 3, cost: 9000,  bonus: 240 } ] },
+  mining: { key: 'mining', name: 'Mining Augmenter',  stat: 'mining', tiers: [ { tier: 1, cost: 600,   bonus: 4 },   { tier: 2, cost: 2500,  bonus: 12 },  { tier: 3, cost: 8000,  bonus: 35 } ] },
+  cargo:  { key: 'cargo',  name: 'Cargo Expander',    stat: 'cargo',  tiers: [ { tier: 1, cost: 500,   bonus: 60 },  { tier: 2, cost: 2000,  bonus: 160 }, { tier: 3, cost: 6000,  bonus: 450 } ] },
+};
+
+// Each asteroid holds one mineral. Mining an asteroid yields that mineral.
+const MINERALS = {
+  iron:       { key: 'iron',       name: 'Iron',       price: 5,  color: '#c9d1d9' },
+  bauxite:    { key: 'bauxite',    name: 'Bauxite',    price: 8,  color: '#e0a458' },
+  gadolinium: { key: 'gadolinium', name: 'Gadolinium', price: 15, color: '#b07ce0' },
+  megacyte:   { key: 'megacyte',   name: 'Megacyte',   price: 40, color: '#5ce0c8' },
+};
+
+// Enemy classes you can fly to and engage. Combat pays ISK; minerals come from
+// mining asteroids.
+const ENEMIES = {
+  pirate:  { key: 'pirate',  name: 'Pirate Frigate',    iskReward: 500,   shield: 40,  hull: 80,   dps: 8 },
+  gang:    { key: 'gang',    name: 'Gang Battleship',   iskReward: 2000,  shield: 120, hull: 250,  dps: 20 },
+  faction: { key: 'faction', name: 'Faction Destroyer', iskReward: 8000,  shield: 300, hull: 500,  dps: 45 },
+  dread:   { key: 'dread',   name: 'Dreadnought',       iskReward: 30000, shield: 800, hull: 1200, dps: 90 },
+};
+
+const START_ISK = 10000;
+const MAX_OFFLINE_SECONDS = 8 * 3600;
+const UPGRADE_BASE = 500;
+const UPGRADE_GROWTH = 1.5;
+const LEVEL_MULT = 1.2;
+
+// When a ship is destroyed its cargo hold is lost with it (the core EVE risk).
+// Insurance refunds a fraction of the ship's purchase cost — never the cargo.
+const INSURANCE_FRACTION = 0.5;
+
+// ---- in-fight actions (interactive combat) ----
+// During a real-time fight you can spend ISK to change the odds, or disengage
+// to bail out and keep the ship (no reward, the rat escapes).
+const SHIELD_BOOST_COST = 500;      // ISK to instantly restore your shield to full
+const SHIELD_BOOST_COOLDOWN = 6;    // seconds of fight time before you can boost again
+const OVERLOAD_COST = 400;          // ISK to overload your weapons
+const OVERLOAD_DPS_MULT = 1.6;      // DPS multiplier while overloaded
+const OVERLOAD_DURATION = 5;        // seconds the overload lasts
+const OVERLOAD_COOLDOWN = 9;        // seconds of fight time before you can overload again
+
+// ---- pre-fight loadouts ----
+// A ship is fitted for a role before a fight. Each loadout trades shield, hull
+// and DPS against one another: a tank survives longer but hits softer, a damage
+// fit kills faster but dies sooner. 'balanced' is the stock fitting.
+const LOADOUTS = {
+  balanced: { key: 'balanced', name: 'Balanced', shield: 1.0,  hull: 1.0,  dps: 1.0 },
+  tank:     { key: 'tank',     name: 'Tank',     shield: 1.5,  hull: 1.25, dps: 0.7 },
+  dps:      { key: 'dps',      name: 'DPS',      shield: 0.7,  hull: 0.8,  dps: 1.5 },
+};
+
+// ---- skill tree ----
+// Skills are player-level (apply to every ship). You earn skill points over
+// time (idle) and from kills, then spend them to train a skill up a level.
+// Each skill multiplies one stat by (1 + pctPerLevel * level). Training is
+// instant — the gate is the skill points you have to spend.
+const SKILLS = {
+  miningYield:     { key: 'miningYield',     name: 'Mining Yield',      category: 'Mining', maxLevel: 4, baseCost: 20, costGrowth: 1.8, effect: { stat: 'mining', pctPerLevel: 0.10 } },
+  cargoManagement: { key: 'cargoManagement', name: 'Cargo Management',  category: 'Mining', maxLevel: 3, baseCost: 15, costGrowth: 1.8, effect: { stat: 'cargo',  pctPerLevel: 0.15 } },
+  gunnery:         { key: 'gunnery',         name: 'Gunnery',           category: 'Combat', maxLevel: 4, baseCost: 20, costGrowth: 1.8, effect: { stat: 'dps',    pctPerLevel: 0.10 } },
+  shieldUpgrades:  { key: 'shieldUpgrades',  name: 'Shield Upgrades',   category: 'Combat', maxLevel: 4, baseCost: 20, costGrowth: 1.8, effect: { stat: 'shield', pctPerLevel: 0.10 } },
+  hullUpgrades:    { key: 'hullUpgrades',    name: 'Hull Upgrades',     category: 'Combat', maxLevel: 3, baseCost: 15, costGrowth: 1.8, effect: { stat: 'hull',   pctPerLevel: 0.08 } },
+  bountyHunting:   { key: 'bountyHunting',   name: 'Bounty Hunting',    category: 'Combat', maxLevel: 3, baseCost: 25, costGrowth: 1.8, effect: { stat: 'reward', pctPerLevel: 0.10 } },
+};
+const SP_RATE_PER_SEC = 0.25;  // skill points earned per second (idle progression)
+const SP_PER_KILL = 15;        // skill points earned per rat destroyed
+
+// ---- faction standing ----
+// Each system is controlled by a faction. Your standing with a faction (from
+// -10 to +10, starting at 0) shifts with what you do in their space: clearing
+// their rats raises it, losing a ship there lowers it. Standing affects the
+// gate-ambush risk when you jump into their system and a small market bonus.
+const FACTIONS = {
+  serpentis: { key: 'serpentis', name: 'Serpentis',     systemId: 'sys_0' },
+  concord:   { key: 'concord',   name: 'The Concord',   systemId: 'sys_1' },
+  syndicate: { key: 'syndicate', name: 'The Syndicate', systemId: 'sys_2' },
+};
+// Reverse lookup: systemId -> faction key.
+const SYSTEM_FACTION = { sys_0: 'serpentis', sys_1: 'concord', sys_2: 'syndicate' };
+const STANDING_MIN = -10;
+const STANDING_MAX = 10;
+const STANDING_PER_KILL = 0.2;   // standing gained per rat cleared in a faction's system
+const STANDING_PER_DEATH = -0.5; // standing lost when a ship is destroyed in a faction's system
+const STANDING_PRICE_MOD = 0.01; // market price multiplier per point of standing (±10%)
+
+// ---- gate ambush risk ----
+// Jumping a gate can draw a predator from the other side. The base chance is
+// modified by your standing with the destination system's faction: the less you
+// are liked there, the more likely the ambush.
+const AMBUSH_BASE_CHANCE = 0.15;
+const AMBUSH_STANDING_MOD = 0.04; // per point of standing (lower standing -> higher chance)
+const AMBUSH_MIN_CHANCE = 0.03;
+const AMBUSH_MAX_CHANCE = 0.40;
+
+// ---- drones ----
+// Drones live in your drone bay (player-level, so they apply to whichever ship
+// you are flying) and assist with mining or combat. They are independent craft,
+// so they are NOT lost when a ship is destroyed. You can own up to
+// DRONE_MAX_PER_TYPE of each type; every drone adds a flat bonus to the active
+// ship's mining yield or combat DPS. Buy more to stack the bonus.
+const DRONES = {
+  mining: { key: 'mining', name: 'Mining Drone', stat: 'mining', tiers: [
+    { tier: 1, cost: 1500,  bonus: 5 },
+    { tier: 2, cost: 5000,  bonus: 14 },
+    { tier: 3, cost: 16000, bonus: 40 },
+  ] },
+  combat: { key: 'combat', name: 'Combat Drone', stat: 'dps', tiers: [
+    { tier: 1, cost: 2000,  bonus: 8 },
+    { tier: 2, cost: 7000,  bonus: 22 },
+    { tier: 3, cost: 22000, bonus: 60 },
+  ] },
+};
+const DRONE_MAX_PER_TYPE = 5; // max drones of each type in the bay
+
+// ---- loot drops ----
+// Destroying a rat can drop a module (matching the fitting MODULES, tier I/II/III)
+// into your loot inventory. It is equipped into an empty fitting slot on the
+// active ship (see game.equipLoot), so combat feeds your fitting without ISK.
+// Bigger rats drop better modules, more reliably.
+const LOOT_DROP_CHANCE = {
+  pirate: 0.35,
+  gang: 0.55,
+  faction: 0.75,
+  dread: 1.0,
+};
+const LOOT_TIERS = {
+  pirate: [1],
+  gang: [1, 2],
+  faction: [2, 3],
+  dread: [3],
+};
+
+// ---- industry (blueprint crafting) ----
+// Every module tier has a blueprint that turns raw minerals into that module
+// (crafted modules go straight into your loot inventory, ready to equip).
+// A recipe's mineral value is ~CRAFT_DISCOUNT of the module's ISK price, so
+// crafting is cheaper than buying *if* you have the ore on hand — it gives
+// mining/hauling a second sink beyond selling. Minerals are taken from the
+// active ship's cargo hold, so you have to haul the ore to the station first.
+const CRAFT_DISCOUNT = 0.75;
+// Recipe weight per mineral: iron is the bulk, megacyte is the rare, pricey bit.
+const CRAFT_WEIGHTS = { iron: 1, bauxite: 0.55, gadolinium: 0.3, megacyte: 0.12 };
+const BLUEPRINTS = (() => {
+  const out = {};
+  const totalW = Object.values(CRAFT_WEIGHTS).reduce((a, b) => a + b, 0);
+  const ROMAN = ['', 'I', 'II', 'III'];
+  for (const slotType of Object.keys(MODULES)) {
+    const mod = MODULES[slotType];
+    out[slotType] = {};
+    for (const t of mod.tiers) {
+      const target = Math.round(t.cost * CRAFT_DISCOUNT);
+      const recipe = {};
+      for (const mKey of Object.keys(MINERALS)) {
+        recipe[mKey] = Math.max(1, Math.round((target * (CRAFT_WEIGHTS[mKey] || 0)) / MINERALS[mKey].price / totalW));
+      }
+      out[slotType][t.tier] = {
+        slotType,
+        tier: t.tier,
+        name: `${mod.name} ${ROMAN[t.tier]}`,
+        recipe,
+      };
+    }
+  }
+  return out;
+})();
+
+// ---- spatial world ----
+const WORLD_SIZE = 8000;        // world is WORLD_SIZE x WORLD_SIZE units
+const ASTEROID_FIELDS = 12;     // number of asteroid belts (clusters)
+const ASTEROIDS_PER_FIELD = [3, 6]; // min..max asteroids per belt
+const ASTEROID_AMOUNT = [400, 1200]; // min..max units per asteroid
+const ENEMY_COUNT = 16;         // number of roaming rats
+const PLANET_COUNT = 3;         // landmark planets
+const STATION_COUNT = 2;        // home station + trading post
+const MINING_RANGE = 160;       // must be this close to an asteroid to mine it
+const ENGAGE_RANGE = 240;       // must be this close to an enemy to engage it
+const DOCK_RANGE = 260;         // must be this close to a station to dock/trade
+const GATE_RANGE = 320;         // must be this close to a gate to jump systems
+const MAX_SPEED = 600;          // units/sec (client + server agree on this)
+const MAX_THRUST = 260;         // units/sec^2 (client-side)
+const DAMPING = 0.985;          // per-frame velocity damping (client-side)
+const ARRIVE_RADIUS = 24;       // click-to-move arrival radius
+const STATE_VERSION = 11;
+
+// ---- rat threat scaling (idle/incremental difficulty) ----
+// Rats get tougher as the player earns ISK, but pay more, so combat stays a
+// meaningful part of the loop instead of turning trivial.
+const THREAT_ISK_STEP = 25000;      // ISK earned per threat level
+const THREAT_STAT_GROWTH = 0.10;    // +10% rat shield/hull/dps per threat level
+const THREAT_REWARD_GROWTH = 0.30;  // +30% rat ISK reward per threat level
+const THREAT_MAX = 20;              // cap so the game never becomes unwinnable
+
+module.exports = {
+  SHIPS,
+  MODULES,
+  MINERALS,
+  ENEMIES,
+  START_ISK,
+  MAX_OFFLINE_SECONDS,
+  UPGRADE_BASE,
+  UPGRADE_GROWTH,
+  LEVEL_MULT,
+  INSURANCE_FRACTION,
+  SHIELD_BOOST_COST,
+  SHIELD_BOOST_COOLDOWN,
+  OVERLOAD_COST,
+  OVERLOAD_DPS_MULT,
+  OVERLOAD_DURATION,
+  OVERLOAD_COOLDOWN,
+  LOADOUTS,
+  SKILLS,
+  SP_RATE_PER_SEC,
+  SP_PER_KILL,
+  FACTIONS,
+  SYSTEM_FACTION,
+  STANDING_MIN,
+  STANDING_MAX,
+  STANDING_PER_KILL,
+  STANDING_PER_DEATH,
+  STANDING_PRICE_MOD,
+  AMBUSH_BASE_CHANCE,
+  AMBUSH_STANDING_MOD,
+  AMBUSH_MIN_CHANCE,
+  AMBUSH_MAX_CHANCE,
+  DRONES,
+  DRONE_MAX_PER_TYPE,
+  LOOT_DROP_CHANCE,
+  LOOT_TIERS,
+  CRAFT_DISCOUNT,
+  BLUEPRINTS,
+  WORLD_SIZE,
+  ASTEROID_FIELDS,
+  ASTEROIDS_PER_FIELD,
+  ASTEROID_AMOUNT,
+  ENEMY_COUNT,
+  PLANET_COUNT,
+  STATION_COUNT,
+  MINING_RANGE,
+  ENGAGE_RANGE,
+  DOCK_RANGE,
+  GATE_RANGE,
+  MAX_SPEED,
+  MAX_THRUST,
+  DAMPING,
+  ARRIVE_RADIUS,
+  STATE_VERSION,
+  THREAT_ISK_STEP,
+  THREAT_STAT_GROWTH,
+  THREAT_REWARD_GROWTH,
+  THREAT_MAX,
+};

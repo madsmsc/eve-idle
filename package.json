@@ -1,0 +1,22 @@
+{
+  "name": "eve-idle",
+  "version": "1.0.0",
+  "description": "A tiny idle-game take on EVE Online. Server-validated actions, persisted state.",
+  "private": true,
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test tests/game.test.js tests/api.test.js",
+    "test:unit": "node --test tests/game.test.js",
+    "test:api": "node --test tests/api.test.js",
+    "test:e2e": "playwright test",
+    "test:all": "node --test tests/game.test.js tests/api.test.js && playwright test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

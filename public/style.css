@@ -1,0 +1,395 @@
+:root {
+  --bg: #04060c;
+  --panel: rgba(10, 16, 30, 0.72);
+  --panel-solid: #0c1322;
+  --border: rgba(90, 130, 200, 0.25);
+  --text: #cdd7ee;
+  --muted: #7a89ad;
+  --accent: #4fd1ff;
+  --accent2: #7c5cff;
+  --good: #35d07f;
+  --bad: #ff5c7a;
+  --gold: #ffcf5c;
+  font-size: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+  user-select: none;
+}
+
+#world {
+  position: fixed;
+  inset: 0;
+  display: block;
+  cursor: crosshair;
+}
+
+/* ---------- HUD ---------- */
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+#hud .hud-btn, #hud button { pointer-events: auto; }
+
+.hud-tl { position: absolute; top: 14px; left: 16px; }
+.system-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--accent2);
+  text-shadow: 0 0 10px rgba(124, 92, 255, 0.5);
+  margin-bottom: 2px;
+}
+.isk {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 12px rgba(255, 207, 92, 0.35);
+}
+.cargo { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; max-width: 320px; }
+.threat {
+  margin-top: 8px;
+  display: inline-block;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+  color: var(--bad);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 10px;
+  backdrop-filter: blur(4px);
+  font-variant-numeric: tabular-nums;
+}
+.faction {
+  margin-top: 6px;
+  display: inline-block;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 10px;
+  backdrop-filter: blur(4px);
+  font-variant-numeric: tabular-nums;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 0.8rem;
+  backdrop-filter: blur(4px);
+}
+.chip .dot { width: 9px; height: 9px; border-radius: 50%; }
+.chip .amt { font-variant-numeric: tabular-nums; color: var(--text); }
+
+.hud-tr { position: absolute; top: 14px; right: 16px; }
+#minimap {
+  background: rgba(6, 10, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+
+.hud-bl { position: absolute; bottom: 16px; left: 16px; }
+.context {
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  backdrop-filter: blur(4px);
+  max-width: 340px;
+}
+.ship-info {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  backdrop-filter: blur(4px);
+  font-size: 0.9rem;
+}
+.ship-info .name { font-weight: 700; color: var(--accent); }
+.ship-info .meta { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.mining-indicator {
+  margin-top: 6px;
+  font-size: 0.85rem;
+  color: var(--good);
+  font-variant-numeric: tabular-nums;
+  min-height: 1.1em;
+}
+.mining-indicator.idle { color: var(--muted); }
+.loadout-panel { display: flex; gap: 6px; margin-top: 6px; }
+.loadout-btn {
+  flex: 1;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 5px 4px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.loadout-btn:hover { background: rgba(255,255,255,0.1); color: var(--text); }
+.loadout-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(80, 200, 255, 0.12); }
+
+.hud-bc {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 14px;
+  backdrop-filter: blur(4px);
+}
+
+.hud-br { position: absolute; bottom: 16px; right: 16px; display: flex; gap: 8px; align-items: flex-end; }
+.warp-panel { display: flex; flex-direction: column; gap: 6px; }
+.warp-btn { padding: 7px 12px; font-size: 0.8rem; }
+.warp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.gate-btn { border-color: var(--accent2); color: #d7ccff; }
+.gate-btn:hover { background: rgba(124, 92, 255, 0.15); }
+.auto-btn { border-color: var(--good); color: var(--good); }
+.auto-btn.on { background: rgba(53, 208, 127, 0.18); box-shadow: 0 0 12px rgba(53, 208, 127, 0.25); }
+.hud-btn {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 16px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  backdrop-filter: blur(4px);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.hud-btn:hover { border-color: var(--accent); }
+.hud-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.hud-btn.engage-ready { border-color: var(--bad); color: var(--bad); }
+.hud-btn.engage-ready:hover { background: rgba(255, 92, 122, 0.12); }
+
+.combat-banner {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(60, 12, 24, 0.8);
+  border: 1px solid var(--bad);
+  color: #ffd7de;
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  backdrop-filter: blur(4px);
+}
+
+/* Live shield/hull readout for the ship and the target during a fight. */
+.combat-hud {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.combat-hud[hidden] { display: none; }
+
+/* Full-screen death screen shown when the active ship is destroyed. */
+.death-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 4, 8, 0.72);
+  backdrop-filter: blur(3px);
+  animation: death-fade 0.25s ease-out;
+}
+.death-screen[hidden] { display: none; }
+.death-card {
+  background: var(--panel);
+  border: 1px solid var(--bad);
+  border-radius: 12px;
+  padding: 22px 28px;
+  min-width: 300px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 0 40px rgba(255, 60, 80, 0.35);
+}
+.death-title {
+  margin: 0 0 12px;
+  color: var(--bad);
+  letter-spacing: 3px;
+  font-size: 1.4rem;
+}
+.death-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: 16px;
+}
+@keyframes death-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.chud-row { display: grid; grid-template-columns: 92px 1fr 56px; align-items: center; gap: 8px; }
+.chud-name { font-size: 0.78rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chud-row.you .chud-name { color: var(--accent); }
+.chud-row.foe .chud-name { color: var(--bad); }
+.chud-bars { display: flex; flex-direction: column; gap: 3px; }
+.chud-bar { height: 7px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.chud-bar > i { display: block; height: 100%; border-radius: 4px; transition: width 0.15s linear; }
+.chud-bar.shield > i { background: linear-gradient(90deg, #2a9fd6, #4fd1ff); }
+.chud-bar.hull > i { background: linear-gradient(90deg, #2a9d5c, #35d07f); }
+.chud-num { font-size: 0.72rem; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.chud-actions { display: flex; gap: 6px; margin-top: 2px; }
+.chud-btn {
+  flex: 1;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 6px 4px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chud-btn:hover:not(:disabled) { background: rgba(255,255,255,0.1); }
+.chud-btn:disabled { opacity: 0.4; cursor: default; }
+.chud-btn.disengage { border-color: var(--bad); color: var(--bad); }
+.chud-btn.disengage:hover:not(:disabled) { background: rgba(255, 92, 122, 0.12); }
+
+/* ---------- Hangar overlay ---------- */
+.hangar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 380px;
+  max-width: 90vw;
+  background: var(--panel-solid);
+  border-left: 1px solid var(--border);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
+}
+.hangar[hidden] { display: none; }
+.hangar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.hangar-header h2 { margin: 0; font-size: 1.05rem; color: var(--accent); letter-spacing: 1px; }
+.hangar-body { padding: 14px 16px; overflow-y: auto; flex: 1; }
+.hangar-body section { margin-bottom: 20px; }
+.hangar-body h3 {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.hangar-cargo, .hangar-fleet, .hangar-shop, .hangar-fitting, .hangar-skills, .hangar-factions, .hangar-drones, .hangar-loot, .hangar-industry { display: flex; flex-direction: column; gap: 6px; }
+.skill-cat { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-top: 4px; }
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.85rem;
+}
+.row .label { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.row .sub { color: var(--muted); font-weight: 400; font-size: 0.78rem; }
+.row .actions { display: flex; gap: 5px; }
+.mini {
+  background: rgba(79, 209, 255, 0.08);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.mini:hover { border-color: var(--accent); }
+.mini:disabled { opacity: 0.35; cursor: not-allowed; }
+.mini.danger { color: var(--bad); }
+.mini.danger:hover { border-color: var(--bad); }
+.row.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.price { color: var(--gold); font-variant-numeric: tabular-nums; }
+.fitting-stats { border-style: dashed; }
+.fit-btn { min-width: 26px; }
+.fit-btn.active { background: rgba(79, 209, 255, 0.25); border-color: var(--accent); color: #fff; }
+
+.combat-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; max-height: 200px; overflow: auto; }
+.combat-log li {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+.combat-log li.win { border-color: var(--good); }
+.combat-log li.lose { border-color: var(--bad); }
+.combat-log .win-tag { color: var(--good); font-weight: 700; }
+.combat-log .lose-tag { color: var(--bad); font-weight: 700; }
+.combat-log .empty { color: var(--muted); border: none; background: none; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: #0b1220;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 18px;
+  border-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 50;
+  max-width: 80vw;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.error { border-color: var(--bad); color: var(--bad); }

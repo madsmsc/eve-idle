@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EVE Idle</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <canvas id="world"></canvas>
+
+  <!-- Minimal HUD overlaid on the rendered world -->
+  <div id="hud">
+    <div class="hud-tl">
+      <div id="system-name" class="system-name" data-testid="system-name"></div>
+      <div id="isk" class="isk" data-testid="isk">0 ISK</div>
+      <div id="cargo" class="cargo" data-testid="cargo"></div>
+      <div id="threat" class="threat" data-testid="threat"></div>
+      <div id="faction" class="faction" data-testid="faction"></div>
+    </div>
+
+    <div class="hud-tr">
+      <canvas id="minimap" width="180" height="180" data-testid="minimap"></canvas>
+    </div>
+
+    <div class="hud-bl">
+      <div id="context" class="context" data-testid="context"></div>
+      <div id="ship-info" class="ship-info" data-testid="ship-info"></div>
+      <div id="loadout-panel" class="loadout-panel" data-testid="loadout-panel">
+        <button class="loadout-btn" data-loadout="tank" data-testid="loadout-tank">🛡 Tank</button>
+        <button class="loadout-btn" data-loadout="balanced" data-testid="loadout-balanced">⚖ Balanced</button>
+        <button class="loadout-btn" data-loadout="dps" data-testid="loadout-dps">⚔ DPS</button>
+      </div>
+      <div id="mining-indicator" class="mining-indicator" data-testid="mining-indicator"></div>
+    </div>
+
+    <div class="hud-bc" id="controls-hint">
+      <span>click = warp there</span><span>E = engage</span><span>H = hangar</span><span>scroll = zoom</span>
+    </div>
+
+    <div class="hud-br">
+      <div class="warp-panel" data-testid="warp-panel">
+        <button id="auto-pilot" class="hud-btn auto-btn" data-testid="auto-pilot">▶ Auto</button>
+        <button id="warp-belt" class="hud-btn warp-btn" data-testid="warp-belt">⚡ Belt</button>
+        <button id="warp-station" class="hud-btn warp-btn" data-testid="warp-station">⚡ Station</button>
+        <button id="warp-rat" class="hud-btn warp-btn" data-testid="warp-rat">⚡ Rat</button>
+        <button id="gate-jump" class="hud-btn gate-btn" data-testid="gate-jump" hidden>⇄ Jump</button>
+      </div>
+      <button id="engage" class="hud-btn" data-testid="engage-btn" disabled>Engage</button>
+      <button id="hangar-btn" class="hud-btn" data-testid="hangar-btn">Hangar</button>
+    </div>
+
+    <div id="combat-banner" class="combat-banner" data-testid="combat-banner" hidden></div>
+    <div id="combat-hud" class="combat-hud" data-testid="combat-hud" hidden></div>
+  </div>
+
+  <!-- Death screen: shown when the active ship is destroyed -->
+  <div id="death-screen" class="death-screen" data-testid="death-screen" hidden>
+    <div class="death-card">
+      <h2 class="death-title" data-testid="death-title">SHIP DESTROYED</h2>
+      <div id="death-detail" class="death-detail" data-testid="death-detail"></div>
+      <button id="death-dismiss" class="hud-btn" data-testid="death-dismiss">Continue</button>
+    </div>
+  </div>
+
+  <!-- Hangar / market overlay (toggle with H) -->
+  <div id="hangar" class="hangar" data-testid="hangar" hidden>
+    <div class="hangar-header">
+      <h2>Hangar &amp; Market</h2>
+      <button id="hangar-close" class="hud-btn" data-testid="hangar-close">Close</button>
+    </div>
+    <div class="hangar-body">
+      <section>
+        <h3>Cargo</h3>
+        <div id="hangar-cargo" class="hangar-cargo" data-testid="hangar-cargo"></div>
+      </section>
+      <section>
+        <h3>Fleet</h3>
+        <div id="hangar-fleet" class="hangar-fleet" data-testid="hangar-fleet"></div>
+      </section>
+      <section>
+        <h3>Fitting <span class="sub">active ship</span></h3>
+        <div id="hangar-fitting" class="hangar-fitting" data-testid="hangar-fitting"></div>
+      </section>
+      <section>
+        <h3>Skills <span class="sub" id="hangar-sp" data-testid="hangar-sp"></span></h3>
+        <div id="hangar-skills" class="hangar-skills" data-testid="hangar-skills"></div>
+      </section>
+      <section>
+        <h3>Factions <span class="sub">standing &amp; ambush risk</span></h3>
+        <div id="hangar-factions" class="hangar-factions" data-testid="hangar-factions"></div>
+      </section>
+      <section>
+        <h3>Drone Bay <span class="sub" id="drone-bay-count"></span></h3>
+        <div id="hangar-drones" class="hangar-drones" data-testid="hangar-drones"></div>
+      </section>
+      <section>
+        <h3>Loot <span class="sub">equip into empty slots</span></h3>
+        <div id="hangar-loot" class="hangar-loot" data-testid="hangar-loot"></div>
+      </section>
+      <section>
+        <h3>Industry <span class="sub">craft modules from ore</span></h3>
+        <div id="hangar-industry" class="hangar-industry" data-testid="hangar-industry"></div>
+      </section>
+      <section>
+        <h3>Shipyard</h3>
+        <div id="hangar-shop" class="hangar-shop" data-testid="hangar-shop"></div>
+      </section>
+      <section>
+        <h3>Killboard</h3>
+        <ul id="combat-log" class="combat-log" data-testid="combat-log"></ul>
+      </section>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" data-testid="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
