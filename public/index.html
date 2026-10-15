@@ -9,6 +9,16 @@
 <body>
   <canvas id="world"></canvas>
 
+  <!-- Mode menu: shown on every load before entering the world -->
+  <div id="mode-menu" class="mode-menu" data-testid="mode-menu">
+    <div class="mode-card">
+      <h1 class="mode-title">EVE IDLE</h1>
+      <p class="mode-sub">Choose how to play</p>
+      <button class="mode-btn" data-mode="demo" data-testid="mode-demo">DEMO<span class="mode-desc">Open sandbox — three systems, free Rifter, all features</span></button>
+      <button class="mode-btn" data-mode="story" data-testid="mode-story">START<span class="mode-desc">Storyline — pilot training course from rookie to certified</span></button>
+    </div>
+  </div>
+
   <!-- Minimal HUD overlaid on the rendered world -->
   <div id="hud">
     <div class="hud-tl">
@@ -60,6 +70,18 @@
       <h2 class="death-title" data-testid="death-title">SHIP DESTROYED</h2>
       <div id="death-detail" class="death-detail" data-testid="death-detail"></div>
       <button id="death-dismiss" class="hud-btn" data-testid="death-dismiss">Continue</button>
+    </div>
+  </div>
+
+  <!-- Mission tracker (story mode) -->
+  <div id="mission-tracker" class="mission-tracker" data-testid="mission-tracker" hidden></div>
+
+  <!-- Mission dialogue (story mode) -->
+  <div id="mission-dialogue" class="mission-dialogue" data-testid="mission-dialogue" hidden>
+    <div class="mission-card">
+      <div id="mission-npc" class="mission-npc" data-testid="mission-npc"></div>
+      <div id="mission-text" class="mission-text" data-testid="mission-text"></div>
+      <button id="mission-continue" class="hud-btn" data-testid="mission-continue">Continue</button>
     </div>
   </div>
 

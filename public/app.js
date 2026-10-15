@@ -886,7 +886,50 @@ function renderCargo() {
   }
 }
 
+// Story mode: the current mission objective + progress, and the NPC dialogue
+// that introduces each mission. The dialogue is shown once per mission and
+// dismissed with Continue (server accepts via /api/mission).
+let dialogueShownFor = null;
+
+function renderMission() {
+  const tracker = document.getElementById('mission-tracker');
+  const dlg = document.getElementById('mission-dialogue');
+  if (!state || state.mode !== 'story') {
+    tracker.hidden = true;
+    dlg.hidden = true;
+    return;
+  }
+  const m = state.mission;
+  if (m && m.active && m.objective) {
+    let prog = '';
+    if (m.progress != null) {
+      prog = Array.isArray(m.progress)
+        ? m.progress.map((p, i) => `${p}/${m.target[i]}`).join(', ')
+        : `${m.progress}/${m.target}`;
+    }
+    tracker.innerHTML = `<span class="label">${m.title}</span> <span class="sub">${m.objective}${prog ? ' — ' + prog : ''}</span>`;
+    tracker.hidden = false;
+    if (dialogueShownFor !== m.active) {
+      dialogueShownFor = m.active;
+      document.getElementById('mission-npc').textContent = m.npc;
+      document.getElementById('mission-text').textContent = m.brief;
+      dlg.hidden = false;
+    }
+  } else {
+    tracker.hidden = true;
+    dlg.hidden = true;
+  }
+}
+
+function initMissionUI() {
+  document.getElementById('mission-continue').addEventListener('click', async () => {
+    await doAction('mission', { action: 'continue' });
+    document.getElementById('mission-dialogue').hidden = true;
+  });
+}
+
 function renderPanels() {
+  renderMission();
   document.getElementById('isk').textContent = `${fmt(state.isk)} ISK`;
   const sysNameEl = document.getElementById('system-name');
   if (state.system) {
@@ -961,7 +1004,7 @@ function updateHUDFast() {
   if (target && !state.combat) {
     btn.disabled = false;
     btn.classList.add('engage-ready');
-    btn.textContent = `Engage ${catalog.enemies[target.type].name}`;
+    btn.textContent = `Engage ${(catalog.enemies[target.type] || {}).name || 'target'}`;
   } else {
     btn.disabled = true;
     btn.classList.remove('engage-ready');
@@ -994,8 +1037,11 @@ function updateHUDFast() {
     const edef = e ? catalog.enemies[e.type] : null;
     const active = state.activeShip;
     const remain = Math.max(0, Math.ceil(c.remaining));
+    const windowLeft = c.enemyRangeDelay > 0 ? Math.max(0, Math.ceil(c.enemyRangeDelay - c.fightTime)) : 0;
     banner.hidden = false;
-    banner.textContent = `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'} — ${remain}s`;
+    banner.textContent = windowLeft > 0
+      ? `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'} — free fire ${windowLeft}s`
+      : `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'} — ${remain}s`;
     chud.hidden = false;
     chud.innerHTML = `
       <div class="chud-row you">
@@ -1524,7 +1570,20 @@ async function doWarp(targetId, opts) {
   warpPending = true; // hold the position sync so a stale report can't undo the warp
   const ok = await doAction('warp', payload);
   warpPending = false;
-  if (ok && !opts.silent) toast('Warping…');
+  if (ok) {
+    // A warp is a jump, not a flight: the server puts the ship at the target, so
+    // snap the local ship there too. Otherwise the next position sync would
+    // report the old spot and drag the server ship back.
+    const active = state.ships.find((s) => s.id === state.activeShipId);
+    if (active) {
+      ship.x = active.x;
+      ship.y = active.y;
+      ship.vx = 0;
+      ship.vy = 0;
+      destination = null;
+    }
+    if (!opts.silent) toast('Warping…');
+  }
   return ok;
 }
 
@@ -1761,23 +1820,45 @@ async function boot() {
   resize();
   genStars();
   try {
-    const [cat, st] = await Promise.all([api('/api/catalog'), api('/api/state')]);
+    const cat = await api('/api/catalog');
     catalog = cat;
     C = cat.constants;
-    state = st.state;
-    applySystemColor();
-    const active = state.ships.find((s) => s.id === state.activeShipId);
-    if (active) {
-      ship.x = active.x;
-      ship.y = active.y;
-    }
-    initInput();
-    renderPanels();
-    lastFrame = performance.now();
-    requestAnimationFrame(frame);
+    initModeMenu();
   } catch (e) {
     toast('Failed to load: ' + e.message, true);
   }
+}
+
+// The mode menu shows on every load. Picking a mode resumes that mode's save
+// (or creates a fresh one) and then boots into the world.
+function initModeMenu() {
+  const menu = document.getElementById('mode-menu');
+  menu.querySelectorAll('.mode-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const st = await api('/api/mode', { mode: btn.dataset.mode });
+        menu.hidden = true;
+        state = st.state;
+        finishBoot();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    });
+  });
+}
+
+function finishBoot() {
+  applySystemColor();
+  const active = state.ships.find((s) => s.id === state.activeShipId);
+  if (active) {
+    ship.x = active.x;
+    ship.y = active.y;
+  }
+  initInput();
+  initMissionUI();
+  renderPanels();
+  lastFrame = performance.now();
+  requestAnimationFrame(frame);
 }
 
 // Decay the screen shake and compute this frame's jitter offset.
@@ -1820,7 +1901,7 @@ window.__eve = {
   setDestination: (x, y) => {
     destination = { x, y };
   },
-  warp: (targetId) => doWarp(targetId, { silent: true }),
+  warp: (targetId, opts) => doWarp(targetId, { silent: true, ...(opts || {}) }),
   combatAction: (action) => doCombatAction(action),
   setLoadout: (loadout) => doSetLoadout(loadout),
   setAutoPilot: (on) => {

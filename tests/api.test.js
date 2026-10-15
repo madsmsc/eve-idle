@@ -143,6 +143,20 @@ describe('HTTP API', () => {
     assert.equal(r.data.state.combat.enemyId, e.id);
   });
 
+  test('POST /api/engage exposes the range free-fire window for short-range enemies', async () => {
+    // Turn a rat into a mission-style short-range frigate (stats on the object,
+    // like spawnMissionEnemies does) and engage it through the API.
+    const st = srv.app.getState();
+    const e = st.systems[st.ships[0].systemId].enemies[0];
+    Object.assign(e, { type: 'shortrange', shield: 45, hull: 90, dps: 12, rangeDelay: 2 });
+    st.ships[0].x = e.x;
+    st.ships[0].y = e.y;
+    srv.app.setState(st);
+    const r = await api(srv.base, '/api/engage', { enemyId: e.id });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.state.combat.enemyRangeDelay, 2);
+  });
+
   test('POST /api/combat-action rejects when not in combat (400)', async () => {
     const r = await api(srv.base, '/api/combat-action', { action: 'disengage' });
     assert.equal(r.status, 400);
@@ -321,6 +335,41 @@ describe('HTTP API', () => {
     assert.equal(res.status, 200);
     const html = await res.text();
     assert.match(html, /<canvas id="world">/);
+  });
+
+  test('POST /api/mode starts a story save with zero ISK and the first mission', async () => {
+    const r = await api(srv.base, '/api/mode', { mode: 'story' });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.state.mode, 'story');
+    assert.equal(r.data.state.isk, 0);
+    assert.equal(r.data.state.mission.active, 'm1');
+    assert.deepEqual(r.data.state.mission.completed, []);
+  });
+
+  test('POST /api/mode rejects an unknown mode (400)', async () => {
+    const r = await api(srv.base, '/api/mode', { mode: 'arcade' });
+    assert.equal(r.status, 400);
+    assert.ok(r.data.error);
+  });
+
+  test('mode saves are isolated: switching modes never clobbers the other', async () => {
+    const demo = (await api(srv.base, '/api/mode', { mode: 'demo' })).data.state;
+    assert.equal(demo.mode, 'demo');
+    assert.equal(demo.isk, cfg.START_ISK);
+    const story = (await api(srv.base, '/api/mode', { mode: 'story' })).data.state;
+    assert.equal(story.mode, 'story');
+    assert.equal(story.isk, 0);
+    const demoAgain = (await api(srv.base, '/api/mode', { mode: 'demo' })).data.state;
+    assert.equal(demoAgain.mode, 'demo');
+    assert.equal(demoAgain.isk, cfg.START_ISK);
+  });
+
+  test('reset regenerates the active mode only', async () => {
+    await api(srv.base, '/api/mode', { mode: 'story' });
+    const st = (await api(srv.base, '/api/reset', {})).data.state;
+    assert.equal(st.mode, 'story');
+    assert.equal(st.isk, 0);
+    assert.equal(st.ships.length, 1);
   });
 
   test('blocks path traversal', async () => {

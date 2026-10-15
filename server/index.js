@@ -78,20 +78,38 @@ function serveStatic(req, res, pathname) {
 
 // Build an isolated app instance (its own store + state). Used by the main
 // entrypoint and by tests (which pass a temp data file and random port).
+//
+// Saves are stored per mode in a single container file: { demo, story }. Each
+// mode keeps its own progress, so switching modes never clobbers the other.
+function normalizeStore(loaded) {
+  if (loaded && typeof loaded === 'object' && (loaded.demo || loaded.story || loaded.__slots)) {
+    return { demo: loaded.demo || null, story: loaded.story || null };
+  }
+  // Legacy single-state save: treat as the demo slot (STATE_VERSION-gated).
+  return { demo: game.isValidState(loaded) ? loaded : null, story: null };
+}
+
 function createApp({ dataFile } = {}) {
   const store = new Store(dataFile);
-  const loaded = store.load();
-  let state = game.isValidState(loaded) ? loaded : game.createInitialState();
-  store.save(state);
+  const saves = normalizeStore(store.load());
+  let mode = 'demo';
+  let state = game.isValidState(saves[mode]) ? saves[mode] : game.createInitialState(undefined, undefined, mode);
+  saves[mode] = state;
+  store.save(saves);
 
   function persist() {
-    store.save(state);
+    saves[mode] = state;
+    store.save(saves);
   }
   function getState() {
     return state;
   }
+  function getMode() {
+    return mode;
+  }
   function setState(next) {
     state = next;
+    saves[mode] = state;
     persist();
   }
 
@@ -215,6 +233,13 @@ function createApp({ dataFile } = {}) {
         persist();
         return { state };
       }
+      case 'mission': {
+        const r = game.missionAction(state, payload.action);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
       case 'reset': {
         state = game.reset(state, now);
         persist();
@@ -262,6 +287,28 @@ function createApp({ dataFile } = {}) {
         });
       }
 
+      if (pathname === '/api/mode' && req.method === 'POST') {
+        let payload;
+        try {
+          payload = await readBody(req);
+        } catch (e) {
+          return sendJson(res, 400, { error: e.message || 'Invalid request body' });
+        }
+        if (!cfg.MODES.includes(payload.mode)) {
+          return sendJson(res, 400, { error: 'Unknown mode' });
+        }
+        if (!saves[payload.mode] || !game.isValidState(saves[payload.mode])) {
+          saves[payload.mode] = game.createInitialState(Date.now(), undefined, payload.mode);
+        } else if (payload.mode === 'story' && game.missionStartNeeded(saves[payload.mode])) {
+          // A story save from before missions were wired up: boot the course at m1.
+          game.startMission(saves[payload.mode], 'm1');
+        }
+        mode = payload.mode;
+        state = saves[mode];
+        persist();
+        return sendJson(res, 200, { mode, state: game.view(state) });
+      }
+
       if (pathname.startsWith('/api/') && req.method === 'POST') {
         const action = pathname.slice('/api/'.length);
         let payload;
@@ -292,7 +339,7 @@ function createApp({ dataFile } = {}) {
 
 function start({
   port = Number(process.env.PORT) || 3000,
-  dataFile = path.join(__dirname, '..', 'data', 'state.json'),
+  dataFile = process.env.DATA_FILE || path.join(__dirname, '..', 'data', 'state.json'),
 } = {}) {
   const app = createApp({ dataFile });
   return new Promise((resolve) => {

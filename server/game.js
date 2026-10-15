@@ -15,6 +15,8 @@ const {
   MINERALS,
   ENEMIES,
   START_ISK,
+  START_STORY_ISK,
+  MODES,
   MAX_OFFLINE_SECONDS,
   UPGRADE_BASE,
   UPGRADE_GROWTH,
@@ -47,6 +49,9 @@ const {
   LOOT_TIERS,
   CRAFT_DISCOUNT,
   BLUEPRINTS,
+  MISSION_ORDER,
+  MISSION_ENEMIES,
+  MISSIONS,
   WORLD_SIZE,
   ASTEROID_FIELDS,
   ASTEROIDS_PER_FIELD,
@@ -253,6 +258,15 @@ function craftModule(state, slotType, tier) {
   }
   if (!Array.isArray(s.loot)) s.loot = [];
   s.loot.push({ id: nextId(), slotType, tier });
+  if (s.mode === 'story' && s.mission && s.mission.active) {
+    const mdef = MISSIONS[s.mission.active];
+    if (mdef && mdef.objective.type === 'craft') {
+      if (!s.mission.flags.crafted) s.mission.flags.crafted = {};
+      const key = `${slotType}:${tier}`;
+      s.mission.flags.crafted[key] = (s.mission.flags.crafted[key] || 0) + 1;
+    }
+    evaluateMission(s);
+  }
   return { state: s };
 }
 
@@ -331,14 +345,15 @@ function applyPool(shieldMax, hullMax, damage) {
 }
 
 // The enemy's effective combat stats, scaled up by the current threat level.
-function enemyCombatStats(type, threat) {
-  const def = ENEMIES[type];
+function enemyCombatStats(type, threat, fallback = null) {
+  const def = ENEMIES[type] || fallback;
   const g = 1 + THREAT_STAT_GROWTH * threat;
   return {
-    shield: def.shield * g,
-    hull: def.hull * g,
-    dps: def.dps * g,
-    reward: def.iskReward * (1 + THREAT_REWARD_GROWTH * threat),
+    shield: (def ? def.shield : 0) * g,
+    hull: (def ? def.hull : 0) * g,
+    dps: (def ? def.dps : 0) * g,
+    reward: (def ? def.iskReward : 0) * (1 + THREAT_REWARD_GROWTH * threat),
+    rangeDelay: def ? def.rangeDelay || 0 : 0,
   };
 }
 
@@ -347,10 +362,13 @@ function effectivePlayerDps(c) {
   return c.playerDps * (c.fightTime < c.overloadUntil ? OVERLOAD_DPS_MULT : 1);
 }
 // Seconds from now until the player's hull is gone (enemy DPS vs the player's
-// remaining shield+hull pool).
+// remaining shield+hull pool). The enemy's guns are silent for the opening
+// volley (`enemyRangeDelay` seconds of fight time), so that window is added on.
 function playerTtd(c) {
   const pool = c.shipShield + c.shipHull;
-  return c.enemyDps > 0 ? pool / c.enemyDps : Infinity;
+  if (c.enemyDps <= 0) return Infinity;
+  const remainingWindow = Math.max(0, c.enemyRangeDelay - c.fightTime);
+  return remainingWindow + pool / c.enemyDps;
 }
 // Seconds from now until the enemy's hull is gone (effective player DPS vs the
 // enemy's remaining pool).
@@ -626,7 +644,7 @@ function generateSystems(seed) {
   return systems;
 }
 
-function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1) {
+function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1, mode = 'demo') {
   const systems = generateSystems(seed);
   const homeSystem = systems[SYSTEM_DEFS[0].id];
   const rifter = {
@@ -640,9 +658,11 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1)
     loadout: 'balanced',
     fitting: emptyFitting('rifter'),
   };
-  return {
+  const st = {
     version: STATE_VERSION,
-    isk: START_ISK,
+    mode: MODES.includes(mode) ? mode : 'demo',
+    isk: mode === 'story' ? START_STORY_ISK : START_ISK,
+    mission: { active: mode === 'story' ? 'm1' : null, step: 0, flags: {}, completed: [] },
     systems,
     ships: [rifter],
     activeShipId: rifter.id,
@@ -665,6 +685,8 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1)
       totalSpEarned: 0,
     },
   };
+  if (mode === 'story') startMission(st, 'm1');
+  return st;
 }
 
 // True if a persisted state is usable (right version, has systems).
@@ -758,7 +780,14 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
   }
 
   if (active && !shipInCombat(s, active.id) && seconds > 0) {
+    const beforeMined = s.stats.totalMineralsMined || 0;
     mineActive(s, active, seconds);
+    if (s.mode === 'story' && s.mission && s.mission.active) {
+      const mdef = MISSIONS[s.mission.active];
+      if (mdef && mdef.objective.type === 'mine') {
+        s.mission.flags.mined = (s.mission.flags.mined || 0) + ((s.stats.totalMineralsMined || 0) - beforeMined);
+      }
+    }
   }
   // Skill points accrue over time (idle progression), including offline gaps.
   if (seconds > 0) {
@@ -780,11 +809,16 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
       const won = enemyTtd(c) <= playerTtd(c);
       resolveCombat(s, now, won, rng);
     } else {
+      const pdps = effectivePlayerDps(c);
       c.fightTime += seconds;
-      damagePlayer(c, c.enemyDps * seconds);
+      // The enemy only deals damage for the portion of this tick that is past
+      // its opening-volley window (range advantage); the player always fires.
+      const enemyFire = clamp(c.fightTime - c.enemyRangeDelay, 0, seconds);
+      damagePlayer(c, c.enemyDps * enemyFire);
       damageEnemy(c, pdps * seconds);
     }
   }
+  evaluateMission(s);
   return s;
 }
 
@@ -794,7 +828,7 @@ function resolveCombat(s, now, won, rng = Math.random) {
   const sys = ship && s.systems ? s.systems[ship.systemId] : null;
   const enemy = sys ? sys.enemies.find((e) => e.id === c.enemyId) : null;
   const shipName = ship ? SHIPS[ship.type].name : 'Unknown';
-  const enemyName = enemy ? ENEMIES[enemy.type].name : 'Unknown';
+  const enemyName = enemy ? (ENEMIES[enemy.type] ? ENEMIES[enemy.type].name : enemy.name || enemy.type) : 'Unknown';
   let iskGain = 0;
   let shipLost = false;
   let cargoLost = 0;
@@ -841,7 +875,9 @@ function resolveCombat(s, now, won, rng = Math.random) {
     // Respawn: if you lost your last ship, a free Rifter arrives at the local
     // station (your pod makes it home with a loaner) so the game can't soft-lock.
     // You still paid the price — the destroyed ship and its cargo are gone.
-    if (s.ships.length === 0 && sys) {
+    // The scripted Last Stand (m3) suppresses the loaner: the clone respawn is
+    // the story's job (the next mission hands you a replacement frigate).
+    if (s.ships.length === 0 && sys && !(s.mission && s.mission.active === 'm3')) {
       const home = sys.stations[0];
       const pod = {
         id: nextId(),
@@ -885,6 +921,18 @@ function resolveCombat(s, now, won, rng = Math.random) {
   });
   if (s.combatLog.length > 20) s.combatLog.length = 20;
   s.combat = null;
+
+  // Mission progress hooks: killing a mission target counts towards the current
+  // objective; dying in the scripted Last Stand (m3) marks it done.
+  if (s.mode === 'story' && s.mission) {
+    if (won && enemy && enemy.missionTag) {
+      const def = MISSIONS[s.mission.active];
+      if (def && def.objective.type === 'kill' && def.objective.enemyTag === enemy.missionTag) {
+        s.mission.flags.killed = (s.mission.flags.killed || 0) + 1;
+      }
+    }
+    if (!won && s.mission.active === 'm3') s.mission.flags.died = 1;
+  }
 }
 
 function buyShip(state, type) {
@@ -1049,7 +1097,7 @@ function startCombat(s, enemyId, now) {
   const sys = activeSystem(s);
   const enemy = sys.enemies.find((e) => e.id === enemyId);
   const threat = threatLevel(s);
-  const est = enemyCombatStats(enemy.type, threat);
+  const est = enemyCombatStats(enemy.type, threat, enemy);
   const shipDef = SHIPS[ship.type];
   const lo = loadoutMult(ship);
   const lv = levelMult(ship.level);
@@ -1073,6 +1121,10 @@ function startCombat(s, enemyId, now) {
     playerDps,
     enemyDps: est.dps,
     reward: est.reward,
+    // Range advantage (D2): the enemy's guns are silent for this many seconds of
+    // fight time. Mission "short-range" enemies carry a base `rangeDelay`; the
+    // player's fitted range modules extend the window even further.
+    enemyRangeDelay: est.rangeDelay + moduleBonus(ship, 'range'),
     // In-fight action state (all measured in fight-time seconds).
     overloadUntil: 0,     // overload (DPS boost) is active until this fightTime
     boostReadyAt: 0,      // shield boost usable again at this fightTime
@@ -1220,6 +1272,10 @@ function gateJump(state, gateId, rng = Math.random, now = Date.now()) {
   const ship = s.ships.find((sh) => sh.id === s.activeShipId);
   if (!ship) return { error: 'No active ship' };
   if (s.combat) return { error: 'Cannot jump while in combat' };
+  // Story mode keeps new pilots in Jita until they finish the course (m8).
+  if (s.mode === 'story' && !(s.mission && s.mission.completed && s.mission.completed.includes('m8'))) {
+    return { error: 'Not authorized — complete pilot training to use jump gates' };
+  }
   const sys = activeSystem(s);
   if (!sys) return { error: 'No active system' };
   const gate = (sys.gates || []).find((g) => g.id === gateId);
@@ -1245,7 +1301,236 @@ function gateJump(state, gateId, rng = Math.random, now = Date.now()) {
 }
 
 function reset(state, now = Date.now(), seed = (Date.now() % 1000000) + 1) {
-  return createInitialState(now, seed);
+  return createInitialState(now, seed, state.mode || 'demo');
+}
+
+// ---- missions (story mode pilot training) ----
+
+function missionDef(state) {
+  const m = state.mission;
+  if (!m || !m.active) return null;
+  return MISSIONS[m.active] || null;
+}
+
+// Fit a module into the first empty slot of its type (used for mission grants).
+function fitGrantModule(ship, slotType, tier) {
+  if (!ship || !ship.fitting || !MODULES[slotType]) return;
+  const slots = SHIPS[ship.type].slots[slotType] || 0;
+  for (let i = 0; i < slots; i++) {
+    if (!ship.fitting[slotType][i]) {
+      ship.fitting[slotType][i] = tier;
+      return;
+    }
+  }
+}
+
+// Hand the player what a mission gives them up-front (`def.grant`): ships,
+// modules (fitted) and ISK. Grants that don't apply are skipped silently.
+// Ships are granted first so modules fit into the newly active replacement.
+function grantMissionRewards(state, def) {
+  if (!def) return;
+  const g = def.grant || {};
+  if (g.isk) state.isk += g.isk;
+  if (Array.isArray(g.ships)) {
+    grantShips(state, g.ships);
+  }
+  if (Array.isArray(g.modules)) {
+    const ship = state.ships.find((sh) => sh.id === state.activeShipId);
+    for (const m of g.modules) fitGrantModule(ship, m.slot, m.tier);
+  }
+}
+
+// Grant one or more ships (replacement/clone respawns), placed just outside the
+// station so a "dock at the station" objective still needs a short warp home.
+function grantShips(state, types) {
+  const ship = state.ships.find((sh) => sh.id === state.activeShipId);
+  // After a scripted death there is no active ship, so fall back to the first
+  // system (the storyline is confined to Jita until certification).
+  let sys = ship && state.systems ? state.systems[ship.systemId] : null;
+  if (!sys && state.systems) sys = Object.values(state.systems)[0] || null;
+  if (!sys) return;
+  const home = sys.stations[0];
+  for (let i = 0; i < types.length; i++) {
+    const ang = ((i + 1) / (types.length + 1)) * Math.PI;
+    const rad = DOCK_RANGE + 120;
+    const n = {
+      id: nextId(),
+      type: types[i],
+      level: 1,
+      x: clamp(home.x + Math.cos(ang) * rad, 60, sys.width - 60),
+      y: clamp(home.y + Math.sin(ang) * rad, 60, sys.height - 60),
+      systemId: sys.id,
+      cargo: emptyCargo(),
+      loadout: 'balanced',
+      fitting: emptyFitting(types[i]),
+    };
+    state.ships.push(n);
+    state.activeShipId = n.id;
+  }
+}
+
+// Rewards paid when a mission completes (`def.completion`): ISK and drones.
+function grantCompletionRewards(state, def) {
+  if (!def) return;
+  const c = def.completion || {};
+  if (c.isk) state.isk += c.isk;
+  if (Array.isArray(c.drones)) {
+    if (!state.drones) state.drones = emptyDroneBay();
+    for (const d of c.drones) {
+      const dr = DRONES[d.type];
+      if (dr && dr.tiers) state.drones[d.type].push({ type: d.type, tier: d.tier });
+    }
+  }
+}
+
+// Start a mission: hand out its up-front grant and place its targets.
+function startMission(state, id) {
+  const def = MISSIONS[id];
+  if (!def) return;
+  state.mission.active = id;
+  state.mission.flags = {};
+  state.mission.step = 0;
+  clearMissionEnemies(state);
+  grantMissionRewards(state, def);
+  spawnMissionEnemies(state, def);
+}
+
+// Remove any leftover living scripted targets (e.g. m3's surviving wave ships)
+// so only the current mission's spawns remain — "between missions, the space is
+// quiet". Dead targets are kept so killmails and ids stay consistent.
+function clearMissionEnemies(state) {
+  for (const sys of Object.values(state.systems)) {
+    sys.enemies = (sys.enemies || []).filter((e) => !e.missionTag || e.alive === false);
+  }
+}
+
+// True when a story save exists but the pilot-training course has never actually
+// started (no active mission and nothing completed) — e.g. a save written by an
+// earlier build before missions were wired up. Such a save should be booted into
+// m1 rather than resumed in a half-initialized state.
+function missionStartNeeded(state) {
+  const m = state && state.mission;
+  return !m || (!m.active && (!m.completed || m.completed.length === 0));
+}
+
+// Place a mission's scripted targets near the home station (combat missions).
+function spawnMissionEnemies(state, def) {
+  if (!def || !def.spawn) return;
+  const ship = state.ships.find((sh) => sh.id === state.activeShipId);
+  const sys = ship && state.systems ? state.systems[ship.systemId] : null;
+  if (!sys) return;
+  const home = sys.stations[0];
+  for (const sp of def.spawn) {
+    const eDef = MISSION_ENEMIES[sp.type];
+    if (!eDef) continue;
+    for (let i = 0; i < sp.count; i++) {
+      const ang = (i / Math.max(1, sp.count)) * Math.PI * 2;
+      const rad = 420 + i * 60;
+      sys.enemies.push({
+        id: nextId(),
+        type: eDef.key,
+        name: eDef.name,
+        missionTag: sp.type,
+        x: clamp(home.x + Math.cos(ang) * rad, 60, sys.width - 60),
+        y: clamp(home.y + Math.sin(ang) * rad, 60, sys.height - 60),
+        shield: eDef.shield,
+        hull: eDef.hull,
+        dps: eDef.dps,
+        rangeDelay: eDef.rangeDelay || 0,
+        alive: true,
+        iskReward: eDef.iskReward,
+      });
+    }
+  }
+}
+
+// True once the active mission's objective is satisfied.
+function missionDone(state) {
+  const m = state.mission;
+  const def = missionDef(state);
+  if (!m || !def) return false;
+  const o = def.objective;
+  switch (o.type) {
+    case 'kill': return (m.flags.killed || 0) >= o.count;
+    case 'mine': return (m.flags.mined || 0) >= o.target;
+    case 'craft': return o.targets.every((t) => (m.flags.crafted && m.flags.crafted[`${t.slot}:${t.tier}`] || 0) >= t.count);
+    case 'dock': return !!m.flags.docked;
+    case 'death': return !!m.flags.died;
+    case 'dialogue': return !!m.flags.done;
+    default: return false;
+  }
+}
+
+// Advance the mission chain: complete the current mission, hand out rewards and
+// start the next one (granting its up-front items and spawning its targets).
+// Called after combat/mine/craft ticks so objectives resolve as soon as met.
+function evaluateMission(state) {
+  const m = state.mission;
+  if (!m || state.mode !== 'story' || !m.active) return;
+  const def = MISSIONS[m.active];
+  if (!def) return;
+  if (def.objective.type === 'dock' && dockedStation(state)) m.flags.docked = 1;
+  if (!missionDone(state)) return;
+  grantCompletionRewards(state, def);
+  m.completed.push(m.active);
+  const idx = MISSION_ORDER.indexOf(m.active);
+  const next = MISSION_ORDER[idx + 1] || null;
+  if (next) {
+    startMission(state, next);
+  } else {
+    m.active = null;
+    m.flags = {};
+    m.step = 0;
+  }
+}
+
+// Player-triggered mission actions. 'continue' acknowledges a dialogue-only
+// mission (e.g. accepting certification), completing it.
+function missionAction(state, action) {
+  const s = clone(state);
+  const m = s.mission;
+  if (!m || s.mode !== 'story' || !m.active) return { error: 'No active mission' };
+  if (action === 'continue') {
+    const def = MISSIONS[m.active];
+    if (!def) return { error: 'No active mission' };
+    if (def.objective.type === 'dialogue') m.flags.done = 1;
+    evaluateMission(s);
+    return { state: s };
+  }
+  return { error: 'Unknown mission action' };
+}
+
+// The client-facing mission snapshot (title, brief, objective + progress).
+function missionView(state) {
+  const m = state.mission;
+  if (!m) return null;
+  const def = m.active ? MISSIONS[m.active] : null;
+  const o = def ? def.objective : null;
+  let progress = null;
+  let target = null;
+  if (o) {
+    switch (o.type) {
+      case 'kill': progress = Math.min(o.count, m.flags.killed || 0); target = o.count; break;
+      case 'mine': progress = Math.min(o.target, m.flags.mined || 0); target = o.target; break;
+      case 'craft':
+        progress = o.targets.map((t) => Math.min(t.count, (m.flags.crafted && m.flags.crafted[`${t.slot}:${t.tier}`]) || 0));
+        target = o.targets.map((t) => t.count);
+        break;
+      default: break;
+    }
+  }
+  return {
+    mode: state.mode,
+    active: m.active,
+    title: def ? def.title : null,
+    npc: def ? def.npc : null,
+    brief: def ? def.brief : null,
+    objective: o ? o.label : null,
+    progress,
+    target,
+    done: def ? missionDone(state) : false,
+    completed: m.completed.slice(),
+  };
 }
 
 function shipView(ship, mults, drone) {
@@ -1311,6 +1596,8 @@ function view(state) {
   }));
   const v = {
     version: state.version,
+    mode: state.mode,
+    mission: missionView(state),
     isk: state.isk,
     // The active ship's cargo hold, exposed as `minerals` for client compat.
     minerals: active ? { ...active.cargo } : emptyCargo(),
@@ -1399,6 +1686,14 @@ module.exports = {
   BLUEPRINTS,
   createInitialState,
   isValidState,
+  evaluateMission,
+  missionView,
+  missionAction,
+  spawnMissionEnemies,
+  startMission,
+  missionStartNeeded,
+  MISSIONS,
+  MISSION_ORDER,
   tick,
   buyShip,
   sellShip,

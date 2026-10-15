@@ -393,3 +393,95 @@ html, body {
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.error { border-color: var(--bad); color: var(--bad); }
+
+/* ---------- mode menu ---------- */
+.mode-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 40%, rgba(30, 46, 84, 0.85), rgba(4, 6, 12, 0.97));
+}
+.mode-menu[hidden] { display: none; }
+.mode-card {
+  width: min(460px, 90vw);
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 26px;
+  text-align: center;
+  box-shadow: 0 0 60px rgba(79, 209, 255, 0.15);
+}
+.mode-title {
+  margin: 0 0 4px;
+  font-size: 2rem;
+  letter-spacing: 4px;
+  color: var(--accent);
+}
+.mode-sub { margin: 0 0 20px; color: var(--muted); font-size: 0.9rem; }
+.mode-btn {
+  display: block;
+  width: 100%;
+  margin: 10px 0;
+  padding: 14px 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.mode-btn:hover { border-color: var(--accent); background: rgba(79, 209, 255, 0.08); }
+.mode-desc {
+  display: block;
+  margin-top: 5px;
+  font-size: 0.78rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+/* ---------- mission UI (story mode) ---------- */
+.mission-tracker {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 8px 16px;
+  border: 1px solid var(--gold);
+  border-radius: 10px;
+  background: rgba(12, 19, 34, 0.85);
+  color: var(--text);
+  font-size: 0.9rem;
+  text-align: center;
+  pointer-events: none;
+  max-width: 80vw;
+}
+.mission-tracker .label { color: var(--gold); font-weight: 700; }
+.mission-tracker .sub { color: var(--muted); }
+
+.mission-dialogue {
+  position: fixed;
+  bottom: 110px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 55;
+  width: min(560px, 92vw);
+}
+.mission-card {
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--gold);
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+}
+.mission-npc { color: var(--gold); font-weight: 700; margin-bottom: 6px; }
+.mission-text { color: var(--text); line-height: 1.4; margin-bottom: 12px; }
+.mission-card button { float: right; }

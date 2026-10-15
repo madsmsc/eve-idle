@@ -74,6 +74,9 @@ buttons, and a Hangar/Market overlay.
  - **Loot** — destroying rats can drop **modules** into your *Hangar → Loot*.
    Hit *Equip* to fit one into the first empty slot of that type on your active
    ship, free of charge. Bigger rats drop better modules, more reliably.
+ - **Industry** — every module tier has a **blueprint** that turns raw **minerals**
+   into a module. Open *Hangar → Industry* (while docked) and craft — the ore is
+   taken from your cargo hold, so haul it to the station first.
  - **▶ Auto** — toggle the **Auto** button to run the whole idle loop hands-free:
    warp to a belt → mine → auto-recall home when the hold is full → sell → warp
    back to a belt. Tap it again to take back control any time.
@@ -87,6 +90,32 @@ the ship **auto-recalls** to the nearest station → **sell all** your cargo →
 back to a belt. Rats get tougher (and pay more) as you earn ISK, so keep
 upgrading. When a system runs dry, jump through a **gate** to a new one — and if
 a neighbouring system pays more for your ore, haul it there instead.
+
+## Modes & the storyline
+
+Every load starts on a **start menu** with two ways to play, each with its own
+save slot (picking a mode resumes that save, or starts fresh — progress in one
+mode never clobbers the other):
+
+- **DEMO** — the open sandbox: three systems, 10k ISK, a free Rifter, open gates,
+  factions, ambushes, drones, loot and industry. No story.
+- **START** — a guided **storyline** in Jita ("rookie space"). You complete a
+  linear pilot-training course of **eight missions**, each teaching one mechanic:
+
+  | # | Mission | Lesson |
+  |---|---|---|
+  | 1 | Under Attack | Combat — destroy the attacker frigate |
+  | 2 | Help the Buddies | Range — your Range Amplifier wins the opening volley |
+  | 3 | Last Stand | Death — a scripted, unwinnable wave destroys your ship |
+  | 4 | A New Clone | Clones & stations — dock in your replacement frigate |
+  | 5 | Mining 101 | Mining — mine 40 ore |
+  | 6 | Rogue Drones | Drones — destroy the drone hub, earn a mining drone |
+  | 7 | The Forge | Industry — craft a Weapon I and a Shield Extender II |
+  | 8 | Certification | Gates — finish the course and Jita's gates unlock |
+
+  Missions run in order, are tracked in the HUD, and the gate **jump stays locked
+  until you earn your certification** (m8). After that the open sandbox continues
+  with all of your progress kept.
 
 ## Why the backend matters here
 
@@ -142,6 +171,7 @@ npx playwright install chromium
 | ------ | -------------------- | --------------------------------- | ------------------------------- |
 | GET    | `/api/state`         | —                                 | Current state (server view)     |
 | GET    | `/api/catalog`       | —                                 | Ships, minerals, enemies, constants |
+| POST   | `/api/mode`          | `{mode}`                          | Switch to a mode's save (`demo`/`story`), creating it if absent |
 | POST   | `/api/tick`          | `{x, y}`                          | Report position, advance time, collect idle |
 | POST   | `/api/buy-ship`      | `{type}`                          | Buy a ship (spawns at the station) |
 | POST   | `/api/sell-ship`     | `{shipId}`                        | Sell a ship                     |
@@ -152,13 +182,15 @@ npx playwright install chromium
 | POST   | `/api/train-skill`   | `{skill}`                           | Train a skill up one level (spends skill points) |
 | POST   | `/api/buy-drone`     | `{type, tier}`                     | Buy a drone (`mining`/`combat`, tier 1-3) |
 | POST   | `/api/equip-loot`    | `{lootId}`                         | Fit a looted module into the first empty slot |
+| POST   | `/api/craft-module`  | `{slotType, tier}`                 | Craft a module from cargo ore (must be docked) |
 | POST   | `/api/sell-minerals` | `{mineral, amount}`               | Sell minerals (amount or `all`) |
 | POST   | `/api/sell-all`      | `{}`                              | Dump the whole cargo hold        |
 | POST   | `/api/engage`        | `{enemyId}`                       | Attack a hostile you're next to |
 | POST   | `/api/combat-action` | `{action}`                        | In-fight action: `shieldBoost`, `overload`, or `disengage` |
 | POST   | `/api/warp`          | `{targetId}` or `{x, y}`          | Instantly move to a POI / point in your system |
 | POST   | `/api/gate`          | `{gateId}`                        | Jump to the connected system (must be at the gate) |
-| POST   | `/api/reset`         | `{}`                              | Wipe and regenerate the world   |
+| POST   | `/api/mission`       | `{action}`                        | Storyline action (e.g. `continue` to accept the next mission) |
+| POST   | `/api/reset`         | `{}`                              | Wipe and regenerate the **active mode's** state |
 
 Successful responses return `{ state }` (a computed view). Failures return
 `400` and `{ error }`.

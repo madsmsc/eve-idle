@@ -14,13 +14,13 @@
 // its type (see MODULES); the ship's effective stat is its base (scaled by
 // level and loadout) plus the flat bonus of every module fitted in that type.
 const SHIPS = {
-  rifter:    { key: 'rifter',    name: 'Rifter',    cost: 0,      mining: 6,   combat: 5,   sellValue: 0,      cargo: 60,   shield: 50,  hull: 100,  dps: 10, slots: { weapon: 1, shield: 1, armor: 0, mining: 1, cargo: 1 } },
-  falcon:    { key: 'falcon',    name: 'Falcon',    cost: 5000,   mining: 14,  combat: 12,  sellValue: 2500,   cargo: 200,  shield: 120, hull: 200,  dps: 25, slots: { weapon: 2, shield: 2, armor: 1, mining: 1, cargo: 1 } },
-  raptor:    { key: 'raptor',    name: 'Raptor',    cost: 15000,  mining: 8,   combat: 30,  sellValue: 7500,   cargo: 120,  shield: 80,  hull: 250,  dps: 40, slots: { weapon: 3, shield: 1, armor: 1, mining: 0, cargo: 1 } },
-  vexor:     { key: 'vexor',     name: 'Vexor',     cost: 20000,  mining: 30,  combat: 25,  sellValue: 10000,  cargo: 500,  shield: 150, hull: 300,  dps: 35, slots: { weapon: 2, shield: 2, armor: 1, mining: 3, cargo: 2 } },
-  gnosis:    { key: 'gnosis',    name: 'Gnosis',    cost: 75000,  mining: 70,  combat: 40,  sellValue: 37500,  cargo: 1200, shield: 300, hull: 500,  dps: 60, slots: { weapon: 2, shield: 2, armor: 2, mining: 4, cargo: 4 } },
-  manticore: { key: 'manticore', name: 'Manticore', cost: 100000, mining: 12,  combat: 80,  sellValue: 50000,  cargo: 250,  shield: 200, hull: 600,  dps: 90, slots: { weapon: 4, shield: 2, armor: 2, mining: 0, cargo: 1 } },
-  brutix:    { key: 'brutix',    name: 'Brutix',    cost: 250000, mining: 170, combat: 60,  sellValue: 125000, cargo: 3000, shield: 400, hull: 800,  dps: 70, slots: { weapon: 2, shield: 3, armor: 3, mining: 5, cargo: 5 } },
+  rifter:    { key: 'rifter',    name: 'Rifter',    cost: 0,      mining: 6,   combat: 5,   sellValue: 0,      cargo: 60,   shield: 50,  hull: 100,  dps: 10, slots: { weapon: 1, shield: 1, armor: 0, mining: 1, cargo: 1, range: 1 } },
+  falcon:    { key: 'falcon',    name: 'Falcon',    cost: 5000,   mining: 14,  combat: 12,  sellValue: 2500,   cargo: 200,  shield: 120, hull: 200,  dps: 25, slots: { weapon: 2, shield: 2, armor: 1, mining: 1, cargo: 1, range: 1 } },
+  raptor:    { key: 'raptor',    name: 'Raptor',    cost: 15000,  mining: 8,   combat: 30,  sellValue: 7500,   cargo: 120,  shield: 80,  hull: 250,  dps: 40, slots: { weapon: 3, shield: 1, armor: 1, mining: 0, cargo: 1, range: 1 } },
+  vexor:     { key: 'vexor',     name: 'Vexor',     cost: 20000,  mining: 30,  combat: 25,  sellValue: 10000,  cargo: 500,  shield: 150, hull: 300,  dps: 35, slots: { weapon: 2, shield: 2, armor: 1, mining: 3, cargo: 2, range: 1 } },
+  gnosis:    { key: 'gnosis',    name: 'Gnosis',    cost: 75000,  mining: 70,  combat: 40,  sellValue: 37500,  cargo: 1200, shield: 300, hull: 500,  dps: 60, slots: { weapon: 2, shield: 2, armor: 2, mining: 4, cargo: 4, range: 1 } },
+  manticore: { key: 'manticore', name: 'Manticore', cost: 100000, mining: 12,  combat: 80,  sellValue: 50000,  cargo: 250,  shield: 200, hull: 600,  dps: 90, slots: { weapon: 4, shield: 2, armor: 2, mining: 0, cargo: 1, range: 1 } },
+  brutix:    { key: 'brutix',    name: 'Brutix',    cost: 250000, mining: 170, combat: 60,  sellValue: 125000, cargo: 3000, shield: 400, hull: 800,  dps: 70, slots: { weapon: 2, shield: 3, armor: 3, mining: 5, cargo: 5, range: 1 } },
 };
 
 // Fitting modules. Each module type boosts one stat by a flat bonus. A module
@@ -33,6 +33,7 @@ const MODULES = {
   armor:  { key: 'armor',  name: 'Armor Plate',       stat: 'hull',   tiers: [ { tier: 1, cost: 800,   bonus: 35 },  { tier: 2, cost: 3000,  bonus: 100 }, { tier: 3, cost: 9000,  bonus: 240 } ] },
   mining: { key: 'mining', name: 'Mining Augmenter',  stat: 'mining', tiers: [ { tier: 1, cost: 600,   bonus: 4 },   { tier: 2, cost: 2500,  bonus: 12 },  { tier: 3, cost: 8000,  bonus: 35 } ] },
   cargo:  { key: 'cargo',  name: 'Cargo Expander',    stat: 'cargo',  tiers: [ { tier: 1, cost: 500,   bonus: 60 },  { tier: 2, cost: 2000,  bonus: 160 }, { tier: 3, cost: 6000,  bonus: 450 } ] },
+  range:  { key: 'range',  name: 'Range Amplifier',   stat: 'range',  tiers: [ { tier: 1, cost: 700,   bonus: 3 },   { tier: 2, cost: 2800,  bonus: 8 },   { tier: 3, cost: 8500,  bonus: 20 } ] },
 };
 
 // Each asteroid holds one mineral. Mining an asteroid yields that mineral.
@@ -53,6 +54,8 @@ const ENEMIES = {
 };
 
 const START_ISK = 10000;
+const START_STORY_ISK = 0;  // the storyline pays its own way via mission rewards
+const MODES = ['demo', 'story'];
 const MAX_OFFLINE_SECONDS = 8 * 3600;
 const UPGRADE_BASE = 500;
 const UPGRADE_GROWTH = 1.5;
@@ -197,6 +200,92 @@ const BLUEPRINTS = (() => {
   return out;
 })();
 
+// ---- missions (story mode pilot training) ----
+// The storyline is a linear chain of missions that each teach one mechanic.
+// Missions run in the starting system (Jita); the jump gates stay locked until
+// the player is certified (m8). `grant` is handed out up-front (what the NPC
+// gives you); rewards are granted on completion. `spawn` lists mission enemies
+// placed near the home station when the mission starts.
+const MISSION_ORDER = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8'];
+
+const MISSION_ENEMIES = {
+  attacker:  { key: 'attacker',   name: 'Attacker Frigate',    iskReward: 200, shield: 40,  hull: 80,  dps: 8 },
+  shortrange: { key: 'shortrange', name: 'Short-Range Frigate', iskReward: 300, shield: 45, hull: 90, dps: 12, rangeDelay: 2 },
+  waveship:  { key: 'waveship',  name: 'Invasion Wave',       iskReward: 0,   shield: 90,  hull: 220, dps: 30 },
+  dronhub:   { key: 'dronhub',   name: 'Rogue Drone Hub',     iskReward: 0,   shield: 70,  hull: 110, dps: 12, rangeDelay: 2 },
+};
+
+const MISSIONS = {
+  m1: {
+    id: 'm1', title: 'Under Attack', npc: 'Station A',
+    brief: '"We\'re under attack. Please help. Take out this frigate — fly to it and fire your guns."',
+    grant: { modules: [{ slot: 'weapon', tier: 1 }], isk: 0 },
+    spawn: [{ type: 'attacker', count: 1 }],
+    objective: { type: 'kill', enemyTag: 'attacker', count: 1, label: 'Destroy the attacker frigate' },
+    completion: { isk: 500, text: '"Good shooting, pilot. We\'re in your debt."' },
+  },
+  m2: {
+    id: 'm2', title: 'Help the Buddies', npc: 'Station A',
+    brief: '"Our buddies need help too. Kill three frigates. These frigates carry short-range guns — fit your Range Amplifier to hit them before they can hit you. Stay at range and take them down."',
+    grant: { modules: [{ slot: 'range', tier: 1 }], isk: 0 },
+    spawn: [{ type: 'shortrange', count: 3 }],
+    objective: { type: 'kill', enemyTag: 'shortrange', count: 3, label: 'Destroy short-range frigates' },
+    completion: { isk: 1000, text: '"They never knew what hit them. Range is everything out here."' },
+  },
+  m3: {
+    id: 'm3', title: 'Last Stand', npc: 'Station A',
+    brief: '"It doesn\'t seem like there\'s any way out of this alive. Too many ships are warping in and our warp drive is down. Let\'s go down fighting. After all, a good fight is what it\'s all about."',
+    grant: { isk: 0 },
+    spawn: [{ type: 'waveship', count: 5 }],
+    objective: { type: 'death', label: 'Survive as long as you can' },
+    completion: { isk: 0, text: '"They got you... but you fought well."' },
+  },
+  m4: {
+    id: 'm4', title: 'A New Clone', npc: 'Station A',
+    brief: '"Welcome back, pilot. You have awoken in another clone. Here\'s how a station works. You have been given a replacement frigate — dock and take stock."',
+    grant: { ships: ['rifter'], modules: [{ slot: 'weapon', tier: 1 }], isk: 0 },
+    objective: { type: 'dock', label: 'Dock at the station' },
+    completion: { isk: 0, text: '"Everything you own survives in your clone\'s records. Ships come and go — the pilot endures."' },
+  },
+  m5: {
+    id: 'm5', title: 'Mining 101', npc: 'Station A',
+    brief: '"All ships and modules are made from refined ore. Let\'s get you started on mining. Fly to an asteroid and mine it into your hold."',
+    grant: { modules: [{ slot: 'mining', tier: 1 }], isk: 0 },
+    objective: { type: 'mine', target: 40, label: 'Mine 40 ore' },
+    completion: { isk: 500, text: '"Good. That ore will become hulls and guns."' },
+  },
+  m6: {
+    id: 'm6', title: 'Rogue Drones', npc: 'Station A',
+    brief: '"We are having some trouble with rogue drones harassing our miners. Go deal with the drone hub — and if you handle it, drone control is yours."',
+    grant: { isk: 0 },
+    spawn: [{ type: 'dronhub', count: 1 }],
+    objective: { type: 'kill', enemyTag: 'dronhub', count: 1, label: 'Destroy the rogue drone hub' },
+    completion: { isk: 800, drones: [{ type: 'mining', tier: 1 }], text: '"The hub is gone. Your new mining drone is in the bay."' },
+  },
+  m7: {
+    id: 'm7', title: 'The Forge', npc: 'Station A',
+    brief: '"Every module you fly is refined and built. Craft a Weapon I, then a Shield Extender II — haul the ore home and use the Industry tab."',
+    // A cargo expander so a fresh hold can fit the recipe ore for both crafts.
+    grant: { modules: [{ slot: 'cargo', tier: 3 }], isk: 0 },
+    objective: {
+      type: 'craft',
+      label: 'Craft a Weapon I and a Shield Extender II',
+      targets: [
+        { slot: 'weapon', tier: 1, count: 1, label: 'Craft Weapon I' },
+        { slot: 'shield', tier: 2, count: 1, label: 'Craft Shield Extender II' },
+      ],
+    },
+    completion: { isk: 1000, text: '"That\'s how industry works. Now you can build what you fly."' },
+  },
+  m8: {
+    id: 'm8', title: 'Certification', npc: 'Station A',
+    brief: '"Congratulations on finishing our new pilot course and receiving your pilot certification. You are now authorized for all jump gates, which allow you access to other systems."',
+    grant: { isk: 0 },
+    objective: { type: 'dialogue', label: 'Accept your certification' },
+    completion: { isk: 0, text: '"The gates are open, pilot. Fly safe."' },
+  },
+};
+
 // ---- spatial world ----
 const WORLD_SIZE = 8000;        // world is WORLD_SIZE x WORLD_SIZE units
 const ASTEROID_FIELDS = 12;     // number of asteroid belts (clusters)
@@ -213,7 +302,7 @@ const MAX_SPEED = 600;          // units/sec (client + server agree on this)
 const MAX_THRUST = 260;         // units/sec^2 (client-side)
 const DAMPING = 0.985;          // per-frame velocity damping (client-side)
 const ARRIVE_RADIUS = 24;       // click-to-move arrival radius
-const STATE_VERSION = 11;
+const STATE_VERSION = 12;
 
 // ---- rat threat scaling (idle/incremental difficulty) ----
 // Rats get tougher as the player earns ISK, but pay more, so combat stays a
@@ -229,6 +318,8 @@ module.exports = {
   MINERALS,
   ENEMIES,
   START_ISK,
+  START_STORY_ISK,
+  MODES,
   MAX_OFFLINE_SECONDS,
   UPGRADE_BASE,
   UPGRADE_GROWTH,
@@ -261,6 +352,9 @@ module.exports = {
   LOOT_TIERS,
   CRAFT_DISCOUNT,
   BLUEPRINTS,
+  MISSION_ORDER,
+  MISSION_ENEMIES,
+  MISSIONS,
   WORLD_SIZE,
   ASTEROID_FIELDS,
   ASTEROIDS_PER_FIELD,

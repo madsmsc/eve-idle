@@ -1,6 +1,7 @@
 'use strict';
 
 const { test, expect } = require('@playwright/test');
+const cfg = require('../server/config');
 
 // Browser end-to-end tests for the rendered world. These drive the real
 // frontend against the real server, covering the full loop: input -> local
@@ -24,10 +25,36 @@ function nearest(list, ship) {
   return list.slice().sort((a, b) => dist(a, ship) - dist(b, ship))[0];
 }
 
+// Warp to the first living enemy with the given missionTag, engage it, and wait
+// for the fight to resolve as a win. With `expectFreeFire` it also asserts the
+// combat banner advertises the opening-volley window.
+async function killMissionEnemy(page, tag, expectFreeFire = false) {
+  const st = await getState(page);
+  const e = st.world.enemies.find((x) => x.missionTag === tag && x.alive);
+  expect(e).toBeTruthy();
+  await page.evaluate((id) => window.__eve.warp(id), e.id);
+  await expect(async () => {
+    const s = await getState(page);
+    expect(dist(s.activeShip, e)).toBeLessThan(200);
+  }).toPass({ timeout: 30000 });
+  await page.getByTestId('engage-btn').click();
+  await expect(page.getByTestId('combat-banner')).toBeVisible({ timeout: 5000 });
+  if (expectFreeFire) {
+    await expect(page.getByTestId('combat-banner')).toContainText('free fire');
+  }
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.combat).toBeFalsy();
+    expect(s.world.enemies.find((x) => x.id === e.id).alive).toBe(false);
+  }).toPass({ timeout: 45000 });
+}
+
 test.beforeEach(async ({ page }) => {
   // Clean slate for every test (regenerates a fresh world), then load the app.
   await page.request.post('/api/reset');
   await page.goto('/');
+  // The mode menu shows on every load; the suite runs in DEMO mode.
+  await page.getByTestId('mode-demo').click();
   // ship-info only shows the active ship name once the app has booted.
   await expect(page.getByTestId('ship-info')).toContainText('Rifter', { timeout: 15000 });
 });
@@ -410,6 +437,7 @@ test('reset returns to a fresh game', async ({ page }) => {
 
   await page.request.post('/api/reset');
   await page.reload();
+  await page.getByTestId('mode-demo').click();
   await expect(page.getByTestId('ship-info')).toContainText('Rifter', { timeout: 15000 });
   await expect(page.getByTestId('isk')).toContainText('10.0K');
   const s = await getState(page);
@@ -448,3 +476,153 @@ test('auto-pilot: toggling ▶ Auto on warps to a belt and mines, off stops it',
   await page.evaluate(() => window.__eve.setAutoPilot(false));
   await expect(page.getByTestId('auto-pilot')).toContainText('Auto');
 });
+
+test('mode menu: START boots the storyline with zero ISK, DEMO resumes the sandbox', async ({ page }) => {
+  await page.request.post('/api/reset');
+  await page.goto('/');
+  await expect(page.getByTestId('mode-menu')).toBeVisible();
+  await page.getByTestId('mode-story').click();
+  await expect(page.getByTestId('ship-info')).toContainText('Rifter', { timeout: 15000 });
+  let st = await getState(page);
+  expect(st.mode).toBe('story');
+  expect(st.isk).toBe(0);
+  // Switching back to demo returns the 10k sandbox start.
+  await page.reload();
+  await page.getByTestId('mode-demo').click();
+  await expect(page.getByTestId('ship-info')).toContainText('Rifter', { timeout: 15000 });
+  st = await getState(page);
+  expect(st.mode).toBe('demo');
+  expect(st.isk).toBeGreaterThan(0);
+});
+
+// Play the whole storyline in one pass (m1→m8), asserting each mission's lesson
+// as the course advances and ending at certification with the jump gates open.
+// A single chain replaces five per-mission tests that each replayed the opening
+// missions, so the browser suite covers the same ground in a fraction of the time.
+test('storyline: pilot training from rookie to certification (m1–m8) unlocks the gates', async ({ page }) => {
+  test.setTimeout(420000);
+  await page.request.post('/api/reset');
+  await page.goto('/');
+  await page.getByTestId('mode-story').click();
+  await expect(page.getByTestId('ship-info')).toContainText('Rifter', { timeout: 15000 });
+
+  // m1 — Under Attack: the handed-out weapon beats the attacker.
+  await expect(page.getByTestId('mission-tracker')).toContainText('Under Attack');
+  await expect(page.getByTestId('mission-dialogue')).toBeVisible();
+  await page.getByTestId('mission-continue').click();
+  await expect(page.getByTestId('mission-dialogue')).toBeHidden();
+  await killMissionEnemy(page, 'attacker');
+
+  // m2 — Help the Buddies: three short-range frigates; the first fight shows the
+  // free-fire window the Range Amplifier grants.
+  await expect(page.getByTestId('mission-tracker')).toContainText('Help the Buddies');
+  const frigates = (await getState(page)).world.enemies.filter((e) => e.missionTag === 'shortrange' && e.alive);
+  expect(frigates.length).toBe(3);
+  await killMissionEnemy(page, 'shortrange', true);
+  await killMissionEnemy(page, 'shortrange');
+  await killMissionEnemy(page, 'shortrange');
+
+  // m3 — Last Stand: the unwinnable wave destroys the ship (scripted death).
+  await expect(page.getByTestId('mission-tracker')).toContainText('Last Stand');
+  const wave = (await getState(page)).world.enemies.find((e) => e.missionTag === 'waveship' && e.alive);
+  expect(wave).toBeTruthy();
+  await page.evaluate((id) => window.__eve.warp(id), wave.id);
+  await expect(async () => {
+    const s = await getState(page);
+    expect(dist(s.activeShip, wave)).toBeLessThan(200);
+  }).toPass({ timeout: 30000 });
+  await page.getByTestId('engage-btn').click();
+  await expect(page.getByTestId('death-screen')).toBeVisible({ timeout: 45000 });
+  await page.getByTestId('death-dismiss').click();
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.mission.active).toBe('m4');
+  }).toPass({ timeout: 15000 });
+
+  // m4 — A New Clone: dock at the station, which hands off to m5.
+  await expect(page.getByTestId('mission-tracker')).toContainText('A New Clone');
+  await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.mission.active === 'm5');
+
+  // m5 — Mining 101: warp to a belt and mine 40 ore.
+  await expect(page.getByTestId('mission-tracker')).toContainText('Mining 101');
+  await warpUntil(page, (await getState(page)).world.belts[0].id, (s) => s.mission.active === 'm6');
+
+  // m6 — Rogue Drones: destroy the drone hub and earn a mining drone.
+  await killMissionEnemy(page, 'dronhub');
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.mission.active).toBe('m7');
+  }).toPass({ timeout: 45000 });
+  const afterM6 = await getState(page);
+  expect((afterM6.drones.mining || []).some((d) => d.tier === 1)).toBe(true);
+
+  // m7 — The Forge: mine the ore both recipes need, dock, and craft them.
+  await expect(page.getByTestId('mission-tracker')).toContainText('The Forge');
+  const w = cfg.BLUEPRINTS.weapon[1].recipe;
+  const sh = cfg.BLUEPRINTS.shield[2].recipe;
+  await mineNeededOre(page, {
+    iron: w.iron + sh.iron,
+    bauxite: w.bauxite + sh.bauxite,
+    gadolinium: w.gadolinium + sh.gadolinium,
+    megacyte: w.megacyte + sh.megacyte,
+  });
+  await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
+  await page.getByTestId('hangar-btn').click();
+  await expect(page.getByTestId('hangar-industry')).toBeVisible();
+  await page.getByTestId('craft-weapon-t1').click();
+  await page.getByTestId('craft-shield-t2').click();
+
+  // m8 — Certification: accept it and the jump gates unlock.
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.mission.active).toBe('m8');
+  }).toPass({ timeout: 15000 });
+  await expect(page.getByTestId('mission-tracker')).toContainText('Certification');
+  await page.getByTestId('mission-continue').click();
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.mission.completed).toContain('m8');
+  }).toPass({ timeout: 15000 });
+  const certified = await getState(page);
+  const gate = certified.world.gates[0];
+  await page.evaluate((id) => window.__eve.warp(id), gate.id);
+  await expect(async () => {
+    const s = await getState(page);
+    expect(dist(s.activeShip, gate)).toBeLessThan(400);
+  }).toPass({ timeout: 30000 });
+  await expect(page.getByTestId('gate-jump')).toBeVisible({ timeout: 10000 });
+});
+
+// Warp to a POI and wait until `done(state)` is true — used for handoffs that
+// complete automatically once you arrive (docking, mission progression).
+async function warpUntil(page, targetId, done) {
+  await page.evaluate((id) => window.__eve.warp(id), targetId);
+  await expect(async () => {
+    const s = await getState(page);
+    expect(done(s)).toBe(true);
+  }).toPass({ timeout: 45000 });
+}
+
+// Warp the active ship onto a living asteroid of each still-missing mineral and
+// mine until its target is met. Parking directly on the rock (rather than a belt)
+// is deterministic: mining always takes the nearest asteroid in range, so a belt's
+// layout can never starve a mineral. Polls tightly so the ~444 units of recipe ore
+// fits the granted 510-unit hold; if it ever fills we dock and sell, then continue.
+async function mineNeededOre(page, needs) {
+  for (let iter = 0; iter < 200; iter++) {
+    const st = await getState(page);
+    const c = st.minerals || {};
+    const missing = Object.entries(needs).filter(([k, n]) => (c[k] || 0) < n);
+    if (!missing.length) return st;
+    if (st.cargoFull) {
+      await warpUntil(page, st.world.stations[0].id, (s) => s.docked === true);
+      await page.request.post('/api/sell-all');
+      continue;
+    }
+    const rock = st.world.asteroids.find((a) => a.mineral === missing[0][0] && a.amount > 0);
+    if (!rock) throw new Error('No asteroid for missing mineral: ' + missing[0][0]);
+    await page.evaluate(([x, y]) => window.__eve.warp(null, { x, y }), [rock.x, rock.y]);
+    await page.waitForTimeout(300);
+  }
+  throw new Error('gave up mining the forge ore');
+}

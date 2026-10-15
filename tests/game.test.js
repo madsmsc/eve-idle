@@ -162,6 +162,167 @@ describe('isValidState', () => {
   });
 });
 
+describe('modes', () => {
+  test('demo is the default mode with the sandbox starting ISK', () => {
+    const s = fresh();
+    assert.equal(s.mode, 'demo');
+    assert.equal(s.isk, cfg.START_ISK);
+    assert.deepEqual(s.mission, { active: null, step: 0, flags: {}, completed: [] });
+  });
+  test('story mode starts with zero ISK and keeps its mode through reset', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    assert.equal(s.mode, 'story');
+    assert.equal(s.isk, cfg.START_STORY_ISK);
+    const r = game.reset(s, T0 + 1000);
+    assert.equal(r.mode, 'story');
+    assert.equal(r.isk, cfg.START_STORY_ISK);
+  });
+  test('an unknown mode falls back to demo', () => {
+    const s = game.createInitialState(T0, 42, 'arcade');
+    assert.equal(s.mode, 'demo');
+  });
+  test('view exposes mode and mission', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    const v = game.view(s);
+    assert.equal(v.mode, 'story');
+    assert.equal(v.mission.active, 'm1');
+    assert.equal(v.mission.title, 'Under Attack');
+    assert.equal(v.mission.objective, 'Destroy the attacker frigate');
+    assert.equal(v.mission.target, 1);
+    assert.deepEqual(v.mission.completed, []);
+  });
+});
+
+describe('missions', () => {
+  test('a story save starts m1 with its target spawned near the station', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    assert.equal(s.mission.active, 'm1');
+    assert.equal(s.ships[0].fitting.weapon[0], 1, 'm1 grants a Weapon I');
+    const home = sys(s).stations[0];
+    const attacker = sys(s).enemies.find((e) => e.missionTag === 'attacker');
+    assert.ok(attacker, 'attacker spawned');
+    assert.ok(attacker.alive);
+    assert.ok(Math.hypot(attacker.x - home.x, attacker.y - home.y) < 1000, 'attacker near the station');
+  });
+
+  test('killing the m1 target completes it, pays the reward and starts m2', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    const before = s.isk;
+    const attacker = sys(s).enemies.find((e) => e.missionTag === 'attacker');
+    s.ships[0].level = 100; // guarantee the win
+    s.ships[0].x = attacker.x;
+    s.ships[0].y = attacker.y;
+    const eng = game.engage(s, attacker.id, T0).state;
+    const s2 = game.tick(eng, T0 + 100000, null, () => 1);
+    assert.equal(s2.combatLog[0].won, true);
+    assert.deepEqual(s2.mission.completed, ['m1']);
+    assert.equal(s2.mission.active, 'm2');
+    assert.equal(s2.isk, before + cfg.MISSIONS.m1.completion.isk + cfg.MISSION_ENEMIES.attacker.iskReward);
+    assert.equal(s2.ships[0].fitting.range[0], 1, 'm2 grant fits a Range Amplifier I');
+  });
+
+  test('the storyline blocks jump gates until certified', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    const gate = sys(s).gates[0];
+    s.ships[0].x = gate.x;
+    s.ships[0].y = gate.y;
+    const r = game.gateJump(s, gate.id);
+    assert.ok(r.error && /pilot training/i.test(r.error));
+  });
+
+  test('certification (m8) unlocks jump gates', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    s.mission.completed = cfg.MISSION_ORDER.slice();
+    const gate = sys(s).gates[0];
+    s.ships[0].x = gate.x;
+    s.ships[0].y = gate.y;
+    const r = game.gateJump(s, gate.id);
+    assert.ok(!r.error, r.error);
+  });
+
+  test('mining counts towards a mine objective', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    s.mission.active = 'm5';
+    s.mission.flags = {};
+    const a = sys(s).asteroids.find((x) => x.amount > 0);
+    s.ships[0].x = a.x;
+    s.ships[0].y = a.y;
+    const s2 = game.tick(s, T0 + 2000, { x: a.x, y: a.y });
+    assert.ok((s2.mission.flags.mined || 0) > 0, 'mined ore counted');
+    assert.equal(s2.mission.active, 'm5', 'not complete after one short tick');
+  });
+
+  test('m7 crafting objective counts each target recipe', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    game.startMission(s, 'm7');
+    assert.equal(s.ships[0].fitting.cargo[0], 3, 'm7 grant fits a cargo expander');
+    s.ships[0].x = sys(s).stations[0].x;
+    s.ships[0].y = sys(s).stations[0].y;
+    const bp1 = cfg.BLUEPRINTS.weapon[1].recipe;
+    s.ships[0].cargo = { iron: bp1.iron + 5, bauxite: bp1.bauxite + 5, gadolinium: bp1.gadolinium + 5, megacyte: bp1.megacyte + 5 };
+    let s2 = game.craftModule(s, 'weapon', 1).state;
+    assert.equal(s2.mission.active, 'm7', 'one craft is not enough');
+    const bp2 = cfg.BLUEPRINTS.shield[2].recipe;
+    s2.ships[0].cargo = { iron: bp2.iron + 5, bauxite: bp2.bauxite + 5, gadolinium: bp2.gadolinium + 5, megacyte: bp2.megacyte + 5 };
+    s2 = game.craftModule(s2, 'shield', 2).state;
+    assert.deepEqual(s2.mission.completed, ['m7']);
+    assert.equal(s2.mission.active, 'm8');
+  });
+
+  test('m3 last stand: losing the scripted wave completes it and grants the m4 clone frigate (no loaner)', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    game.startMission(s, 'm3');
+    const wave = sys(s).enemies.find((e) => e.missionTag === 'waveship');
+    assert.ok(wave, 'waveship spawned');
+    s.ships[0].x = wave.x;
+    s.ships[0].y = wave.y;
+    const eng = game.engage(s, wave.id, T0).state;
+    const s2 = game.tick(eng, T0 + 100000, null, () => 1);
+    assert.equal(s2.combatLog[0].won, false, 'the wave is unwinnable');
+    assert.deepEqual(s2.mission.completed, ['m3']);
+    assert.equal(s2.mission.active, 'm4');
+    // The scripted death suppresses the free loaner; the m4 grant is the respawn.
+    assert.equal(s2.ships.length, 1, 'no free loaner on top of the replacement');
+    assert.equal(s2.ships[0].fitting.weapon[0], 1, 'm4 grants a Weapon I');
+    assert.equal(game.view(s2).docked, false, 'the replacement spawns outside the dock');
+  });
+
+  test('m4: docking at the station completes it and starts m5', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    game.startMission(s, 'm3');
+    const wave = sys(s).enemies.find((e) => e.missionTag === 'waveship');
+    s.ships[0].x = wave.x;
+    s.ships[0].y = wave.y;
+    let s2 = game.tick(game.engage(s, wave.id, T0).state, T0 + 100000, null, () => 1);
+    assert.equal(s2.mission.active, 'm4');
+    const home = sys(s2).stations[0];
+    s2.ships[0].x = home.x;
+    s2.ships[0].y = home.y;
+    s2 = game.tick(s2, T0 + 100001);
+    assert.deepEqual(s2.mission.completed, ['m3', 'm4']);
+    assert.equal(s2.mission.active, 'm5');
+    assert.equal(s2.ships[0].fitting.mining[0], 1, 'm5 grant fits a Mining Laser I');
+  });
+
+  test('m6: killing the drone hub completes it, pays ISK and grants a mining drone', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    game.startMission(s, 'm6');
+    const hub = sys(s).enemies.find((e) => e.missionTag === 'dronhub');
+    assert.ok(hub, 'drone hub spawned');
+    s.ships[0].level = 100; // guarantee the win
+    s.ships[0].x = hub.x;
+    s.ships[0].y = hub.y;
+    const eng = game.engage(s, hub.id, T0).state;
+    const before = eng.isk;
+    const s2 = game.tick(eng, T0 + 100000, null, () => 1);
+    assert.equal(s2.combatLog[0].won, true);
+    assert.deepEqual(s2.mission.completed, ['m6']);
+    assert.equal(s2.mission.active, 'm7');
+    assert.equal(s2.isk, before + cfg.MISSIONS.m6.completion.isk);
+    assert.ok((s2.drones.mining || []).some((d) => d.type === 'mining' && d.tier === 1), 'mining drone granted');
+  });
+});
+
 describe('spatial mining', () => {
   test('mines the asteroid you stand on, yielding its mineral', () => {
     const s = fresh();
@@ -588,6 +749,48 @@ describe('engage + combat', () => {
     assert.equal(sys(r.state).enemies.find((e) => e.id === enemyId).alive, true, 'rat escapes');
     assert.equal(r.state.combatLog[0].disengaged, true);
     assert.equal(r.state.combatLog[0].won, false);
+  });
+});
+
+describe('range free-fire window', () => {
+  // Turn the first enemy into a mission-style short-range frigate (stats stored on
+  // the enemy object, like spawnMissionEnemies does) and engage it.
+  function engageEnemyOfType(state, type, rangeDelay = 0) {
+    const e = sys(state).enemies[0];
+    Object.assign(e, { type, shield: 45, hull: 90, dps: 12, rangeDelay });
+    state.ships[0].x = e.x;
+    state.ships[0].y = e.y;
+    return game.engage(state, e.id, T0).state;
+  }
+
+  test('a short-range enemy grants an opening free-fire window before its guns bite', () => {
+    const s = engageEnemyOfType(fresh(), 'shortrange', 2);
+    const playerBefore = s.combat.shipShield + s.combat.shipHull;
+    const enemyBefore = s.combat.enemyShield + s.combat.enemyHull;
+    // One second in: still inside the window, the player is untouched...
+    const t1 = game.tick(s, T0 + 1000);
+    assert.equal(t1.combat.shipShield + t1.combat.shipHull, playerBefore);
+    // ...but the enemy is already taking fire.
+    assert.ok(t1.combat.enemyShield + t1.combat.enemyHull < enemyBefore);
+    // Past the window the enemy's guns start hitting.
+    const t2 = game.tick(t1, T0 + 3000);
+    assert.ok(t2.combat.shipShield + t2.combat.shipHull < playerBefore);
+  });
+
+  test('fitting a range module extends the free-fire window', () => {
+    let s = fresh();
+    const e = sys(s).enemies[0];
+    Object.assign(e, { type: 'shortrange', shield: 45, hull: 90, dps: 12, rangeDelay: 2 });
+    s = game.fitModule(s, s.ships[0].id, 'range', 0, 1).state;
+    s.ships[0].x = e.x;
+    s.ships[0].y = e.y;
+    const c = game.engage(s, e.id, T0).state.combat;
+    assert.equal(c.enemyRangeDelay, 2 + cfg.MODULES.range.tiers[0].bonus);
+  });
+
+  test('a normal rat has no free-fire window', () => {
+    const s = engageEnemyOfType(fresh(), 'pirate');
+    assert.equal(s.combat.enemyRangeDelay, 0);
   });
 });
 
