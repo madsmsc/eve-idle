@@ -1,0 +1,7 @@
+{
+  "name": "eve-idle-client",
+  "version": "1.0.0",
+  "description": "Client-side ES modules for EVE Idle (loaded in the browser as <script type=\"module\">).",
+  "private": true,
+  "type": "module"
+}

@@ -154,8 +154,9 @@ the port and save location.
 ```bash
 npm run test:unit    # game logic + validation (node:test)
 npm run test:api     # HTTP API + persistence (node:test, real server)
+npm run test:client  # client core: node tree + camera (node:test)
 npm run test:e2e     # browser end-to-end (Playwright)
-npm test             # unit + api
+npm test             # unit + api + client core
 npm run test:all     # everything
 ```
 
@@ -204,11 +205,16 @@ server/
   store.js    # atomic JSON persistence
   index.js    # http server, routing, static file serving
 public/
-  index.html  # canvas + thin HUD + hangar overlay
-  style.css   # dark space theme
-  app.js      # canvas renderer, ship physics, input, server sync
+  index.html     # canvas + thin HUD + hangar overlay
+  style.css      # dark space theme
+  main.js        # entry: builds the App and the node tree, exposes window.__eve
+  package.json   # marks public/ as an ES module package
+  core/          # App orchestrator, Node base, Player, Camera, input, API sync
+  view/          # world + entity render nodes: ship, combat, effects, world
+  ui/            # screen-space UI nodes: minimap, HUD, hangar, overlays
 tests/
   game.test.js   # unit tests for game logic
   api.test.js    # HTTP + persistence integration tests
+  client.test.js # client core tests: node tree + camera
   e2e.spec.js    # Playwright browser tests
 ```

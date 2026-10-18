@@ -7,8 +7,9 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test tests/game.test.js tests/api.test.js",
+    "test": "node --test tests/game.test.js tests/api.test.js tests/client.test.js",
     "test:unit": "node --test tests/game.test.js",
+    "test:client": "node --test tests/client.test.js",
     "test:api": "node --test tests/api.test.js",
     "test:e2e": "playwright test",
     "test:all": "node --test tests/game.test.js tests/api.test.js && playwright test"
