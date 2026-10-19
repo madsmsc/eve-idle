@@ -11,7 +11,19 @@ export function initInput(app) {
     if (k === 'escape') app.toggleHangar(false);
   });
 
-  // TODO: clicking must not nagivate
+  // TODO: clicking must not nagivate - you can click warpables/enemies/belts/etc
+  // and move like that - that means we need some other good way to navigate
+  // around a system because it currently doesn't fit on a screen
+  // - in eve online you have an "overview" window showing all objects in the system
+  // maybe we need a similar "overview" panel to facilitate navigation
+  // or implement a mini-map that allows quick navigation within the system, which we already
+  // have in the upper right corner of the screen (the mini-map), how could
+  // that be integrated with the click-to-warp functionality?
+  // in eve online you also have the "icons" at the edges of the screen indicating nearby objects and points of interest
+  // maybe we could implement something similar to help players quickly locate important objects without having to scroll around the system manually
+  // let's plan some demos of these and try them out to see if they're fun.
+  // and whne we remove the click to warp, all the references in the ui to it must also be cleaned up.
+  
 
   const canvas = app.canvas;
   canvas.addEventListener('click', (ev) => {

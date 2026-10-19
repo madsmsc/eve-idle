@@ -53,14 +53,16 @@ export class App {
       .add(new StationNode())
       .add(new GateNode())
       .add(new EnemyNode())
-      .add(new ShipNode())
+      .add(new ShipNode(this))
       .add(new CombatNode())
       .add(new EffectsNode());
     this.ui = new UINode(this);
     this.hangar = this.ui.hangar;
     this.hud = this.ui.hud; // TODO: this seems unecessary - couldnt access be through the ui, so app did not have a hud field?
     this.overlays = this.ui.overlays;
-    this.root = new Node(this).add(this.world).add(this.ui);
+    this.root = new Node(this);
+    this.root.add(this.world);
+    this.root.add(this.ui);
 
     this.frame = this.frame.bind(this);
   }

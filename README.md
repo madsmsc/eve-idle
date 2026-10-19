@@ -42,6 +42,10 @@ buttons, and a Hangar/Market overlay.
 - **Loadout** — before a fight, fit your ship for a role: **🛡 Tank** (more
   shield/hull, less damage), **⚖ Balanced** (stock), or **⚔ DPS** (more damage,
   less shielding). The fit applies to your next fights.
+  TODO: remove the "loadout" concept - the fitting concept of adding modules
+  to the ship captures all the necessary customization. there should be no 
+  mention of loadout anywhere in any files. which of course means
+  removing it from the ui as well.
 - **Fitting** — in the *Hangar → Fitting* panel, install modules in your active
   ship's slots. Each ship has a fixed number of slots per type (**Weapon**,
   **Shield**, **Armor**, **Mining**, **Cargo**); bigger ships have more. Each

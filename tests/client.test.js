@@ -74,6 +74,30 @@ describe('Node', () => {
   });
 });
 
+describe('App scene tree', () => {
+  test('renders the world and UI as sibling layers', async () => {
+    const { App } = await import('../public/core/app.js');
+    const app = new App({ canvas: {}, ctx: {}, minimap: {}, mctx: {} });
+    const rendered = [];
+    app.world.render = () => rendered.push('world');
+    app.ui.render = () => rendered.push('ui');
+
+    app.root.render(12345);
+
+    assert.equal(app.root.children[0], app.world);
+    assert.equal(app.root.children[1], app.ui);
+    assert.deepEqual(rendered, ['world', 'ui']);
+
+    const assertAppPropagation = (node) => {
+      for (const child of node.children) {
+        assert.equal(child.app, app);
+        assertAppPropagation(child);
+      }
+    };
+    assertAppPropagation(app.root);
+  });
+});
+
 describe('Camera', () => {
   test('worldToScreen / screenToWorld are inverses around the player', async () => {
     const { Camera } = await import('../public/core/camera.js');

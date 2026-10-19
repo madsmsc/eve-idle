@@ -1,5 +1,7 @@
 'use strict';
 
+// TODO: these tests are too slow - reduce the number and complexity of the end-to-end checks where possible.
+
 const { test, expect } = require('@playwright/test');
 const cfg = require('../server/config');
 
@@ -65,6 +67,14 @@ test('renders the world and HUD', async ({ page }) => {
   const box = await world.boundingBox();
   expect(box.width).toBeGreaterThan(0);
   expect(box.height).toBeGreaterThan(0);
+  await expect.poll(() => world.evaluate((canvas) => {
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const colors = new Set();
+    for (let i = 0; i < pixels.length; i += 64) {
+      colors.add(`${pixels[i]},${pixels[i + 1]},${pixels[i + 2]}`);
+    }
+    return colors.size;
+  })).toBeGreaterThan(1);
 
   await expect(page.getByTestId('isk')).toContainText('10.0K');
   await expect(page.getByTestId('ship-info')).toContainText('Rifter');

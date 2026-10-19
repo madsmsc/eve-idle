@@ -11,7 +11,6 @@ const STAR_COUNT = 170;
 
 export class StarNode extends Node {
   render(now) {
-    console.log('rendering');
     const ctx = this.app.ctx;
     const s = this.app.state.world.star;
     const p = this.app.camera.worldToScreen(s.x, s.y);
