@@ -183,22 +183,32 @@ export class App {
   // available; leaving the station hides it and closes the hangar.
   syncDockedView() {
     const docked = this.state && this.state.docked;
+    const wasOpen = this.hangarOpen;
     const view = document.getElementById('station-view');
     if (view) view.hidden = !docked;
     if (docked && this.state.dockedStation) {
       const nameEl = document.getElementById('station-view-name');
       if (nameEl) nameEl.textContent = this.state.dockedStation;
     }
-    if (this.hangarOpen && !docked) this.toggleHangar(false);
+    this.hangarOpen = !!docked;
+    document.getElementById('hangar').hidden = !docked;
+    if (docked && !wasOpen) this.ui.hangar.refresh();
   }
 
-  // Undock: warp just off the pad so the ship is in space again.
-  launch() {
+  // Undock into nearby space without steering the ship back to the station.
+  async launch({ keepAutoPilot = false } = {}) {
     const station =
       this.state.world.stations.find((s) => s.name === this.state.dockedStation) ||
       this.state.world.stations[0];
     if (!station) return;
-    this.ship.doWarp(null, { x: station.x + this.constants.dockRange + 200, y: station.y, silent: true });
+    if (this.autoPilot && !keepAutoPilot) this.toggleAutoPilot();
+    this.player.suppressAutoRecall = true;
+    const launched = await this.ship.doWarp(null, {
+      x: station.x + this.constants.dockRange + 200,
+      y: station.y,
+      silent: true,
+    });
+    if (!launched) this.player.suppressAutoRecall = false;
   }
 
   // Detect combat start/resolution so we can play the right explosion. The server
@@ -248,8 +258,12 @@ export class App {
     return this.ship.doWarp(targetId, opts);
   }
 
-  warpToNearest(kind) {
-    return this.ship.warpToNearest(kind);
+  navigateToNearest(kind) {
+    return this.ship.navigateToNearest(kind);
+  }
+
+  navigate(targetId, coordinates, opts) {
+    return this.ship.navigate(targetId, coordinates, opts);
   }
 
   doGateJump() {
@@ -265,8 +279,14 @@ export class App {
   }
 
   toggleHangar(force) {
+    if (this.state && this.state.docked) {
+      this.hangarOpen = true;
+      document.getElementById('hangar').hidden = false;
+      this.ui.hangar.refresh();
+      return;
+    }
     const wantOpen = force !== undefined ? force : !this.hangarOpen;
-    if (wantOpen && !(this.state && this.state.docked)) {
+    if (wantOpen) {
       this.toast('Dock at a station to use the hangar', true);
       return;
     }
@@ -302,8 +322,8 @@ export class App {
   }
 
   // The idle auto-loop: keep the ship mining the nearest belt, fly home to sell
-  // when the hold is full, then go back to a belt. It only sends the same intents
-  // a player would (warp / sell), so the server stays authoritative.
+  // when the hold is full, then return to a belt. The server remains authoritative
+  // for position, mining, and every transaction.
   updateAutoPilot(now) {
     if (!this.autoPilot || !this.state || !this.state.activeShip) return;
     if (now - this.lastAutoTick < 800) return;
@@ -314,7 +334,11 @@ export class App {
         this.doAction('sell-all', {});
       } else {
         const belt = this.player.nearestPoiOf('belt');
-        if (belt) this.ship.doWarp(belt.id, { silent: true });
+        if (belt) {
+          this.launch({ keepAutoPilot: true }).then((launched) => {
+            if (launched && this.autoPilot) this.player.setDestination(belt.x, belt.y);
+          });
+        }
       }
       return;
     }
@@ -324,7 +348,7 @@ export class App {
     }
     if (!this.player.nearestAsteroid()) {
       const belt = this.player.nearestPoiOf('belt');
-      if (belt) this.ship.doWarp(belt.id, { silent: true });
+      if (belt) this.player.setDestination(belt.x, belt.y);
     }
   }
 

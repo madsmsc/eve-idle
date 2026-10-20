@@ -48,13 +48,52 @@ export class ShipNode extends Node {
     return ok;
   }
 
-  warpToNearest(kind) {
+  navigate(targetId, coordinates, opts = {}) {
+    if (this.app.state.combat) {
+      this.app.toast('Cannot navigate while in combat', true);
+      return false;
+    }
+    if (this.app.state.docked) {
+      this.app.toast('Launch from the station before navigating', true);
+      return false;
+    }
+
+    let destination = coordinates;
+    if (targetId) {
+      const lists = this.app.state.world;
+      const target = [
+        ...lists.enemies.filter((enemy) => enemy.alive),
+        ...lists.stations,
+        ...lists.belts,
+        ...lists.planets,
+        ...lists.moons,
+        ...lists.gates,
+        lists.star,
+      ].find((poi) => poi.id === targetId);
+      if (!target) {
+        this.app.toast('Navigation target is no longer available', true);
+        return false;
+      }
+      destination = target;
+      if (lists.enemies.some((enemy) => enemy.id === targetId)) this.app.targetEnemyId = targetId;
+    }
+
+    if (!destination || !Number.isFinite(destination.x) || !Number.isFinite(destination.y)) {
+      this.app.toast('Invalid navigation destination', true);
+      return false;
+    }
+    this.app.player.setDestination(destination.x, destination.y);
+    if (!opts.silent) this.app.toast('Destination set');
+    return true;
+  }
+
+  navigateToNearest(kind) {
     const poi = this.app.player.nearestPoiOf(kind);
     if (!poi) {
       this.app.toast(`No ${kind} in this system`, true);
       return;
     }
-    this.doWarp(poi.id);
+    return this.navigate(poi.id);
   }
 
   async doGateJump() {

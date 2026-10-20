@@ -20,6 +20,10 @@ export class Input {
       if (k === 'h') app.toggleHangar();
       if (k === 'c') app.toggleCharacter();
       if (k === 'i') app.toggleInventory();
+      if (k === 'a') app.toggleAutoPilot();
+      if (k === 'b') app.navigateToNearest('belt');
+      if (k === 's') app.navigateToNearest('station');
+      if (k === 'r') app.navigateToNearest('rat');
       if (k === 'escape') {
         app.toggleHangar(false);
         app.toggleCharacter(false);
@@ -32,7 +36,7 @@ export class Input {
       const rect = canvas.getBoundingClientRect();
       const sx = ev.clientX - rect.left;
       const sy = ev.clientY - rect.top;
-      // 1) clicking a rat warps to it and marks it as the target
+      // 1) clicking a rat sets a flight destination and marks it as the target
       let hit = null;
       let bd = 22;
       for (const e of app.state.world.enemies) {
@@ -46,10 +50,10 @@ export class Input {
       }
       if (hit) {
         app.targetEnemyId = hit.id;
-        app.doWarp(hit.id, { silent: true });
+        app.navigate(hit.id, null, { silent: true });
         return;
       }
-      // 2) clicking a POI (station/belt/planet/moon/gate/star) warps to it
+      // 2) clicking a POI sets a flight destination
       const w = app.state.world;
       const pois = [];
       for (const st of w.stations) pois.push({ id: st.id, x: st.x, y: st.y, r: 70 });
@@ -69,7 +73,7 @@ export class Input {
         }
       }
       if (best) {
-        app.doWarp(best.id, { silent: true });
+        app.navigate(best.id, null, { silent: true });
         return;
       }
     });
@@ -79,7 +83,7 @@ export class Input {
       const rect = minimap.getBoundingClientRect();
       const x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * app.constants.worldSize;
       const y = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)) * app.constants.worldSize;
-      app.doWarp(null, { x, y, silent: true });
+      app.navigate(null, { x, y }, { silent: true });
     };
     minimap.addEventListener('click', (ev) => navigateOverview(ev.clientX, ev.clientY));
     minimap.addEventListener('keydown', (ev) => {
@@ -96,16 +100,14 @@ export class Input {
     }, { passive: false });
 
     document.getElementById('engage').addEventListener('click', () => app.doEngage());
-    document.getElementById('hangar-btn').addEventListener('click', () => app.toggleHangar());
-    document.getElementById('hangar-close').addEventListener('click', () => app.toggleHangar(false));
     document.getElementById('character-btn').addEventListener('click', () => app.toggleCharacter());
     document.getElementById('character-close').addEventListener('click', () => app.toggleCharacter(false));
     document.getElementById('inventory-btn').addEventListener('click', () => app.toggleInventory());
     document.getElementById('inventory-close').addEventListener('click', () => app.toggleInventory(false));
     document.getElementById('death-dismiss').addEventListener('click', () => app.overlays.hideDeath());
-    document.getElementById('warp-belt').addEventListener('click', () => app.warpToNearest('belt'));
-    document.getElementById('warp-station').addEventListener('click', () => app.warpToNearest('station'));
-    document.getElementById('warp-rat').addEventListener('click', () => app.warpToNearest('rat'));
+    document.getElementById('navigate-belt').addEventListener('click', () => app.navigateToNearest('belt'));
+    document.getElementById('navigate-station').addEventListener('click', () => app.navigateToNearest('station'));
+    document.getElementById('navigate-rat').addEventListener('click', () => app.navigateToNearest('rat'));
     document.getElementById('gate-jump').addEventListener('click', () => app.doGateJump());
     document.getElementById('auto-pilot').addEventListener('click', () => app.toggleAutoPilot());
     document.getElementById('mission-continue').addEventListener('click', async () => {

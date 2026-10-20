@@ -1,6 +1,6 @@
 # EVE Idle
 
-A small idle game rendered as a 2D top-down world. Warp to asteroid belts to
+A small idle game rendered as a 2D top-down world. Fly to asteroid belts to
 mine, stations to trade, and hostile ships to fight. Use your earnings to buy
 ships, fit modules, and train skills and drones. A ship's stats are its base
 stats plus its equipped modules. A parked ship keeps mining while you are away,
@@ -8,17 +8,21 @@ and a full cargo hold recalls it to a station to sell.
 
 ## How to play
 
-- Navigate with the system overview map, click visible objects, or use the
-  nearest belt, station, and rat buttons. Warp to a gate and jump to another
+- Navigate by steering to a destination over time: click the overview map or a
+  visible object, or use the nearest belt, station, and rat buttons. Fly to a
+  gate and jump to another
   system. Navigation is single-click: every belt, station, rat, moon, planet and
   gate is reachable by clicking it (or its dot on the overview map), so systems
   stay large and open instead of being split into small "pockets".
 - Engage nearby enemies to fight. Use shield boost, weapon overload, or
   disengage. Ship loss costs your cargo; insurance covers part of the ship's
   purchase price.
-- Use the Hangar to manage ships, modules, fitting presets, skills, drones,
-  loot, industry, achievements, and agent contracts. Module tier changes have
-  a cost or refund. Selling loot and refining modules require docking.
+- Docking replaces the world and flight HUD with full-screen station services.
+  Manage ships, modules, fittings, skills, drones, loot, industry, achievements,
+  and agent contracts there. Launch leaves the ship floating outside the
+  station; it does not steer back automatically, even if the hold is full.
+  Module tier changes have a cost or refund. Selling loot and refining modules
+  require docking.
 - Press C (or the Char button) any time to open the character sheet and see
   your standing with every faction, not just the active system's. Press I (or
   Inventory) to see the ship's contents plus **quantum storage** — a single
@@ -97,7 +101,6 @@ root: Node
     ├── CharacterNode
     ├── InventoryNode
     ├── MinimapNode
-    ├── HealthBarNode
     ├── HudNode
     └── OverlaysNode
 ```

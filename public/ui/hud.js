@@ -69,6 +69,24 @@ export class HudNode extends Node {
     const ind = document.getElementById('mining-indicator');
     const a = this.app.player.nearestAsteroid();
     const active = state.activeShip;
+    const status = document.getElementById('ship-status');
+    status.hidden = !!state.docked || !active;
+    if (active) {
+      const shield = state.combat ? state.combat.shipShield : active.shield;
+      const shieldMax = state.combat ? state.combat.shipShieldMax : active.shield;
+      const hull = state.combat ? state.combat.shipHull : active.hull;
+      const hullMax = state.combat ? state.combat.shipHullMax : active.hull;
+      const speed = Math.hypot(this.app.player.vx, this.app.player.vy);
+      const speedMax = this.app.constants.maxSpeed;
+      const setStatusBar = (name, value, max, label) => {
+        const bar = status.querySelector(`[data-testid="status-${name}"]`);
+        bar.querySelector('.status-track i').style.width = pct(value, max);
+        status.querySelector(`[data-testid="status-${name}-value"]`).textContent = label;
+      };
+      setStatusBar('shield', shield, shieldMax, `${Math.ceil(shield)} / ${Math.ceil(shieldMax)}`);
+      setStatusBar('hull', hull, hullMax, `${Math.ceil(hull)} / ${Math.ceil(hullMax)}`);
+      setStatusBar('speed', speed, speedMax, `${Math.round(speed)} m/s`);
+    }
     if (state.combat) {
       ind.textContent = '⚔ In combat';
       ind.className = 'mining-indicator';
@@ -85,7 +103,7 @@ export class HudNode extends Node {
     if (target && !state.combat) {
       btn.disabled = false;
       btn.classList.add('engage-ready');
-      btn.textContent = `Engage ${(this.app.catalog.enemies[target.type] || {}).name || 'target'}`;
+      btn.textContent = 'Engage';
     } else {
       btn.disabled = true;
       btn.classList.remove('engage-ready');
@@ -122,22 +140,6 @@ export class HudNode extends Node {
         : `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'} — ${remain}s`;
       chud.hidden = false;
       chud.innerHTML = `
-        <div class="chud-row you">
-          <span class="chud-name">${active ? active.name : 'Ship'}</span>
-          <span class="chud-bars">
-            <span class="chud-bar shield"><i style="width:${pct(c.shipShield, c.shipShieldMax)}"></i></span>
-            <span class="chud-bar hull"><i style="width:${pct(c.shipHull, c.shipHullMax)}"></i></span>
-          </span>
-          <span class="chud-num">${Math.ceil(c.shipShield)}/${Math.ceil(c.shipHull)}</span>
-        </div>
-        <div class="chud-row foe">
-          <span class="chud-name">${edef ? edef.name : 'Target'}</span>
-          <span class="chud-bars">
-            <span class="chud-bar shield"><i style="width:${pct(c.enemyShield, c.enemyShieldMax)}"></i></span>
-            <span class="chud-bar hull"><i style="width:${pct(c.enemyHull, c.enemyHullMax)}"></i></span>
-          </span>
-          <span class="chud-num">${Math.ceil(c.enemyShield)}/${Math.ceil(c.enemyHull)}</span>
-        </div>
         <div class="chud-actions">
           <button class="chud-btn" data-action="shieldBoost" data-testid="act-boost" ${c.boostReady ? '' : 'disabled'}>
             🛡 Boost${c.boostReady ? ` · ${c.boostCost}` : ` · ${Math.ceil(c.boostCooldown)}s`}
@@ -221,6 +223,6 @@ export class HudNode extends Node {
       return `Mining ${this.app.catalog.minerals[a.mineral].name}${belt ? ' · ' + belt.name : ''}`;
     }
     if (player.nearestEnemyInRange()) return 'Rat nearby — press E to engage';
-    return 'Idle — click to warp, or use the ⚡ buttons';
+    return 'Idle — select a destination to fly there';
   }
 }

@@ -164,3 +164,119 @@ describe('Camera', () => {
     assert.equal(cam.shakeY, 0);
   });
 });
+
+describe('CombatNode', () => {
+  test('renders hostile laser fire in red after the enemy range delay', async () => {
+    const { CombatNode } = await import('../public/view/combat.js');
+    const strokes = [];
+    let path = [];
+    const ctx = {
+      save() {},
+      restore() {},
+      beginPath() { path = []; },
+      moveTo(x, y) { path.push([x, y]); },
+      lineTo(x, y) { path.push([x, y]); },
+      stroke() { strokes.push({ color: this.strokeStyle, path: [...path] }); },
+      fill() {},
+      closePath() {},
+      translate() {},
+      rotate() {},
+      arc() {},
+    };
+    const app = {
+      ctx,
+      canvas: { width: 800, height: 600 },
+      camera: { zoom: 1, worldToScreen: (x, y) => ({ x: x + 50, y: y + 70 }) },
+      combatFx: { explosions: [] },
+      state: {
+        combat: { enemyId: 'enemy-1', fightTime: 3, enemyRangeDelay: 2 },
+        world: { enemies: [{ id: 'enemy-1', x: 100, y: 200, type: 'pirate' }] },
+        drones: { combat: [] },
+      },
+    };
+
+    new CombatNode(app).render(100);
+
+    assert.ok(strokes.some(({ color, path: line }) =>
+      color === '#ff4657' &&
+      JSON.stringify(line) === JSON.stringify([[150, 270], [400, 300]])
+    ), 'enemy laser travels from the target to the player in red');
+  });
+});
+
+describe('EnemyNode status labels', () => {
+  test('shows the enemy name and live shield and hull above its ship', async () => {
+    const { EnemyNode } = await import('../public/view/world.js');
+    const labels = [];
+    const bars = [];
+    const ctx = {
+      save() {},
+      restore() {},
+      translate() {},
+      rotate() {},
+      beginPath() {},
+      moveTo() {},
+      lineTo() {},
+      closePath() {},
+      fill() {},
+      stroke() {},
+      fillRect(x, y, width) {
+        if (this.fillStyle === '#4fd1ff' || this.fillStyle === '#ff657a') bars.push({ color: this.fillStyle, width });
+      },
+      strokeRect() {},
+      fillText(text) { labels.push(text); },
+    };
+    const enemy = { id: 'enemy-1', x: 100, y: 200, type: 'pirate', alive: true, seed: 1 };
+    const app = {
+      ctx,
+      camera: {
+        zoom: 1,
+        getViewBounds: () => ({ minX: 0, maxX: 500, minY: 0, maxY: 500 }),
+        worldToScreen: () => ({ x: 250, y: 250 }),
+      },
+      catalog: { enemies: { pirate: { name: 'Pirate Frigate', shield: 40, hull: 80 } } },
+      state: {
+        combat: {
+          enemyId: enemy.id,
+          enemyShield: 20,
+          enemyShieldMax: 40,
+          enemyHull: 40,
+          enemyHullMax: 80,
+        },
+        world: { enemies: [enemy] },
+      },
+      targetEnemyId: null,
+    };
+
+    new EnemyNode(app).render(0);
+
+    assert.ok(labels.includes('Pirate Frigate'));
+    assert.deepEqual(bars.map(({ color, width }) => ({ color, width })), [
+      { color: '#4fd1ff', width: 33 },
+      { color: '#ff657a', width: 33 },
+    ]);
+  });
+});
+
+describe('Player auto-recall', () => {
+  test('launching suppresses recall of cargo already full at the station', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const app = {
+      constants: { worldSize: 8000, dockRange: 260 },
+      state: { combat: null, cargoFull: true, world: { stations: [] } },
+    };
+    const player = new Player(app);
+    const station = { x: 1000, y: 1000 };
+    player.nearestStation = () => ({ station, d: 500 });
+    player.suppressAutoRecall = true;
+    player.maybeAutoRecall();
+    assert.equal(player.destination, null);
+
+    app.state.cargoFull = false;
+    player.maybeAutoRecall();
+    assert.equal(player.suppressAutoRecall, false);
+    app.state.cargoFull = true;
+    player.maybeAutoRecall();
+    assert.deepEqual(player.destination, station);
+  });
+});

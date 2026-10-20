@@ -2,54 +2,9 @@
 
 // Combat presentation. CombatNode animates the fight the server is resolving:
 // drones orbit the ship, lasers and rockets fly at the target, and an explosion
-// plays when the server reports the outcome. HealthBarNode draws the live
-// shield/hull bars (enemy above it, your ship below center) straight from the
-// server's real-time simulation.
+// plays when the server reports the outcome.
 import { Node } from '../core/node.js';
-import { clamp, pseudo } from '../core/util.js';
-
-export class HealthBarNode extends Node {
-  render(now) {
-    const state = this.app.state;
-    if (!state.combat) return super.render(now);
-    const c = state.combat;
-    const e = state.world.enemies.find((x) => x.id === c.enemyId);
-    if (!e) return super.render(now);
-    const ep = this.app.camera.worldToScreen(e.x, e.y);
-    const cx = this.app.canvas.width / 2;
-    const cy = this.app.canvas.height / 2;
-    const zoom = this.app.camera.zoom;
-    const er = this.enemySize(e.type) * zoom;
-    this.drawShipBars(ep.x, ep.y - er - 24 * zoom, 66 * zoom, c.enemyShield, c.enemyShieldMax, c.enemyHull, c.enemyHullMax);
-    this.drawShipBars(cx, cy + 40 * zoom, 74 * zoom, c.shipShield, c.shipShieldMax, c.shipHull, c.shipHullMax);
-    return super.render(now);
-  }
-
-  enemySize(type) {
-    return type === 'dread' ? 26 : type === 'faction' ? 20 : type === 'gang' ? 16 : 13;
-  }
-
-  // Two stacked bars (shield on top, hull below) centered on (x, y).
-  drawShipBars(x, y, w, shield, shieldMax, hull, hullMax) {
-    const h = 5;
-    const gap = 2;
-    this.drawBar(x, y, w, h, shieldMax > 0 ? shield / shieldMax : 0, '#4fd1ff');
-    this.drawBar(x, y + h + gap, w, h, hullMax > 0 ? hull / hullMax : 0, '#35d07f');
-  }
-
-  drawBar(x, y, w, h, frac, color) {
-    const ctx = this.app.ctx;
-    ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(x - w / 2, y, w, h);
-    ctx.fillStyle = color;
-    ctx.fillRect(x - w / 2, y, w * clamp(frac, 0, 1), h);
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x - w / 2, y, w, h);
-    ctx.restore();
-  }
-}
+import { pseudo } from '../core/util.js';
 
 export class CombatNode extends Node {
   render(now) {
@@ -77,10 +32,13 @@ export class CombatNode extends Node {
       const dy = cy + Math.sin(a) * orbitR;
       this.drawDrone(dx, dy, a + Math.PI / 2);
       if (pseudo(i * 31 + Math.floor(now / 130)) > 0.3) {
-        this.drawLaser(dx, dy, ep.x, ep.y, now, i * 7 + 1);
+        this.drawLaser(dx, dy, ep.x, ep.y, now, i * 7 + 1, '#ffd24a', '#ffb020');
       }
     }
-    this.drawLaser(cx, cy, ep.x, ep.y, now, 42);
+    this.drawLaser(cx, cy, ep.x, ep.y, now, 42, '#ffd24a', '#ffb020');
+    if (c.fightTime >= c.enemyRangeDelay && now % 900 < 150) {
+      this.drawLaser(ep.x, ep.y, cx, cy, now, 99, '#ff4657', '#ff1728');
+    }
     this.drawRockets(cx, cy, ep.x, ep.y, now);
 
     const er = this.enemySize(e.type) * this.app.camera.zoom;
@@ -120,14 +78,14 @@ export class CombatNode extends Node {
     ctx.restore();
   }
 
-  drawLaser(x1, y1, x2, y2, now, seed) {
+  drawLaser(x1, y1, x2, y2, now, seed, color, glow) {
     const ctx = this.app.ctx;
     const pulse = 0.5 + 0.5 * Math.sin(now / 60 + seed);
     ctx.save();
     ctx.globalAlpha = 0.35 + 0.5 * pulse;
-    ctx.strokeStyle = '#ffd24a';
+    ctx.strokeStyle = color;
     ctx.lineWidth = 1.5 + pulse * 1.5;
-    ctx.shadowColor = '#ffb020';
+    ctx.shadowColor = glow;
     ctx.shadowBlur = 8;
     ctx.beginPath();
     ctx.moveTo(x1, y1);

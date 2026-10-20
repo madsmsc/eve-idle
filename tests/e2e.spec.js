@@ -116,14 +116,48 @@ test('renders the world, minimap and HUD', async ({ page }) => {
   expect(Math.hypot(st.activeShip.x - home.x, st.activeShip.y - home.y)).toBeLessThan(1);
 });
 
+test('space status bars persist, docked status is hidden, and shortcuts are labeled', async ({ page }) => {
+  await expect(page.getByTestId('ship-status')).toBeHidden();
+  await expect(page.locator('#controls-hint')).toHaveCount(0);
+  await expect(page.getByTestId('auto-pilot')).toHaveAttribute('data-shortcut', 'A');
+  await expect(page.getByTestId('navigate-belt')).toHaveAttribute('data-shortcut', 'B');
+  await expect(page.getByTestId('navigate-station')).toHaveAttribute('data-shortcut', 'S');
+  await expect(page.getByTestId('navigate-rat')).toHaveAttribute('data-shortcut', 'R');
+  await expect(page.getByTestId('engage-btn')).toHaveAttribute('data-shortcut', 'E');
+  await expect(page.getByTestId('character-btn')).toHaveAttribute('data-shortcut', 'C');
+  await expect(page.getByTestId('inventory-btn')).toHaveAttribute('data-shortcut', 'I');
+
+  await undock(page);
+  await expect(page.getByTestId('ship-status')).toBeVisible();
+  await expect(page.getByTestId('status-shield-value')).toContainText('/');
+  await expect(page.getByTestId('status-hull-value')).toContainText('/');
+  await expect(page.getByTestId('status-speed-value')).toContainText('m/s');
+
+  const state = await getState(page);
+  const destinationX = state.activeShip.x < 7000
+    ? state.activeShip.x + 500
+    : state.activeShip.x - 500;
+  await page.evaluate((x) => window.__eve.setDestination(x, window.__eve.state.activeShip.y), destinationX);
+  await expect.poll(async () => {
+    const speed = await page.getByTestId('status-speed-value').textContent();
+    return Number.parseInt(speed, 10);
+  }).toBeGreaterThan(0);
+
+  await page.keyboard.press('r');
+  await expect.poll(() => page.evaluate(() => window.__eve.getDestination())).not.toBeNull();
+  await page.keyboard.press('a');
+  await expect(page.getByTestId('auto-pilot')).toHaveClass(/on/);
+  await page.keyboard.press('a');
+  await expect(page.getByTestId('auto-pilot')).not.toHaveClass(/on/);
+});
+
 test('the hangar shows the active system market price', async ({ page }) => {
   const st = await getState(page);
   // The active system exposes a price for every mineral.
   expect(st.world.prices).toBeTruthy();
   expect(st.world.prices.iron).toBeGreaterThanOrEqual(1);
   expect(st.world.prices.bauxite).toBeGreaterThanOrEqual(1);
-  // The hangar lists the active system's price, not a fixed base price.
-  await page.getByTestId('hangar-btn').click();
+  // Station services list the active system's price, not a fixed base price.
   const localPrice = st.world.prices.iron;
   await expect(page.getByTestId('hangar-cargo')).toContainText(`${localPrice} ISK/u`);
 });
@@ -141,7 +175,8 @@ test('manual keys no longer pilot the ship', async ({ page }) => {
   expect(Math.abs(after.y - before.y)).toBeLessThan(1);
 });
 
-test('click warps the ship to the clicked belt', async ({ page }) => {
+test('clicking a belt sets a flight path instead of teleporting', async ({ page }) => {
+  await undock(page);
   const st = await getState(page);
   const box = await page.locator('#world').boundingBox();
   const ship = st.activeShip;
@@ -153,31 +188,61 @@ test('click warps the ship to the clicked belt', async ({ page }) => {
   if (!onScreen.length) return; // no belt on screen; nothing to assert
   const { b, sx, sy } = onScreen[0];
   await page.mouse.click(box.x + sx, box.y + sy);
-  await expect(async () => {
-    const s = await getState(page);
-    expect(dist(s.activeShip, b)).toBeLessThan(5);
-  }).toPass({ timeout: 5000 });
+  await expect.poll(() => page.evaluate(() => window.__eve.getDestination())).toMatchObject({ x: b.x, y: b.y });
+  const start = await page.evaluate(() => window.__eve.getShip());
+  await page.waitForTimeout(700);
+  const moving = await page.evaluate(() => window.__eve.getShip());
+  expect(dist(moving, start)).toBeGreaterThan(10);
+  expect(dist(moving, b)).toBeLessThan(dist(start, b));
 });
 
-test('overview map navigates to any system location and empty world clicks do not warp', async ({ page }) => {
+test('overview map sets a flight path and empty world clicks leave it unchanged', async ({ page }) => {
+  await undock(page);
   const before = await getState(page);
   const map = page.getByTestId('minimap');
   const mapBox = await map.boundingBox();
   const x = mapBox.x + mapBox.width * 0.72;
   const y = mapBox.y + mapBox.height * 0.28;
   await page.mouse.click(x, y);
-  await expect(async () => {
-    const s = await getState(page);
-    expect(Math.abs(s.activeShip.x - 0.72 * cfg.WORLD_SIZE)).toBeLessThan(50);
-    expect(Math.abs(s.activeShip.y - 0.28 * cfg.WORLD_SIZE)).toBeLessThan(50);
-  }).toPass({ timeout: 5000 });
-
-  const settled = await getState(page);
-  const worldBox = await page.locator('#world').boundingBox();
-  await page.mouse.click(worldBox.x + 5, worldBox.y + 5);
+  const target = { x: 0.72 * cfg.WORLD_SIZE, y: 0.28 * cfg.WORLD_SIZE };
+  await expect.poll(async () => {
+    const destination = await page.evaluate(() => window.__eve.getDestination());
+    return Math.hypot(destination.x - target.x, destination.y - target.y);
+  }).toBeLessThan(50);
+  const destinationBeforeEmptyClick = await page.evaluate(() => window.__eve.getDestination());
   await page.waitForTimeout(700);
-  const after = await getState(page);
-  expect(dist(after.activeShip, settled.activeShip)).toBeLessThan(5);
+  const moving = await page.evaluate(() => window.__eve.getShip());
+  expect(dist(moving, before.activeShip)).toBeGreaterThan(10);
+  expect(dist(moving, target)).toBeGreaterThan(10);
+
+  const traveling = await getState(page);
+  const worldBox = await page.locator('#world').boundingBox();
+  const world = traveling.world;
+  const hitTargets = [
+    ...world.enemies.filter((enemy) => enemy.alive).map((enemy) => ({ ...enemy, radius: 22 })),
+    ...world.stations.map((station) => ({ ...station, radius: 86 })),
+    ...world.belts.map((belt) => ({ ...belt, radius: 316 })),
+    ...world.planets.map((planet) => ({ ...planet, radius: planet.size + 66 })),
+    ...world.moons.map((moon) => ({ ...moon, radius: moon.size + 46 })),
+    ...world.gates.map((gate) => ({ ...gate, radius: 106 })),
+    { ...world.star, radius: world.star.size + 66 },
+  ].map((target) => ({
+    x: target.x - traveling.activeShip.x + worldBox.width / 2,
+    y: target.y - traveling.activeShip.y + worldBox.height / 2,
+    radius: target.radius,
+  }));
+  let emptyPoint = null;
+  for (let x = 12; x < worldBox.width - 12 && !emptyPoint; x += 12) {
+    for (let y = 12; y < worldBox.height - 12; y += 12) {
+      if (hitTargets.every((target) => Math.hypot(target.x - x, target.y - y) > target.radius + 8)) {
+        emptyPoint = { x, y };
+        break;
+      }
+    }
+  }
+  expect(emptyPoint).toBeTruthy();
+  await page.mouse.click(worldBox.x + emptyPoint.x, worldBox.y + emptyPoint.y);
+  expect(await page.evaluate(() => window.__eve.getDestination())).toEqual(destinationBeforeEmptyClick);
   expect(await map.getAttribute('aria-label')).toContain('overview map');
 });
 
@@ -193,18 +258,32 @@ test('system HUD shows the system name and color', async ({ page }) => {
   }).toPass({ timeout: 5000 });
 });
 
-test('warp buttons teleport the ship to a belt and a rat', async ({ page }) => {
-  await page.getByTestId('warp-belt').click();
-  await expect(async () => {
-    const s = await getState(page);
-    expect(s.world.belts.some((b) => dist(s.activeShip, b) < 5)).toBe(true);
-  }).toPass({ timeout: 5000 });
+test('navigation buttons route the ship to belts, hostiles, and stations', async ({ page }) => {
+  await undock(page);
+  let state = await getState(page);
+  const start = await page.evaluate(() => window.__eve.getShip());
+  const belt = nearest(state.world.belts, start);
+  await page.getByTestId('navigate-belt').click();
+  await expect.poll(() => page.evaluate(() => window.__eve.getDestination())).toMatchObject({ x: belt.x, y: belt.y });
+  await page.waitForTimeout(700);
+  let moving = await page.evaluate(() => window.__eve.getShip());
+  expect(dist(moving, start)).toBeGreaterThan(10);
+  expect(dist(moving, belt)).toBeLessThan(dist(start, belt));
 
-  await page.getByTestId('warp-rat').click();
-  await expect(async () => {
-    const s = await getState(page);
-    expect(s.world.enemies.some((e) => e.alive && dist(s.activeShip, e) < 5)).toBe(true);
-  }).toPass({ timeout: 5000 });
+  state = await getState(page);
+  const rat = nearest(state.world.enemies.filter((enemy) => enemy.alive), moving);
+  await page.getByTestId('navigate-rat').click();
+  await expect.poll(() => page.evaluate(() => window.__eve.getDestination())).toMatchObject({ x: rat.x, y: rat.y });
+  const ratRouteStart = await page.evaluate(() => window.__eve.getShip());
+  await page.waitForTimeout(700);
+  moving = await page.evaluate(() => window.__eve.getShip());
+  expect(dist(moving, ratRouteStart)).toBeGreaterThan(10);
+
+  state = await getState(page);
+  const station = nearest(state.world.stations, moving);
+  await page.getByTestId('navigate-station').click();
+  await expect.poll(() => page.evaluate(() => window.__eve.getDestination())).toMatchObject({ x: station.x, y: station.y });
+  await expect.poll(() => page.evaluate(() => window.__eve.state.docked), { timeout: 30000 }).toBe(true);
 });
 
 test('gate jump moves the ship to the connected system', async ({ page }) => {
@@ -232,7 +311,6 @@ test('HUD shows the controlling faction and standing', async ({ page }) => {
 
 test('the hangar lists every faction with standing and ambush risk', async ({ page }) => {
   const st = await getState(page);
-  await page.getByTestId('hangar-btn').click();
   const factions = page.getByTestId('hangar-factions');
   for (const f of st.factions) {
     await expect(factions).toContainText(f.name);
@@ -280,8 +358,11 @@ test('combat engages and resolves as a win or loss @slow', async ({ page }) => {
     expect(dist(s.activeShip, enemy)).toBeLessThan(200);
   }).toPass({ timeout: 30000 });
 
+  await expect(page.getByTestId('engage-btn')).toHaveText('Engage');
   await page.getByTestId('engage-btn').click();
   await expect(page.getByTestId('combat-banner')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('#combat-hud .chud-row')).toHaveCount(0);
+  await expect(page.getByTestId('act-boost')).toBeVisible();
 
   // Wait for the server to resolve the fight (up to ~20s for a dreadnought).
   await expect(async () => {
@@ -368,7 +449,6 @@ test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship'
 });
 
 test('fitting: fitting a module updates the active ship and spends ISK', async ({ page }) => {
-  await page.getByTestId('hangar-btn').click();
   await expect(page.getByTestId('hangar-fitting')).toBeVisible();
   // The stock rifter has one weapon slot, empty (tier 0) by default.
   await expect(page.getByTestId('fit-weapon-0-t0')).toHaveClass(/active/);
@@ -387,7 +467,6 @@ test('fitting: fitting a module updates the active ship and spends ISK', async (
 });
 
 test('skills: the hangar shows the skill tree and SP', async ({ page }) => {
-  await page.getByTestId('hangar-btn').click();
   await expect(page.getByTestId('hangar-skills')).toBeVisible();
   // A fresh account has no skill points, so training is unavailable.
   await expect(page.getByTestId('hangar-sp')).toContainText('0 SP');
@@ -395,7 +474,6 @@ test('skills: the hangar shows the skill tree and SP', async ({ page }) => {
 });
 
 test('hangar: open it and buy a ship', async ({ page }) => {
-  await page.getByTestId('hangar-btn').click();
   await expect(page.getByTestId('hangar')).toBeVisible();
 
   // The hangar re-renders on every sync, so click via evaluate to avoid
@@ -409,36 +487,51 @@ test('hangar: open it and buy a ship', async ({ page }) => {
 });
 
 test('rejects an unaffordable purchase with a toast', async ({ page }) => {
-  await page.getByTestId('hangar-btn').click();
   await page.evaluate(() => document.querySelector('[data-testid="buy-brutix"]').click()); // 250000 ISK, we have 10000
   await expect(page.getByTestId('toast')).toContainText(/Not enough ISK/i);
   const s = await getState(page);
   expect(s.ships.length).toBe(1);
 });
 
-test('station view shows while docked and Launch undocks', async ({ page }) => {
-  // The ship spawns docked at the home station, so the station view replaces the world.
+test('station services replace the world and launching leaves a full ship in space', async ({ page }) => {
+  // Docking replaces the flight HUD with full-screen station services.
   await expect(page.getByTestId('station-view')).toBeVisible();
   await expect(page.getByTestId('station-view-name')).toContainText('Station A');
-  // Launch undocks: the ship returns to space and the station view hides.
+  await expect(page.getByTestId('hangar')).toBeVisible();
+  const stationWidth = await page.getByTestId('hangar').evaluate((el) => el.getBoundingClientRect().width);
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  expect(stationWidth).toBe(viewportWidth);
+
+  const initial = await getState(page);
+  const station = initial.world.stations[0];
+  const asteroid = initial.world.asteroids[0];
+  await page.evaluate(({ x, y }) => window.__eve.warp(null, { x, y }), asteroid);
+  await expect.poll(async () => (await getState(page)).cargoFull, { timeout: 20000 }).toBe(true);
+  await page.evaluate((id) => window.__eve.warp(id), station.id);
+  await expect.poll(async () => (await getState(page)).docked, { timeout: 5000 }).toBe(true);
+
   await page.getByTestId('station-launch').click();
   await expect(async () => {
     const s = await getState(page);
     expect(s.docked).toBe(false);
+    expect(s.activeShip.x).toBeGreaterThan(station.x + 300);
   }).toPass({ timeout: 5000 });
   await expect(page.getByTestId('station-view')).toBeHidden();
+  const launched = await getState(page);
+  await page.waitForTimeout(1200);
+  const afterLaunch = await getState(page);
+  expect(dist(launched.activeShip, afterLaunch.activeShip)).toBeLessThan(5);
 });
 
 test('the hangar is only available while docked', async ({ page }) => {
-  // The ship spawns docked at the home station, so the hangar opens and sells.
-  await page.getByTestId('hangar-btn').click();
+  // Station services are available immediately while docked.
   await expect(page.getByTestId('sell-iron-100')).toBeEnabled();
 
   // Fly to open space (far from every station); the hangar closes and can't reopen.
   await page.evaluate(() => window.__eve.setDestination(600, 600));
   await page.waitForFunction(() => window.__eve.state && window.__eve.state.docked === false);
   await expect(page.getByTestId('hangar')).toBeHidden();
-  await page.getByTestId('hangar-btn').click();
+  await page.keyboard.press('h');
   await expect(page.getByTestId('hangar')).toBeHidden();
   await expect(page.getByTestId('toast')).toContainText(/Dock at a station/i);
 });
@@ -455,7 +548,7 @@ test('character sheet shows standings for every faction, in space and docked', a
   await page.getByTestId('character-close').click();
   await expect(page.getByTestId('character-sheet')).toBeHidden();
 
-  // Docked: open via the HUD button (standings are available everywhere).
+  // In space: the HUD button opens the same sheet.
   await page.getByTestId('character-btn').click();
   await expect(page.getByTestId('character-sheet')).toBeVisible();
   st = await getState(page);
@@ -475,7 +568,7 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   // Dock again and open the inventory.
   await page.evaluate((id) => window.__eve.warp(id), st.world.stations[0].id);
   await page.waitForFunction(() => window.__eve.state && window.__eve.state.docked === true);
-  await page.getByTestId('inventory-btn').click();
+  await page.keyboard.press('i');
   await expect(page.getByTestId('inventory')).toBeVisible();
 
   const mined = await getState(page);
@@ -507,7 +600,6 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
 
 test('reset returns to a fresh game', async ({ page }) => {
   // Buy a ship so the reset has something to undo.
-  await page.getByTestId('hangar-btn').click();
   await page.evaluate(() => document.querySelector('[data-testid="buy-falcon"]').click());
   await expect(async () => {
     const s = await getState(page);
@@ -524,7 +616,6 @@ test('reset returns to a fresh game', async ({ page }) => {
 });
 
 test('drone bay: buy a mining drone and it boosts the active ship', async ({ page }) => {
-  await page.getByTestId('hangar-btn').click();
   await expect(page.getByTestId('hangar')).toBeVisible();
   // The ship spawns docked, so the buy button is live; click via evaluate.
   await page.evaluate(() => document.querySelector('[data-testid="buy-drone-mining-t1"]').click());
@@ -536,7 +627,6 @@ test('drone bay: buy a mining drone and it boosts the active ship', async ({ pag
 });
 
 test('industry: the hangar lists module blueprints craftable from ore', async ({ page }) => {
-  await page.getByTestId('hangar-btn').click();
   await expect(page.getByTestId('hangar')).toBeVisible();
   await expect(page.getByTestId('hangar-industry')).toBeVisible();
   // A weapon blueprint with a mineral recipe is listed (not craftable: no ore).
@@ -544,11 +634,11 @@ test('industry: the hangar lists module blueprints craftable from ore', async ({
   await expect(page.getByTestId('craft-weapon-t1')).toBeDisabled();
 });
 
-test('auto-pilot: toggling ▶ Auto on warps to a belt and mines, off stops it', async ({ page }) => {
+test('auto-pilot: toggling ▶ Auto flies to a belt and mines, off stops it', async ({ page }) => {
   // The ship starts docked at the home station with an empty hold.
   await page.evaluate(() => window.__eve.setAutoPilot(true));
   await expect(page.getByTestId('auto-pilot')).toContainText('Stop');
-  // Auto warps to the nearest belt, where it starts mining.
+  // Auto flies to the nearest belt, where it starts mining.
   await expect(page.getByTestId('context')).toContainText('Mining', { timeout: 30000 });
   await expect(page.getByTestId('mining-indicator')).toContainText('Mining', { timeout: 5000 });
   // Toggling off stops the loop.
@@ -646,7 +736,6 @@ test('storyline: pilot training from rookie to certification (m1–m8) unlocks t
     megacyte: w.megacyte + sh.megacyte,
   });
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
-  await page.getByTestId('hangar-btn').click();
   await expect(page.getByTestId('hangar-industry')).toBeVisible();
   await page.getByTestId('craft-weapon-t1').click();
   await page.getByTestId('craft-shield-t2').click();

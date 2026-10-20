@@ -244,6 +244,7 @@ export class EnemyNode extends Node {
       if (e.x < view.minX - 60 || e.x > view.maxX + 60 || e.y < view.minY - 60 || e.y > view.maxY + 60) continue;
       const p = camera.worldToScreen(e.x, e.y);
       this.drawEnemyShip(p.x, p.y, e);
+      this.drawEnemyStatus(p.x, p.y, e);
       if (e.id === this.app.targetEnemyId) {
         const r = (this.enemySize(e.type) + 8) * camera.zoom;
         ctx.strokeStyle = '#ff5c7a';
@@ -276,6 +277,48 @@ export class EnemyNode extends Node {
     ctx.strokeStyle = '#ff5c7a';
     ctx.stroke();
     ctx.restore();
+  }
+
+  drawEnemyStatus(sx, sy, e) {
+    const ctx = this.app.ctx;
+    const zoom = this.app.camera.zoom;
+    const radius = this.enemySize(e.type) * zoom;
+    const combat = this.app.state.combat;
+    const liveCombat = combat && combat.enemyId === e.id ? combat : null;
+    const enemyDef = this.app.catalog.enemies[e.type];
+    const shieldMax = liveCombat ? liveCombat.enemyShieldMax : (e.shield ?? (enemyDef && enemyDef.shield) ?? 0);
+    const hullMax = liveCombat ? liveCombat.enemyHullMax : (e.hull ?? (enemyDef && enemyDef.hull) ?? 0);
+    const shield = liveCombat ? liveCombat.enemyShield : shieldMax;
+    const hull = liveCombat ? liveCombat.enemyHull : hullMax;
+    const name = e.name || (enemyDef && enemyDef.name) || e.type;
+    const width = Math.max(42, Math.min(84, 66 * zoom));
+    const top = sy - radius - 24;
+    const label = Math.max(9, Math.min(12, 10 * zoom));
+
+    ctx.save();
+    ctx.font = `600 ${label}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffd7de';
+    ctx.shadowColor = '#000';
+    ctx.shadowBlur = 3;
+    ctx.fillText(name, sx, top, 150);
+    ctx.shadowBlur = 0;
+    this.drawHealthBar(sx, top + 8, width, shieldMax > 0 ? shield / shieldMax : 0, '#4fd1ff');
+    this.drawHealthBar(sx, top + 14, width, hullMax > 0 ? hull / hullMax : 0, '#ff657a');
+    ctx.restore();
+  }
+
+  drawHealthBar(cx, y, width, fraction, color) {
+    const ctx = this.app.ctx;
+    const x = cx - width / 2;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.fillRect(x, y, width, 4);
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, width * Math.max(0, Math.min(1, fraction)), 4);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, width, 4);
   }
 }
 

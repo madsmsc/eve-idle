@@ -19,10 +19,14 @@ export class Player extends Node {
     this.vy = 0;
     this.heading = 0;
     this.destination = null;
+    this.suppressAutoRecall = false;
   }
 
   setDestination(x, y) {
-    this.destination = { x, y };
+    this.destination = {
+      x: clamp(x, 0, this.app.constants.worldSize),
+      y: clamp(y, 0, this.app.constants.worldSize),
+    };
   }
 
   // Snap to a server-authoritative position (warp / jump / respawn).
@@ -86,7 +90,11 @@ export class Player extends Node {
   maybeAutoRecall() {
     const state = this.app.state;
     if (state.combat) return;
-    if (!state.cargoFull) return;
+    if (!state.cargoFull) {
+      this.suppressAutoRecall = false;
+      return;
+    }
+    if (this.suppressAutoRecall) return;
     const ns = this.nearestStation();
     if (!ns) return;
     if (ns.d < this.app.constants.dockRange) return; // already at a station

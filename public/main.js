@@ -11,11 +11,12 @@ const mctx = minimap.getContext('2d');
 
 const app = new App({ canvas, ctx, minimap, mctx });
 
-// Test hook used by the E2E suite to navigate without pixel-perfect clicking.
+// Test hook used by the E2E suite to drive flight and setup scenarios.
 window.__eve = {
   setDestination: (x, y) => {
     app.player.setDestination(x, y);
   },
+  getDestination: () => app.player.destination && { ...app.player.destination },
   warp: (targetId, opts) => app.doWarp(targetId, { silent: true, ...(opts || {}) }),
   combatAction: (action) => app.doCombatAction(action),
   setAutoPilot: (on) => {

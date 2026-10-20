@@ -30,7 +30,7 @@
     </div>
 
     <div class="hud-tr">
-      <canvas id="minimap" width="180" height="180" role="button" tabindex="0" aria-label="System overview map. Click a location to warp there." title="System overview — click to warp" data-testid="minimap"></canvas>
+      <canvas id="minimap" width="180" height="180" role="button" tabindex="0" aria-label="System overview map. Select a destination to fly there." title="System overview — select a destination" data-testid="minimap"></canvas>
     </div>
 
     <div class="hud-bl">
@@ -39,22 +39,31 @@
       <div id="mining-indicator" class="mining-indicator" data-testid="mining-indicator"></div>
     </div>
 
-    <div class="hud-bc" id="controls-hint">
-      <span>click = warp there</span><span>E = engage</span><span>H = hangar</span><span>C = char</span><span>I = inventory</span><span>scroll = zoom</span>
+    <div class="hud-br">
+      <div class="navigation-panel" data-testid="navigation-panel">
+        <button id="auto-pilot" class="hud-btn auto-btn" data-shortcut="A" data-testid="auto-pilot">▶ Auto</button>
+        <button id="navigate-belt" class="hud-btn navigate-btn" data-shortcut="B" data-testid="navigate-belt" title="Fly to the nearest asteroid belt">⌖ Belt</button>
+        <button id="navigate-station" class="hud-btn navigate-btn" data-shortcut="S" data-testid="navigate-station" title="Fly to the nearest station">⌖ Station</button>
+        <button id="navigate-rat" class="hud-btn navigate-btn" data-shortcut="R" data-testid="navigate-rat" title="Fly to the nearest hostile">⌖ Rat</button>
+        <button id="gate-jump" class="hud-btn gate-btn" data-testid="gate-jump" hidden>⇄ Jump</button>
+        <button id="engage" class="hud-btn" data-shortcut="E" data-testid="engage-btn" disabled>Engage</button>
+        <button id="character-btn" class="hud-btn" data-shortcut="C" data-testid="character-btn">Char</button>
+        <button id="inventory-btn" class="hud-btn" data-shortcut="I" data-testid="inventory-btn">Inventory</button>
+      </div>
     </div>
 
-    <div class="hud-br">
-      <div class="warp-panel" data-testid="warp-panel">
-        <!-- these buttons all need hotkeys - let's start with 1,2,3,... etc. and also render a small square to the left of the buttons with that number to show what to press-->
-        <button id="auto-pilot" class="hud-btn auto-btn" data-testid="auto-pilot">▶ Auto</button>
-        <button id="warp-belt" class="hud-btn warp-btn" data-testid="warp-belt">⚡ Belt</button>
-        <button id="warp-station" class="hud-btn warp-btn" data-testid="warp-station">⚡ Station</button>
-        <button id="warp-rat" class="hud-btn warp-btn" data-testid="warp-rat">⚡ Rat</button>
-        <button id="gate-jump" class="hud-btn gate-btn" data-testid="gate-jump" hidden>⇄ Jump</button>
-        <button id="engage" class="hud-btn" data-testid="engage-btn" disabled>Engage</button>
-        <button id="hangar-btn" class="hud-btn" data-testid="hangar-btn">Hangar</button>
-        <button id="character-btn" class="hud-btn" data-testid="character-btn">Char</button>
-        <button id="inventory-btn" class="hud-btn" data-testid="inventory-btn">Inventory</button>
+    <div id="ship-status" class="ship-status" data-testid="ship-status" aria-label="Ship status">
+      <div class="status-bar shield" data-testid="status-shield">
+        <div class="status-heading"><span>Shield</span><span data-testid="status-shield-value"></span></div>
+        <div class="status-track"><i></i></div>
+      </div>
+      <div class="status-bar hull" data-testid="status-hull">
+        <div class="status-heading"><span>Hull</span><span data-testid="status-hull-value"></span></div>
+        <div class="status-track"><i></i></div>
+      </div>
+      <div class="status-bar speed" data-testid="status-speed">
+        <div class="status-heading"><span>Speed</span><span data-testid="status-speed-value"></span></div>
+        <div class="status-track"><i></i></div>
       </div>
     </div>
 
@@ -86,7 +95,7 @@
   <aside id="tutorial-hint" class="tutorial-hint" data-testid="tutorial-hint" role="status" hidden>
     <div>
       <strong>Quick start</strong>
-      <p>Click the overview map to warp. Belts mine automatically; a full hold returns to a station. Press H for ships, fittings, skills, and industry.</p>
+      <p>Launch to enter space, then select a destination on the map or in the world. Your ship flies there. Belts mine automatically; a full hold returns to a station. Dock for ships, fittings, skills, and industry.</p>
     </div>
     <button id="tutorial-dismiss" class="hud-btn" data-testid="tutorial-dismiss" aria-label="Dismiss quick start">Got it</button>
   </aside>
@@ -99,22 +108,21 @@
     </div>
   </div>
 
-  <!-- Docked view: while the ship is at a station the world is replaced by a
-       station interior and the ship is safely in the hangar. The hangar menu is
-       only available while docked. -->
+  <!-- Docking replaces the world and flight HUD with the station services UI. -->
   <div id="station-view" class="station-view" data-testid="station-view" hidden>
-    <div class="station-view-panel">
+    <header class="station-header">
       <div id="station-view-name" class="station-view-name" data-testid="station-view-name"></div>
-      <div class="station-view-sub">Docked — your ship is safely in the hangar. Open the Hangar (H) to trade, or click the map / a destination to undock.</div>
-      <button id="station-launch" class="hud-btn" data-testid="station-launch">Launch</button>
-    </div>
+      <div class="station-header-actions">
+        <span class="station-view-sub">Ship docked</span>
+        <button id="station-launch" class="hud-btn" data-testid="station-launch">Launch</button>
+      </div>
+    </header>
   </div>
 
-  <!-- Hangar / market overlay (toggle with H) — only available while docked -->
+  <!-- Station services replace the old right-side Hangar overlay while docked. -->
   <div id="hangar" class="hangar" data-testid="hangar" hidden>
     <div class="hangar-header">
-      <h2>Hangar &amp; Market</h2>
-      <button id="hangar-close" class="hud-btn" data-testid="hangar-close">Close</button>
+      <h2>Station Services</h2>
     </div>
     <div class="hangar-body">
       <section>
