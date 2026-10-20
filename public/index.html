@@ -30,17 +30,12 @@
     </div>
 
     <div class="hud-tr">
-      <canvas id="minimap" width="180" height="180" data-testid="minimap"></canvas>
+      <canvas id="minimap" width="180" height="180" role="button" tabindex="0" aria-label="System overview map. Click a location to warp there." title="System overview — click to warp" data-testid="minimap"></canvas>
     </div>
 
     <div class="hud-bl">
       <div id="context" class="context" data-testid="context"></div>
       <div id="ship-info" class="ship-info" data-testid="ship-info"></div>
-      <div id="loadout-panel" class="loadout-panel" data-testid="loadout-panel">
-        <button class="loadout-btn" data-loadout="tank" data-testid="loadout-tank">🛡 Tank</button>
-        <button class="loadout-btn" data-loadout="balanced" data-testid="loadout-balanced">⚖ Balanced</button>
-        <button class="loadout-btn" data-loadout="dps" data-testid="loadout-dps">⚔ DPS</button>
-      </div>
       <div id="mining-indicator" class="mining-indicator" data-testid="mining-indicator"></div>
     </div>
 
@@ -48,8 +43,6 @@
       <span>click = warp there</span><span>E = engage</span><span>H = hangar</span><span>scroll = zoom</span>
     </div>
 
-    <!-- TODO: the auto/warp/engage/dock(rename hangar to dock) should be simplified and stacked.
-     i'm aiming for a minimal UI without losing functionality -->
     <div class="hud-br">
       <div class="warp-panel" data-testid="warp-panel">
         <button id="auto-pilot" class="hud-btn auto-btn" data-testid="auto-pilot">▶ Auto</button>
@@ -57,9 +50,9 @@
         <button id="warp-station" class="hud-btn warp-btn" data-testid="warp-station">⚡ Station</button>
         <button id="warp-rat" class="hud-btn warp-btn" data-testid="warp-rat">⚡ Rat</button>
         <button id="gate-jump" class="hud-btn gate-btn" data-testid="gate-jump" hidden>⇄ Jump</button>
+        <button id="engage" class="hud-btn" data-testid="engage-btn" disabled>Engage</button>
+        <button id="hangar-btn" class="hud-btn" data-testid="hangar-btn">Hangar</button>
       </div>
-      <button id="engage" class="hud-btn" data-testid="engage-btn" disabled>Engage</button>
-      <button id="hangar-btn" class="hud-btn" data-testid="hangar-btn">Hangar</button>
     </div>
 
     <div id="combat-banner" class="combat-banner" data-testid="combat-banner" hidden></div>
@@ -87,6 +80,22 @@
     </div>
   </div>
 
+  <aside id="tutorial-hint" class="tutorial-hint" data-testid="tutorial-hint" role="status" hidden>
+    <div>
+      <strong>Quick start</strong>
+      <p>Click the overview map to warp. Belts mine automatically; a full hold returns to a station. Press H for ships, fittings, skills, and industry.</p>
+    </div>
+    <button id="tutorial-dismiss" class="hud-btn" data-testid="tutorial-dismiss" aria-label="Dismiss quick start">Got it</button>
+  </aside>
+
+  <div id="offline-report" class="offline-report" data-testid="offline-report" role="dialog" aria-modal="true" hidden>
+    <div class="offline-report-card">
+      <h2>While you were away</h2>
+      <p id="offline-report-summary"></p>
+      <button id="offline-report-close" class="hud-btn" data-testid="offline-report-close">Continue</button>
+    </div>
+  </div>
+
   <!-- Hangar / market overlay (toggle with H) -->
   <div id="hangar" class="hangar" data-testid="hangar" hidden>
     <div class="hangar-header">
@@ -104,11 +113,26 @@
       </section>
       <section>
         <h3>Fitting <span class="sub">active ship</span></h3>
+        <div class="fitting-presets">
+          <input id="fitting-preset-name" maxlength="24" placeholder="Preset name" aria-label="Fitting preset name" />
+          <button class="mini" data-action="save-fitting-preset" data-testid="save-fitting-preset">Save</button>
+          <select id="fitting-preset-select" aria-label="Saved fitting presets"></select>
+          <button class="mini" data-action="apply-fitting-preset" data-testid="apply-fitting-preset">Apply</button>
+          <button class="mini danger" data-action="delete-fitting-preset" data-testid="delete-fitting-preset">Delete</button>
+        </div>
         <div id="hangar-fitting" class="hangar-fitting" data-testid="hangar-fitting"></div>
       </section>
       <section>
         <h3>Skills <span class="sub" id="hangar-sp" data-testid="hangar-sp"></span></h3>
         <div id="hangar-skills" class="hangar-skills" data-testid="hangar-skills"></div>
+      </section>
+      <section>
+        <h3>Achievements</h3>
+        <div id="hangar-achievements" data-testid="hangar-achievements"></div>
+      </section>
+      <section>
+        <h3>Agent Missions <span class="sub" id="agent-mission-cooldown"></span></h3>
+        <div id="hangar-agent-missions" data-testid="hangar-agent-missions"></div>
       </section>
       <section>
         <h3>Factions <span class="sub">standing &amp; ambush risk</span></h3>

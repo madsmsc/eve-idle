@@ -12,7 +12,7 @@
 // `slots` is the number of fitting slots per module type a ship has. Bigger
 // ships carry more slots, so there's more to fit. A slot holds one module of
 // its type (see MODULES); the ship's effective stat is its base (scaled by
-// level and loadout) plus the flat bonus of every module fitted in that type.
+// level) plus the flat bonus of every module fitted in that type.
 const SHIPS = {
   rifter:    { key: 'rifter',    name: 'Rifter',    cost: 0,      mining: 6,   combat: 5,   sellValue: 0,      cargo: 60,   shield: 50,  hull: 100,  dps: 10, slots: { weapon: 1, shield: 1, armor: 0, mining: 1, cargo: 1, range: 1 } },
   falcon:    { key: 'falcon',    name: 'Falcon',    cost: 5000,   mining: 14,  combat: 12,  sellValue: 2500,   cargo: 200,  shield: 120, hull: 200,  dps: 25, slots: { weapon: 2, shield: 2, armor: 1, mining: 1, cargo: 1, range: 1 } },
@@ -24,16 +24,16 @@ const SHIPS = {
 };
 
 // Fitting modules. Each module type boosts one stat by a flat bonus. A module
-// has three tiers (I/II/III) with rising cost and bonus. Fitting a slot to a
+// has four tiers, with faction-grade modules at Tier IV. Fitting a slot to a
 // tier costs that tier's price; downgrading refunds the difference, so a slot
 // can be re-fitted at any time.
 const MODULES = {
-  weapon: { key: 'weapon', name: 'Weapon',            stat: 'dps',    tiers: [ { tier: 1, cost: 1000,  bonus: 6 },   { tier: 2, cost: 4000,  bonus: 18 },  { tier: 3, cost: 12000, bonus: 45 } ] },
-  shield: { key: 'shield', name: 'Shield Extender',   stat: 'shield', tiers: [ { tier: 1, cost: 800,   bonus: 25 },  { tier: 2, cost: 3000,  bonus: 75 },  { tier: 3, cost: 9000,  bonus: 180 } ] },
-  armor:  { key: 'armor',  name: 'Armor Plate',       stat: 'hull',   tiers: [ { tier: 1, cost: 800,   bonus: 35 },  { tier: 2, cost: 3000,  bonus: 100 }, { tier: 3, cost: 9000,  bonus: 240 } ] },
-  mining: { key: 'mining', name: 'Mining Augmenter',  stat: 'mining', tiers: [ { tier: 1, cost: 600,   bonus: 4 },   { tier: 2, cost: 2500,  bonus: 12 },  { tier: 3, cost: 8000,  bonus: 35 } ] },
-  cargo:  { key: 'cargo',  name: 'Cargo Expander',    stat: 'cargo',  tiers: [ { tier: 1, cost: 500,   bonus: 60 },  { tier: 2, cost: 2000,  bonus: 160 }, { tier: 3, cost: 6000,  bonus: 450 } ] },
-  range:  { key: 'range',  name: 'Range Amplifier',   stat: 'range',  tiers: [ { tier: 1, cost: 700,   bonus: 3 },   { tier: 2, cost: 2800,  bonus: 8 },   { tier: 3, cost: 8500,  bonus: 20 } ] },
+  weapon: { key: 'weapon', name: 'Weapon',            stat: 'dps',    tiers: [ { tier: 1, cost: 1000,  bonus: 6 },   { tier: 2, cost: 4000,  bonus: 18 },  { tier: 3, cost: 12000, bonus: 45 }, { tier: 4, cost: 36000, bonus: 110 } ] },
+  shield: { key: 'shield', name: 'Shield Extender',   stat: 'shield', tiers: [ { tier: 1, cost: 800,   bonus: 25 },  { tier: 2, cost: 3000,  bonus: 75 },  { tier: 3, cost: 9000,  bonus: 180 }, { tier: 4, cost: 27000, bonus: 420 } ] },
+  armor:  { key: 'armor',  name: 'Armor Plate',       stat: 'hull',   tiers: [ { tier: 1, cost: 800,   bonus: 35 },  { tier: 2, cost: 3000,  bonus: 100 }, { tier: 3, cost: 9000,  bonus: 240 }, { tier: 4, cost: 27000, bonus: 560 } ] },
+  mining: { key: 'mining', name: 'Mining Augmenter',  stat: 'mining', tiers: [ { tier: 1, cost: 600,  bonus: 4 },   { tier: 2, cost: 2500,  bonus: 12 },  { tier: 3, cost: 8000,  bonus: 35 }, { tier: 4, cost: 24000, bonus: 85 } ] },
+  cargo:  { key: 'cargo',  name: 'Cargo Expander',    stat: 'cargo',  tiers: [ { tier: 1, cost: 500,  bonus: 60 },  { tier: 2, cost: 2000,  bonus: 160 }, { tier: 3, cost: 6000,  bonus: 450 }, { tier: 4, cost: 18000, bonus: 1100 } ] },
+  range:  { key: 'range',  name: 'Range Amplifier',   stat: 'range',  tiers: [ { tier: 1, cost: 700,  bonus: 3 },   { tier: 2, cost: 2800,  bonus: 8 },   { tier: 3, cost: 8500,  bonus: 20 }, { tier: 4, cost: 25500, bonus: 50 } ] },
 };
 
 // Each asteroid holds one mineral. Mining an asteroid yields that mineral.
@@ -75,16 +75,6 @@ const OVERLOAD_DPS_MULT = 1.6;      // DPS multiplier while overloaded
 const OVERLOAD_DURATION = 5;        // seconds the overload lasts
 const OVERLOAD_COOLDOWN = 9;        // seconds of fight time before you can overload again
 
-// ---- pre-fight loadouts ----
-// A ship is fitted for a role before a fight. Each loadout trades shield, hull
-// and DPS against one another: a tank survives longer but hits softer, a damage
-// fit kills faster but dies sooner. 'balanced' is the stock fitting.
-const LOADOUTS = {
-  balanced: { key: 'balanced', name: 'Balanced', shield: 1.0,  hull: 1.0,  dps: 1.0 },
-  tank:     { key: 'tank',     name: 'Tank',     shield: 1.5,  hull: 1.25, dps: 0.7 },
-  dps:      { key: 'dps',      name: 'DPS',      shield: 0.7,  hull: 0.8,  dps: 1.5 },
-};
-
 // ---- skill tree ----
 // Skills are player-level (apply to every ship). You earn skill points over
 // time (idle) and from kills, then spend them to train a skill up a level.
@@ -100,6 +90,13 @@ const SKILLS = {
 };
 const SP_RATE_PER_SEC = 0.25;  // skill points earned per second (idle progression)
 const SP_PER_KILL = 15;        // skill points earned per rat destroyed
+const ACHIEVEMENTS = {
+  miner: { key: 'miner', name: 'Prospector', description: 'Mine 1,000 units of ore', stat: 'totalMineralsMined', target: 1000 },
+  veteran: { key: 'veteran', name: 'Veteran', description: 'Win 10 battles', stat: 'combatsWon', target: 10 },
+  industrialist: { key: 'industrialist', name: 'Industrialist', description: 'Craft 5 modules', stat: 'modulesCrafted', target: 5 },
+  tycoon: { key: 'tycoon', name: 'Tycoon', description: 'Earn 100,000 ISK', stat: 'totalIskEarned', target: 100000 },
+  certified: { key: 'certified', name: 'Certified Pilot', description: 'Complete pilot training', stat: 'missionsCompleted', target: 8 },
+};
 
 // ---- faction standing ----
 // Each system is controlled by a faction. Your standing with a faction (from
@@ -178,24 +175,41 @@ const CRAFT_DISCOUNT = 0.75;
 const CRAFT_WEIGHTS = { iron: 1, bauxite: 0.55, gadolinium: 0.3, megacyte: 0.12 };
 const BLUEPRINTS = (() => {
   const out = {};
-  const totalW = Object.values(CRAFT_WEIGHTS).reduce((a, b) => a + b, 0);
   const ROMAN = ['', 'I', 'II', 'III'];
   for (const slotType of Object.keys(MODULES)) {
     const mod = MODULES[slotType];
     out[slotType] = {};
     for (const t of mod.tiers) {
       const target = Math.round(t.cost * CRAFT_DISCOUNT);
+      const weights = t.tier === 4
+        ? { iron: 0.35, bauxite: 0.35, gadolinium: 0.7, megacyte: 2.5 }
+        : CRAFT_WEIGHTS;
+      const weightTotal = Object.values(weights).reduce((a, b) => a + b, 0);
       const recipe = {};
       for (const mKey of Object.keys(MINERALS)) {
-        recipe[mKey] = Math.max(1, Math.round((target * (CRAFT_WEIGHTS[mKey] || 0)) / MINERALS[mKey].price / totalW));
+        recipe[mKey] = Math.max(1, Math.round((target * (weights[mKey] || 0)) / MINERALS[mKey].price / weightTotal));
       }
       out[slotType][t.tier] = {
         slotType,
         tier: t.tier,
-        name: `${mod.name} ${ROMAN[t.tier]}`,
+        name: t.tier === 4 ? `${mod.name} Faction` : `${mod.name} ${ROMAN[t.tier]}`,
         recipe,
       };
     }
+  }
+  return out;
+})();
+const SHIP_BLUEPRINTS = (() => {
+  const out = {};
+  for (const [key, ship] of Object.entries(SHIPS)) {
+    if (!ship.cost) continue;
+    const target = Math.round(ship.cost * CRAFT_DISCOUNT);
+    const totalW = Object.values(CRAFT_WEIGHTS).reduce((a, b) => a + b, 0);
+    const recipe = {};
+    for (const mineral of Object.keys(MINERALS)) {
+      recipe[mineral] = Math.max(1, Math.round((target * CRAFT_WEIGHTS[mineral]) / MINERALS[mineral].price / totalW));
+    }
+    out[key] = { type: key, name: ship.name, recipe };
   }
   return out;
 })();
@@ -206,13 +220,14 @@ const BLUEPRINTS = (() => {
 // the player is certified (m8). `grant` is handed out up-front (what the NPC
 // gives you); rewards are granted on completion. `spawn` lists mission enemies
 // placed near the home station when the mission starts.
-const MISSION_ORDER = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8'];
+const MISSION_ORDER = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9'];
 
 const MISSION_ENEMIES = {
   attacker:  { key: 'attacker',   name: 'Attacker Frigate',    iskReward: 200, shield: 40,  hull: 80,  dps: 8 },
   shortrange: { key: 'shortrange', name: 'Short-Range Frigate', iskReward: 300, shield: 45, hull: 90, dps: 12, rangeDelay: 2 },
   waveship:  { key: 'waveship',  name: 'Invasion Wave',       iskReward: 0,   shield: 90,  hull: 220, dps: 30 },
   dronhub:   { key: 'dronhub',   name: 'Rogue Drone Hub',     iskReward: 0,   shield: 70,  hull: 110, dps: 12, rangeDelay: 2 },
+  placidraider: { key: 'placidraider', name: 'Placid Raider', iskReward: 900, shield: 55, hull: 120, dps: 13 },
 };
 
 const MISSIONS = {
@@ -284,7 +299,22 @@ const MISSIONS = {
     objective: { type: 'dialogue', label: 'Accept your certification' },
     completion: { isk: 0, text: '"The gates are open, pilot. Fly safe."' },
   },
+  m9: {
+    id: 'm9', title: 'Beyond the Gates', npc: 'Concord Liaison',
+    brief: '"Your certification is only the beginning. Travel to Placid and clear two raider ships threatening local miners."',
+    systemId: 'sys_1',
+    spawn: [{ type: 'placidraider', count: 2 }],
+    objective: { type: 'kill', enemyTag: 'placidraider', count: 2, label: 'Clear two raiders in Placid' },
+    completion: { isk: 3000, text: '"The route is secure. More contracts await across the region."' },
+  },
 };
+
+const AGENT_MISSIONS = [
+  { key: 'pirate-hunt', name: 'Pirate Hunt', objective: 'Destroy 3 pirate ships', type: 'kill', enemyType: 'pirate', target: 3, reward: 2500 },
+  { key: 'ore-haul', name: 'Ore Haul', objective: 'Sell 100 units of ore', type: 'haul', target: 100, reward: 1800 },
+  { key: 'field-survey', name: 'Field Survey', objective: 'Mine 200 units of ore', type: 'mine', target: 200, reward: 2000 },
+];
+const AGENT_MISSION_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 // ---- spatial world ----
 const WORLD_SIZE = 8000;        // world is WORLD_SIZE x WORLD_SIZE units
@@ -302,7 +332,7 @@ const MAX_SPEED = 600;          // units/sec (client + server agree on this)
 const MAX_THRUST = 260;         // units/sec^2 (client-side)
 const DAMPING = 0.985;          // per-frame velocity damping (client-side)
 const ARRIVE_RADIUS = 24;       // click-to-move arrival radius
-const STATE_VERSION = 12;
+const STATE_VERSION = 14;
 
 // ---- rat threat scaling (idle/incremental difficulty) ----
 // Rats get tougher as the player earns ISK, but pay more, so combat stays a
@@ -331,10 +361,10 @@ module.exports = {
   OVERLOAD_DPS_MULT,
   OVERLOAD_DURATION,
   OVERLOAD_COOLDOWN,
-  LOADOUTS,
   SKILLS,
   SP_RATE_PER_SEC,
   SP_PER_KILL,
+  ACHIEVEMENTS,
   FACTIONS,
   SYSTEM_FACTION,
   STANDING_MIN,
@@ -352,9 +382,12 @@ module.exports = {
   LOOT_TIERS,
   CRAFT_DISCOUNT,
   BLUEPRINTS,
+  SHIP_BLUEPRINTS,
   MISSION_ORDER,
   MISSION_ENEMIES,
   MISSIONS,
+  AGENT_MISSIONS,
+  AGENT_MISSION_COOLDOWN_MS,
   WORLD_SIZE,
   ASTEROID_FIELDS,
   ASTEROIDS_PER_FIELD,

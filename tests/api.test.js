@@ -82,8 +82,25 @@ describe('HTTP API', () => {
     assert.ok(r.data.minerals.iron);
     assert.ok(r.data.enemies.pirate);
     assert.ok(r.data.factions.serpentis);
+    assert.ok(r.data.achievements.miner);
     assert.equal(r.data.constants.worldSize, cfg.WORLD_SIZE);
     assert.ok(r.data.constants.miningRange > 0);
+  });
+
+  test('POST /api/sell-loot and /api/refine-loot consume docked loot', async () => {
+    const initial = srv.app.getState();
+    initial.loot = [
+      { id: 'sell-me', slotType: 'weapon', tier: 1 },
+      { id: 'refine-me', slotType: 'shield', tier: 1 },
+    ];
+    srv.app.setState(initial);
+    const sold = await api(srv.base, '/api/sell-loot', { lootId: 'sell-me' });
+    assert.equal(sold.status, 200);
+    assert.equal(sold.data.state.loot.length, 1);
+    const refined = await api(srv.base, '/api/refine-loot', { lootId: 'refine-me' });
+    assert.equal(refined.status, 200);
+    assert.equal(refined.data.state.loot.length, 0);
+    assert.ok(refined.data.state.cargoUsed > 0);
   });
 
   test('GET /api/state exposes standing, factions and ambush risk', async () => {
@@ -344,6 +361,22 @@ describe('HTTP API', () => {
     assert.equal(r.data.state.isk, 0);
     assert.equal(r.data.state.mission.active, 'm1');
     assert.deepEqual(r.data.state.mission.completed, []);
+  });
+
+  test('resuming a save reports capped offline progress and applies it once', async () => {
+    const state = srv.app.getState();
+    const asteroid = state.systems[state.ships[0].systemId].asteroids[0];
+    state.ships[0].x = asteroid.x;
+    state.ships[0].y = asteroid.y;
+    state.lastTick = Date.now() - (cfg.MAX_OFFLINE_SECONDS + 3600) * 1000;
+    srv.app.setState(state);
+    const resumed = await api(srv.base, '/api/mode', { mode: 'demo' });
+    assert.equal(resumed.status, 200);
+    assert.equal(resumed.data.offlineReport.elapsedSeconds, cfg.MAX_OFFLINE_SECONDS);
+    assert.equal(resumed.data.offlineReport.capped, true);
+    assert.ok(resumed.data.offlineReport.mined > 0);
+    const secondResume = await api(srv.base, '/api/mode', { mode: 'demo' });
+    assert.equal(secondResume.data.offlineReport, null);
   });
 
   test('POST /api/mode rejects an unknown mode (400)', async () => {

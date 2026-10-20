@@ -11,8 +11,9 @@
     "test:unit": "node --test tests/game.test.js",
     "test:client": "node --test tests/client.test.js",
     "test:api": "node --test tests/api.test.js",
-    "test:e2e": "playwright test",
-    "test:all": "node --test tests/game.test.js tests/api.test.js && playwright test"
+    "test:e2e": "playwright test --grep-invert @slow",
+    "test:e2e:full": "playwright test",
+    "test:all": "npm test && npm run test:e2e:full"
   },
   "engines": {
     "node": ">=18"

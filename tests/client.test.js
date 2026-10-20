@@ -98,6 +98,24 @@ describe('App scene tree', () => {
   });
 });
 
+describe('UI panel refresh', () => {
+  test('refreshes the hangar only while the overlay is open', async () => {
+    const { UINode } = await import('../public/ui/ui.js');
+    const app = { hangarOpen: false };
+    const ui = new UINode(app);
+    const refreshed = [];
+    ui.hud.refreshPanels = () => refreshed.push('hud');
+    ui.hangar.refresh = () => refreshed.push('hangar');
+
+    ui.refreshPanels();
+    assert.deepEqual(refreshed, ['hud']);
+
+    app.hangarOpen = true;
+    ui.refreshPanels();
+    assert.deepEqual(refreshed, ['hud', 'hud', 'hangar']);
+  });
+});
+
 describe('Camera', () => {
   test('worldToScreen / screenToWorld are inverses around the player', async () => {
     const { Camera } = await import('../public/core/camera.js');

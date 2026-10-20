@@ -18,7 +18,6 @@ window.__eve = {
   },
   warp: (targetId, opts) => app.doWarp(targetId, { silent: true, ...(opts || {}) }),
   combatAction: (action) => app.doCombatAction(action),
-  setLoadout: (loadout) => app.doSetLoadout(loadout),
   setAutoPilot: (on) => {
     if (app.autoPilot !== !!on) app.toggleAutoPilot();
   },

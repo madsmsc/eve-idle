@@ -1,12 +1,12 @@
 'use strict';
 
 // The hangar / market overlay: cargo, fleet, fitting, skills, factions, drone
-// bay, loot, industry, shipyard and killboard. All DOM. Re-rendered wholesale
-// whenever a fresh server state arrives.
+// bay, loot, industry, shipyard and killboard. Its DOM is rebuilt when the
+// overlay opens or when state changes while it is open.
 import { Node } from '../core/node.js';
 import { fmt } from '../core/util.js';
 
-const ROMAN = ['—', 'I', 'II', 'III'];
+const ROMAN = ['—', 'I', 'II', 'III', 'IV'];
 
 export class HangarNode extends Node {
   refresh() {
@@ -14,9 +14,6 @@ export class HangarNode extends Node {
     this.renderCombatLog();
     return this;
   }
-  // TODO: what's up with this repeated refresh pattern?  why isn't an update and render method enough?
-  // TODO: also, i dont see an update or render method here - most of the classes aren't even using the node inheritance pattern...
-
   renderHangar() {
     const state = this.app.state;
     const catalog = this.app.catalog;
@@ -73,6 +70,22 @@ export class HangarNode extends Node {
     }
 
     const fitting = document.getElementById('hangar-fitting');
+    const presetSelect = document.getElementById('fitting-preset-select');
+    presetSelect.innerHTML = '';
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = 'Saved presets';
+    presetSelect.appendChild(emptyOption);
+    for (const preset of state.fittingPresets || []) {
+      const option = document.createElement('option');
+      option.value = preset.name;
+      option.textContent = `${preset.name} (${catalog.ships[preset.shipType].name})`;
+      presetSelect.appendChild(option);
+    }
+    if (presetSelect.options.length > 1) presetSelect.value = presetSelect.options[1].value;
+    document.querySelector('[data-action="save-fitting-preset"]').disabled = !state.activeShip;
+    document.querySelector('[data-action="apply-fitting-preset"]').disabled = !state.activeShip || !presetSelect.options.length || presetSelect.options.length === 1;
+    document.querySelector('[data-action="delete-fitting-preset"]').disabled = !presetSelect.value;
     fitting.innerHTML = '';
     const activeShip = state.activeShip;
     if (!activeShip) {
@@ -89,9 +102,10 @@ export class HangarNode extends Node {
         const tiers = activeShip.fitting[slotType] || [];
         for (let i = 0; i < slotCount; i++) {
           const current = tiers[i] || 0;
-          const btns = [0, 1, 2, 3].map((t) => {
+          const btns = [0, 1, 2, 3, 4].map((t) => {
             const active = current === t ? ' active' : '';
-            return `<button class="mini fit-btn${active}" data-action="fit-module" data-ship="${activeShip.id}" data-slot="${slotType}" data-index="${i}" data-tier="${t}" data-testid="fit-${slotType}-${i}-t${t}">${ROMAN[t]}</button>`;
+            const label = t === 4 ? 'Faction' : ROMAN[t];
+            return `<button class="mini fit-btn${active}" data-action="fit-module" data-ship="${activeShip.id}" data-slot="${slotType}" data-index="${i}" data-tier="${t}" data-testid="fit-${slotType}-${i}-t${t}">${label}</button>`;
           }).join('');
           const row = document.createElement('div');
           row.className = 'row';
@@ -128,6 +142,42 @@ export class HangarNode extends Node {
         skills.appendChild(row);
       }
     }
+
+    const achievementsEl = document.getElementById('hangar-achievements');
+    achievementsEl.innerHTML = '';
+    for (const achievement of state.achievements || []) {
+      const row = document.createElement('div');
+      row.className = `row${achievement.unlocked ? ' active' : ''}`;
+      row.textContent = `${achievement.unlocked ? '✓' : '○'} ${achievement.name} — ${achievement.description} (${fmt(achievement.progress)}/${fmt(achievement.target)})`;
+      achievementsEl.appendChild(row);
+    }
+
+    const agentPanel = document.getElementById('hangar-agent-missions');
+    const cooldown = document.getElementById('agent-mission-cooldown');
+    agentPanel.innerHTML = '';
+    const agent = state.agentMission;
+    if (agent.active) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `<span class="label">${agent.active.name} <span class="sub">${agent.active.objective} · ${fmt(agent.active.progress)}/${fmt(agent.active.target)} · reward ${fmt(agent.active.reward)} ISK</span></span><span class="actions"><button class="mini danger" data-action="cancel-agent-mission">Cancel</button></span>`;
+      agentPanel.appendChild(row);
+    } else if (agent.available) {
+      const offers = this.app.catalog.agentMissions;
+      const offer = offers[Math.floor(Date.now() / 86400000) % offers.length];
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `<span class="label">${offer.name} <span class="sub">${offer.objective} · reward ${fmt(offer.reward)} ISK</span></span><span class="actions"><button class="mini" data-action="accept-agent-mission" data-testid="accept-agent-mission">Accept</button></span>`;
+      agentPanel.appendChild(row);
+      cooldown.textContent = 'available';
+    } else {
+      const remaining = Math.max(0, agent.availableAt - Date.now());
+      cooldown.textContent = `${Math.ceil(remaining / 3600000)}h`;
+      const note = document.createElement('div');
+      note.className = 'row';
+      note.textContent = agent.completed ? `${agent.completed} complete — next contract in ${cooldown.textContent}.` : `Next contract in ${cooldown.textContent}.`;
+      agentPanel.appendChild(note);
+    }
+    if (agent.active) cooldown.textContent = 'in progress';
 
     const factions = document.getElementById('hangar-factions');
     factions.innerHTML = '';
@@ -188,7 +238,11 @@ export class HangarNode extends Node {
       row.className = 'row';
       row.innerHTML = `
         <span class="label">${l.name} <span class="sub">Tier ${ROMAN[l.tier] || l.tier}</span></span>
-        <span class="actions"><button class="mini" data-action="equip-loot" data-loot="${l.id}" data-testid="equip-loot-${l.id}">Equip</button></span>`;
+        <span class="actions">
+          <button class="mini" data-action="equip-loot" data-loot="${l.id}" data-testid="equip-loot-${l.id}">Equip</button>
+          <button class="mini" data-action="sell-loot" data-loot="${l.id}" data-testid="sell-loot-${l.id}" ${docked ? '' : 'disabled'}>Sell</button>
+          <button class="mini" data-action="refine-loot" data-loot="${l.id}" data-testid="refine-loot-${l.id}" ${docked ? '' : 'disabled'}>Refine</button>
+        </span>`;
       lootEl.appendChild(row);
     }
 
@@ -216,6 +270,18 @@ export class HangarNode extends Node {
           <span class="actions"><button class="mini" data-action="craft-module" data-slot="${bp.slotType}" data-tier="${bp.tier}" data-testid="craft-${slotType}-t${bp.tier}" ${docked && have ? '' : 'disabled'}>Craft</button></span>`;
         industry.appendChild(row);
       }
+    }
+    for (const [type, blueprint] of Object.entries(catalog.shipBlueprints || {})) {
+      const recipe = Object.entries(blueprint.recipe)
+        .map(([key, amount]) => `${amount} ${catalog.minerals[key].name}`)
+        .join(' + ');
+      const have = Object.entries(blueprint.recipe).every(([key, amount]) => (minerals[key] || 0) >= amount);
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `
+        <span class="label">${blueprint.name} Blueprint <span class="sub">${recipe}</span></span>
+        <span class="actions"><button class="mini" data-action="craft-ship" data-type="${type}" data-testid="craft-ship-${type}" ${docked && have ? '' : 'disabled'}>Build</button></span>`;
+      industry.appendChild(row);
     }
 
     const shop = document.getElementById('hangar-shop');

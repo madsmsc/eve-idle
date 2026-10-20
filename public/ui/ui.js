@@ -19,4 +19,9 @@ export class UINode extends Node {
     this.hud = this.add(new HudNode());
     this.overlays = this.add(new OverlaysNode());
   }
+
+  refreshPanels() {
+    this.hud.refreshPanels();
+    if (this.app.hangarOpen) this.hangar.refresh();
+  }
 }

@@ -205,6 +205,20 @@ describe('missions', () => {
     assert.ok(Math.hypot(attacker.x - home.x, attacker.y - home.y) < 1000, 'attacker near the station');
   });
 
+  test('certification unlocks a post-course Placid mission', () => {
+    const s = game.createInitialState(T0, 42, 'story');
+    s.mission.completed = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8'];
+    game.startMission(s, 'm9');
+    const placid = s.systems.sys_1;
+    assert.equal(placid.enemies.filter((enemy) => enemy.missionTag === 'placidraider' && enemy.alive).length, 2);
+    const gate = s.systems.sys_0.gates[0];
+    s.ships[0].x = gate.x;
+    s.ships[0].y = gate.y;
+    const jumped = game.gateJump(s, gate.id, () => 1, T0);
+    assert.ok(!jumped.error, jumped.error);
+    assert.equal(jumped.state.ships[0].systemId, 'sys_1');
+  });
+
   test('killing the m1 target completes it, pays the reward and starts m2', () => {
     const s = game.createInitialState(T0, 42, 'story');
     const before = s.isk;
@@ -794,54 +808,6 @@ describe('range free-fire window', () => {
   });
 });
 
-describe('loadouts', () => {
-  // Engage a known enemy with the given loadout and return the combat object.
-  function engageWith(state, loadout) {
-    const s = game.setLoadout(state, state.ships[0].id, loadout).state;
-    const e = sys(s).enemies[0];
-    s.ships[0].x = e.x;
-    s.ships[0].y = e.y;
-    return game.engage(s, e.id, T0).state.combat;
-  }
-
-  test('setLoadout fits a ship for a role', () => {
-    const s = fresh();
-    const r = game.setLoadout(s, s.ships[0].id, 'tank');
-    assert.ok(!r.error);
-    assert.equal(r.state.ships[0].loadout, 'tank');
-  });
-
-  test('setLoadout rejects an unknown loadout', () => {
-    const s = fresh();
-    const r = game.setLoadout(s, s.ships[0].id, 'laser');
-    assert.ok(r.error && /unknown loadout/i.test(r.error));
-  });
-
-  test('setLoadout rejects an unknown ship', () => {
-    const s = fresh();
-    const r = game.setLoadout(s, 'nope', 'tank');
-    assert.ok(r.error && /ship not found/i.test(r.error));
-  });
-
-  test('a tank fit has more shield and hull but less DPS than balanced', () => {
-    const s = fresh();
-    const bal = engageWith(s, 'balanced');
-    const tank = engageWith(s, 'tank');
-    assert.ok(tank.shipShieldMax > bal.shipShieldMax, 'more shield');
-    assert.ok(tank.shipHullMax > bal.shipHullMax, 'more hull');
-    assert.ok(tank.playerDps < bal.playerDps, 'less DPS');
-  });
-
-  test('a DPS fit has more DPS but less shield and hull than balanced', () => {
-    const s = fresh();
-    const bal = engageWith(s, 'balanced');
-    const dps = engageWith(s, 'dps');
-    assert.ok(dps.playerDps > bal.playerDps, 'more DPS');
-    assert.ok(dps.shipShieldMax < bal.shipShieldMax, 'less shield');
-    assert.ok(dps.shipHullMax < bal.shipHullMax, 'less hull');
-  });
-});
-
 describe('fitting slots', () => {
   // The default active ship is a rifter: weapon 1, shield 1, armor 0, mining 1, cargo 1.
   const shipId = (s) => s.ships[0].id;
@@ -920,6 +886,50 @@ describe('fitting slots', () => {
     assert.ok(Math.abs((after - before) - cfg.MODULES.cargo.tiers[0].bonus) < 1e-6);
   });
 
+  test('fitting presets save, apply with the correct price delta, and delete', () => {
+    let s = fresh();
+    s = game.fitModule(s, shipId(s), 'weapon', 0, 1).state;
+    s = game.saveFittingPreset(s, 'Combat').state;
+    s = game.fitModule(s, shipId(s), 'weapon', 0, 0).state;
+    const applied = game.applyFittingPreset(s, 'Combat');
+    assert.ok(!applied.error, applied.error);
+    assert.equal(applied.state.ships[0].fitting.weapon[0], 1);
+    assert.equal(applied.state.isk, s.isk - cfg.MODULES.weapon.tiers[0].cost);
+    const removed = game.deleteFittingPreset(applied.state, 'Combat');
+    assert.equal(removed.state.fittingPresets.length, 0);
+  });
+
+  test('fitting preset rejects invalid names and insufficient funds', () => {
+    const s = fresh();
+    assert.ok(game.saveFittingPreset(s, '   ').error);
+    const saved = game.saveFittingPreset(s, 'Expensive').state;
+    saved.fittingPresets[0].fitting.weapon[0] = 4;
+    saved.isk = 0;
+    assert.match(game.applyFittingPreset(saved, 'Expensive').error, /not enough isk/i);
+  });
+
+  test('faction-grade Tier IV modules can be crafted and fitted', () => {
+    let s = fresh();
+    const recipe = cfg.BLUEPRINTS.weapon[4].recipe;
+    s.ships[0].cargo = { ...s.ships[0].cargo, ...recipe };
+    const crafted = game.craftModule(s, 'weapon', 4);
+    assert.ok(!crafted.error, crafted.error);
+    const fitted = game.equipLoot(crafted.state, crafted.state.loot[0].id);
+    assert.ok(!fitted.error, fitted.error);
+    assert.equal(fitted.state.ships[0].fitting.weapon[0], 4);
+  });
+
+  test('ship blueprints craft a ship from cargo at a station', () => {
+    const s = fresh();
+    const recipe = cfg.SHIP_BLUEPRINTS.falcon.recipe;
+    s.ships[0].cargo = { ...s.ships[0].cargo, ...recipe };
+    const r = game.craftShip(s, 'falcon');
+    assert.ok(!r.error, r.error);
+    assert.equal(r.state.ships.length, 2);
+    assert.equal(r.state.ships[1].type, 'falcon');
+    assert.equal(r.state.stats.shipsCrafted, 1);
+  });
+
   test('downgrading a slot refunds the price difference', () => {
     const s = fresh();
     const t2 = cfg.MODULES.weapon.tiers[1].cost;
@@ -974,6 +984,17 @@ describe('fitting slots', () => {
     assert.ok(v.slots && v.slots.weapon === 1);
     assert.deepEqual(v.fitting.weapon, [1]);
     assert.ok(Math.abs(v.dps - (cfg.SHIPS.rifter.dps + cfg.MODULES.weapon.tiers[0].bonus)) < 1e-6);
+  });
+
+  test('combat starts with the ship base stats plus fitting bonuses', () => {
+    const s = fresh();
+    const enemy = sys(s).enemies[0];
+    s.ships[0].x = enemy.x;
+    s.ships[0].y = enemy.y;
+    const combat = game.engage(s, enemy.id, T0).state.combat;
+    assert.equal(combat.playerDps, cfg.SHIPS.rifter.dps);
+    assert.equal(combat.shipShieldMax, cfg.SHIPS.rifter.shield);
+    assert.equal(combat.shipHullMax, cfg.SHIPS.rifter.hull);
   });
 });
 
@@ -1394,6 +1415,31 @@ describe('drones', () => {
   });
 });
 
+describe('repeatable agent missions', () => {
+  test('contracts can be accepted once, cancelled, and offered again after a day', () => {
+    const s = fresh();
+    const accepted = game.agentMissionAction(s, 'accept', T0);
+    assert.ok(!accepted.error, accepted.error);
+    assert.ok(accepted.state.agentMission);
+    assert.match(game.agentMissionAction(accepted.state, 'accept', T0 + 1).error, /already active/i);
+    const cancelledAt = T0 + 1000;
+    const cancelled = game.agentMissionAction(accepted.state, 'cancel', cancelledAt).state;
+    assert.match(game.agentMissionAction(cancelled, 'accept', cancelledAt + 1000).error, /available yet/i);
+    const next = game.agentMissionAction(cancelled, 'accept', cancelledAt + cfg.AGENT_MISSION_COOLDOWN_MS);
+    assert.ok(!next.error, next.error);
+  });
+
+  test('selling ore completes a haul contract and grants its reward', () => {
+    const s = withCargo(fresh(), { iron: 100 });
+    s.agentMission = { key: 'ore-haul', progress: 0, status: 'active', startedAt: T0 };
+    const result = game.sellMinerals(s, 'iron', 'all');
+    assert.ok(!result.error, result.error);
+    assert.equal(result.state.agentMission.status, 'complete');
+    assert.equal(result.state.agentMission.progress, 100);
+    assert.equal(result.state.stats.agentMissionsCompleted, 1);
+  });
+});
+
 describe('loot drops', () => {
   // Win a fight against `enemyType` with a given rng (0 = force a drop,
   // 1 = never drop), returning the resolved state.
@@ -1481,6 +1527,35 @@ describe('loot drops', () => {
     assert.equal(v.loot.length, 1);
     assert.equal(v.loot[0].name, cfg.MODULES.shield.name);
     assert.equal(v.loot[0].tier, 2);
+  });
+
+  test('selling a looted module returns half its listed cost at a station', () => {
+    const s = fresh();
+    s.loot = [{ id: 'loot-sale', slotType: 'weapon', tier: 2 }];
+    const before = s.isk;
+    const r = game.sellLoot(s, 'loot-sale');
+    assert.ok(!r.error, r.error);
+    assert.equal(r.state.loot.length, 0);
+    assert.equal(r.state.isk, before + Math.floor(cfg.MODULES.weapon.tiers[1].cost * 0.5));
+  });
+
+  test('refining a looted module returns half its recipe as cargo', () => {
+    const s = fresh();
+    s.loot = [{ id: 'loot-refine', slotType: 'weapon', tier: 1 }];
+    const r = game.refineLoot(s, 'loot-refine');
+    assert.ok(!r.error, r.error);
+    assert.equal(r.state.loot.length, 0);
+    for (const [mineral, amount] of Object.entries(cfg.BLUEPRINTS.weapon[1].recipe)) {
+      assert.equal(r.state.ships[0].cargo[mineral], Math.max(1, Math.floor(amount / 2)));
+    }
+  });
+
+  test('selling or refining loot requires docking', () => {
+    const s = fresh();
+    s.loot = [{ id: 'loot-sale', slotType: 'weapon', tier: 1 }];
+    s.ships[0].x = 0;
+    assert.match(game.sellLoot(s, 'loot-sale').error, /dock/i);
+    assert.match(game.refineLoot(s, 'loot-sale').error, /dock/i);
   });
 });
 
@@ -1594,6 +1669,30 @@ describe('threat scaling', () => {
 
   test('view exposes the threat level', () => {
     assert.equal(game.view(fresh()).threat, 0);
+  });
+
+  test('systems expose distinct security that affects combat, markets, and ambush risk', () => {
+    const s = fresh();
+    const high = s.systems.sys_0;
+    const low = s.systems.sys_2;
+    assert.ok(high.security > low.security);
+    assert.ok(high.prices.iron < low.prices.iron);
+    assert.ok(game.ambushChance(s, high.id) < game.ambushChance(s, low.id));
+
+    const safe = fresh();
+    const safeEnemy = sys(safe).enemies[0];
+    safeEnemy.type = 'pirate';
+    safe.ships[0].x = safeEnemy.x;
+    safe.ships[0].y = safeEnemy.y;
+    const safeFight = game.engage(safe, safeEnemy.id, T0).state.combat;
+    const risky = fresh();
+    const riskyEnemy = risky.systems.sys_2.enemies[0];
+    riskyEnemy.type = 'pirate';
+    risky.ships[0].systemId = 'sys_2';
+    risky.ships[0].x = riskyEnemy.x;
+    risky.ships[0].y = riskyEnemy.y;
+    const riskyFight = game.engage(risky, riskyEnemy.id, T0).state.combat;
+    assert.ok(riskyFight.enemyDps > safeFight.enemyDps);
   });
 });
 

@@ -5,6 +5,17 @@ import { Node } from '../core/node.js';
 import { fmt } from '../core/util.js';
 
 export class OverlaysNode extends Node {
+  showOfflineReport(report) {
+    const el = document.getElementById('offline-report');
+    const summary = document.getElementById('offline-report-summary');
+    const hours = Math.floor(report.elapsedSeconds / 3600);
+    const minutes = Math.floor((report.elapsedSeconds % 3600) / 60);
+    const duration = hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+    summary.textContent = `${duration}${report.capped ? ' (offline gains capped)' : ''}: mined ${fmt(report.mined)} ore, earned ${fmt(report.isk)} ISK, won ${fmt(report.kills)} battles, and gained ${fmt(report.skillPoints)} SP.`;
+    el.hidden = false;
+    document.getElementById('offline-report-close').addEventListener('click', () => { el.hidden = true; }, { once: true });
+  }
+
   toast(msg, isError) {
     const el = document.getElementById('toast');
     el.textContent = msg;

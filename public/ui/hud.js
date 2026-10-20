@@ -3,7 +3,7 @@
 // The main HUD: top-left readouts (system, ISK, cargo, threat, faction), the
 // mission tracker/dialogue, the ship-info line, and the per-frame fast readouts
 // (context, mining indicator, engage/gate buttons, combat banner + combat HUD).
-// DOM only; refreshPanels() runs on each server sync, refreshFast() every frame.
+// DOM only; panels refresh on server sync, while fast readouts update every frame.
 import { Node } from '../core/node.js';
 import { fmt, pct } from '../core/util.js';
 
@@ -13,8 +13,6 @@ export class HudNode extends Node {
     this.dialogueShownFor = null;
     this.lastCombatPool = null;
   }
-
-  // TODO: no render method? only update method? how does it render? manually calling more specific render methods does not align well with the object oriented approach.
 
   // Full panel rebuild, called when a fresh server state arrives.
   refreshPanels() {
@@ -53,8 +51,6 @@ export class HudNode extends Node {
     } else {
       info.innerHTML = `<span class="meta">No ship — open the Hangar to buy one</span>`;
     }
-    this.updateLoadoutUI();
-    this.app.hangar.refresh();
   }
 
   // Per-frame fast readouts (cheap DOM text updates).
@@ -66,7 +62,8 @@ export class HudNode extends Node {
   refreshFast() {
     const state = this.app.state;
     document.getElementById('isk').textContent = `${fmt(state.isk)} ISK`;
-    document.getElementById('threat').textContent = `Threat ${state.threat || 0}`;
+    const security = state.system ? state.system.security.toFixed(1) : '—';
+    document.getElementById('threat').textContent = `Threat ${state.threat || 0} · Sec ${security}`;
     document.getElementById('context').textContent = this.getContext();
 
     const ind = document.getElementById('mining-indicator');
@@ -199,13 +196,6 @@ export class HudNode extends Node {
     } else {
       tracker.hidden = true;
       dlg.hidden = true;
-    }
-  }
-
-  updateLoadoutUI() {
-    const current = this.app.state && this.app.state.activeShip ? this.app.state.activeShip.loadout : 'balanced';
-    for (const btn of document.querySelectorAll('#loadout-panel .loadout-btn')) {
-      btn.classList.toggle('active', btn.dataset.loadout === current);
     }
   }
 

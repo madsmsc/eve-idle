@@ -101,6 +101,8 @@ html, body {
   border: 1px solid var(--border);
   border-radius: 8px;
   backdrop-filter: blur(4px);
+  cursor: crosshair;
+  pointer-events: auto;
 }
 
 .hud-bl { position: absolute; bottom: 16px; left: 16px; }
@@ -133,22 +135,6 @@ html, body {
   min-height: 1.1em;
 }
 .mining-indicator.idle { color: var(--muted); }
-.loadout-panel { display: flex; gap: 6px; margin-top: 6px; }
-.loadout-btn {
-  flex: 1;
-  font-size: 0.74rem;
-  font-weight: 700;
-  padding: 5px 4px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.04);
-  color: var(--muted);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.loadout-btn:hover { background: rgba(255,255,255,0.1); color: var(--text); }
-.loadout-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(80, 200, 255, 0.12); }
-
 .hud-bc {
   position: absolute;
   bottom: 16px;
@@ -165,8 +151,9 @@ html, body {
   backdrop-filter: blur(4px);
 }
 
-.hud-br { position: absolute; bottom: 16px; right: 16px; display: flex; gap: 8px; align-items: flex-end; }
+.hud-br { position: absolute; bottom: 16px; right: 16px; display: flex; }
 .warp-panel { display: flex; flex-direction: column; gap: 6px; }
+.warp-panel .hud-btn { min-width: 108px; text-align: left; }
 .warp-btn { padding: 7px 12px; font-size: 0.8rem; }
 .warp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .gate-btn { border-color: var(--accent2); color: #d7ccff; }
@@ -317,6 +304,8 @@ html, body {
 .hangar-header h2 { margin: 0; font-size: 1.05rem; color: var(--accent); letter-spacing: 1px; }
 .hangar-body { padding: 14px 16px; overflow-y: auto; flex: 1; }
 .hangar-body section { margin-bottom: 20px; }
+.fitting-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.fitting-presets input, .fitting-presets select { min-width: 110px; flex: 1; }
 .hangar-body h3 {
   margin: 0 0 8px;
   font-size: 0.78rem;
@@ -482,6 +471,47 @@ html, body {
   padding: 16px 20px;
   box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
 }
+
+.tutorial-hint {
+  position: fixed;
+  top: 210px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  width: min(460px, calc(100vw - 32px));
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-solid);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+.tutorial-hint[hidden] { display: none; }
+.tutorial-hint p { margin: 5px 0 0; color: var(--muted); line-height: 1.4; }
+.tutorial-hint button { pointer-events: auto; }
+
+.offline-report {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(0,0,0,0.72);
+}
+.offline-report[hidden] { display: none; }
+.offline-report-card {
+  width: min(420px, calc(100vw - 32px));
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-solid);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+}
+.offline-report-card h2 { margin: 0 0 10px; color: var(--accent); }
+.offline-report-card p { color: var(--muted); line-height: 1.5; }
 .mission-npc { color: var(--gold); font-weight: 700; margin-bottom: 6px; }
 .mission-text { color: var(--text); line-height: 1.4; margin-bottom: 12px; }
 .mission-card button { float: right; }

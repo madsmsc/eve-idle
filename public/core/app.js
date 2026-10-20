@@ -57,8 +57,6 @@ export class App {
       .add(new CombatNode())
       .add(new EffectsNode());
     this.ui = new UINode(this);
-    this.hangar = this.ui.hangar;
-    this.hud = this.ui.hud; // TODO: this seems unecessary - couldnt access be through the ui, so app did not have a hud field?
     this.overlays = this.ui.overlays;
     this.root = new Node(this);
     this.root.add(this.world);
@@ -106,6 +104,7 @@ export class App {
           menu.hidden = true;
           this.state = st.state;
           this.finishBoot();
+          if (st.offlineReport) this.overlays.showOfflineReport(st.offlineReport);
         } catch (e) {
           this.toast(e.message, true);
         }
@@ -118,14 +117,25 @@ export class App {
     const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
     if (active) this.player.snap(active.x, active.y);
     initInput(this);
-    this.hud.refreshPanels(); // TODO: call through ui - no hud field
+    this.ui.refreshPanels();
+    this.showFirstTimeTutorial();
     this.lastFrame = performance.now();
     requestAnimationFrame(this.frame);
   }
 
+  showFirstTimeTutorial() {
+    const hint = document.getElementById('tutorial-hint');
+    const key = 'eve-idle-demo-tutorial-dismissed';
+    if (this.state.mode !== 'demo' || localStorage.getItem(key) === 'true') return;
+    hint.hidden = false;
+    document.getElementById('tutorial-dismiss').addEventListener('click', () => {
+      localStorage.setItem(key, 'true');
+      hint.hidden = true;
+    }, { once: true });
+  }
 
-  // TODO: what is an action? who calls them? are actions just a term for server calls?
-  // ---- actions ----
+
+  // ---- server actions ----
 
   async doAction(action, payload) {
     try {
@@ -158,7 +168,7 @@ export class App {
       }
     }
     this.updateCombatFx(prevShipPos);
-    this.hud.refreshPanels(); // TODO: call through ui - no hud field
+    this.ui.refreshPanels();
   }
 
   // Detect combat start/resolution so we can play the right explosion. The server
@@ -204,8 +214,17 @@ export class App {
   async doWarp(targetId, opts) {
     opts = opts || {};
     if (this.state.combat) {
-      if (!opts.silent) this.toast('Cannot warp while in combat', true);
-      return false;
+      try {
+        const data = await api('/api/state');
+        this.onServerState(data.state);
+      } catch (e) {
+        this.toast(e.message, true);
+        return false;
+      }
+      if (this.state.combat) {
+        if (!opts.silent) this.toast('Cannot warp while in combat', true);
+        return false;
+      }
     }
     const payload = targetId ? { targetId } : { x: opts.x, y: opts.y };
     this.warpPending = true;
@@ -272,16 +291,10 @@ export class App {
     }
   }
 
-  async doSetLoadout(loadout) {
-    if (!this.state || !this.state.activeShipId) return;
-    const ok = await this.doAction('set-loadout', { shipId: this.state.activeShipId, loadout });
-    if (ok) this.toast('Loadout: ' + loadout);
-  }
-
   toggleHangar(force) {
     this.hangarOpen = force !== undefined ? force : !this.hangarOpen;
     document.getElementById('hangar').hidden = !this.hangarOpen;
-    if (this.hangarOpen) this.hangar.refresh();
+    if (this.hangarOpen) this.ui.hangar.refresh();
   }
 
   // ---- autopilot ----
@@ -328,7 +341,7 @@ export class App {
     const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
     this.camera.update(dt);
-    if (this.state) { // TODO: what does it mean for state to be undefined?
+    if (this.state) {
       this.player.maybeAutoRecall();
       this.player.update(dt);
       this.root.update(dt).render(now);

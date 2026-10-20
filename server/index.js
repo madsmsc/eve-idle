@@ -149,15 +149,29 @@ function createApp({ dataFile } = {}) {
         persist();
         return { state };
       }
-      case 'set-loadout': {
-        const r = game.setLoadout(state, payload.shipId, payload.loadout);
+      case 'fit-module': {
+        const r = game.fitModule(state, payload.shipId, payload.slotType, payload.slotIndex, payload.tier);
         if (r.error) return r;
         state = r.state;
         persist();
         return { state };
       }
-      case 'fit-module': {
-        const r = game.fitModule(state, payload.shipId, payload.slotType, payload.slotIndex, payload.tier);
+      case 'save-fitting-preset': {
+        const r = game.saveFittingPreset(state, payload.name);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'apply-fitting-preset': {
+        const r = game.applyFittingPreset(state, payload.name);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'delete-fitting-preset': {
+        const r = game.deleteFittingPreset(state, payload.name);
         if (r.error) return r;
         state = r.state;
         persist();
@@ -184,8 +198,29 @@ function createApp({ dataFile } = {}) {
         persist();
         return { state };
       }
+      case 'sell-loot': {
+        const r = game.sellLoot(state, payload.lootId);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'refine-loot': {
+        const r = game.refineLoot(state, payload.lootId);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
       case 'craft-module': {
         const r = game.craftModule(state, payload.slotType, payload.tier);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'craft-ship': {
+        const r = game.craftShip(state, payload.type);
         if (r.error) return r;
         state = r.state;
         persist();
@@ -240,6 +275,13 @@ function createApp({ dataFile } = {}) {
         persist();
         return { state };
       }
+      case 'agent-mission': {
+        const r = game.agentMissionAction(state, payload.action, now);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
       case 'reset': {
         state = game.reset(state, now);
         persist();
@@ -266,12 +308,14 @@ function createApp({ dataFile } = {}) {
           ships: game.SHIPS,
           modules: game.MODULES,
           skills: game.SKILLS,
+          achievements: game.ACHIEVEMENTS,
+          agentMissions: game.AGENT_MISSIONS,
           minerals: game.MINERALS,
           enemies: game.ENEMIES,
-          loadouts: game.LOADOUTS,
           factions: game.FACTIONS,
           drones: game.DRONES,
           blueprints: game.BLUEPRINTS,
+          shipBlueprints: game.SHIP_BLUEPRINTS,
           constants: {
             worldSize: cfg.WORLD_SIZE,
             miningRange: cfg.MINING_RANGE,
@@ -297,16 +341,34 @@ function createApp({ dataFile } = {}) {
         if (!cfg.MODES.includes(payload.mode)) {
           return sendJson(res, 400, { error: 'Unknown mode' });
         }
+        let offlineReport = null;
         if (!saves[payload.mode] || !game.isValidState(saves[payload.mode])) {
           saves[payload.mode] = game.createInitialState(Date.now(), undefined, payload.mode);
-        } else if (payload.mode === 'story' && game.missionStartNeeded(saves[payload.mode])) {
-          // A story save from before missions were wired up: boot the course at m1.
-          game.startMission(saves[payload.mode], 'm1');
+        } else {
+          const saved = saves[payload.mode];
+          const actualSeconds = Math.max(0, Math.floor((Date.now() - saved.lastTick) / 1000));
+          if (actualSeconds >= 60) {
+            const before = saved.stats || {};
+            const seconds = Math.min(actualSeconds, cfg.MAX_OFFLINE_SECONDS);
+            const caughtUp = game.tick(saved, Date.now(), null);
+            offlineReport = {
+              elapsedSeconds: seconds,
+              capped: actualSeconds > cfg.MAX_OFFLINE_SECONDS,
+              mined: Math.max(0, (caughtUp.stats.totalMineralsMined || 0) - (before.totalMineralsMined || 0)),
+              isk: Math.max(0, (caughtUp.stats.totalIskEarned || 0) - (before.totalIskEarned || 0)),
+              kills: Math.max(0, (caughtUp.stats.combatsWon || 0) - (before.combatsWon || 0)),
+              skillPoints: Math.max(0, (caughtUp.stats.totalSpEarned || 0) - (before.totalSpEarned || 0)),
+            };
+            saves[payload.mode] = caughtUp;
+          }
+          if (payload.mode === 'story' && game.missionStartNeeded(saves[payload.mode])) {
+            game.startMission(saves[payload.mode], 'm1');
+          }
         }
         mode = payload.mode;
         state = saves[mode];
         persist();
-        return sendJson(res, 200, { mode, state: game.view(state) });
+        return sendJson(res, 200, { mode, state: game.view(state), offlineReport });
       }
 
       if (pathname.startsWith('/api/') && req.method === 'POST') {

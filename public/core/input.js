@@ -1,7 +1,7 @@
 'use strict';
 
 // All DOM/input wiring: keyboard, canvas clicks + wheel, the HUD buttons and the
-// delegated hangar / combat / loadout handlers. Wired up once in finishBoot.
+// delegated hangar / combat handlers. Wired up once in finishBoot.
 export function initInput(app) {
   window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
@@ -10,20 +10,6 @@ export function initInput(app) {
     if (k === 'h') app.toggleHangar();
     if (k === 'escape') app.toggleHangar(false);
   });
-
-  // TODO: clicking must not nagivate - you can click warpables/enemies/belts/etc
-  // and move like that - that means we need some other good way to navigate
-  // around a system because it currently doesn't fit on a screen
-  // - in eve online you have an "overview" window showing all objects in the system
-  // maybe we need a similar "overview" panel to facilitate navigation
-  // or implement a mini-map that allows quick navigation within the system, which we already
-  // have in the upper right corner of the screen (the mini-map), how could
-  // that be integrated with the click-to-warp functionality?
-  // in eve online you also have the "icons" at the edges of the screen indicating nearby objects and points of interest
-  // maybe we could implement something similar to help players quickly locate important objects without having to scroll around the system manually
-  // let's plan some demos of these and try them out to see if they're fun.
-  // and whne we remove the click to warp, all the references in the ui to it must also be cleaned up.
-  
 
   const canvas = app.canvas;
   canvas.addEventListener('click', (ev) => {
@@ -70,10 +56,21 @@ export function initInput(app) {
       app.doWarp(best.id, { silent: true });
       return;
     }
-    // 3) otherwise warp to the clicked point
-    const wpt = app.camera.screenToWorld(sx, sy);
-    if (wpt.x >= 0 && wpt.x <= app.constants.worldSize && wpt.y >= 0 && wpt.y <= app.constants.worldSize) {
-      app.doWarp(null, { x: wpt.x, y: wpt.y, silent: true });
+  });
+
+  const minimap = app.minimap;
+  const navigateOverview = (clientX, clientY) => {
+    const rect = minimap.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * app.constants.worldSize;
+    const y = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)) * app.constants.worldSize;
+    app.doWarp(null, { x, y, silent: true });
+  };
+  minimap.addEventListener('click', (ev) => navigateOverview(ev.clientX, ev.clientY));
+  minimap.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      const rect = minimap.getBoundingClientRect();
+      navigateOverview(rect.left + rect.width / 2, rect.top + rect.height / 2);
     }
   });
 
@@ -103,13 +100,6 @@ export function initInput(app) {
     app.doCombatAction(btn.dataset.action);
   });
 
-  // loadout selector (static buttons, delegated)
-  document.getElementById('loadout-panel').addEventListener('click', (ev) => {
-    const btn = ev.target.closest('button[data-loadout]');
-    if (!btn) return;
-    app.doSetLoadout(btn.dataset.loadout);
-  });
-
   // event delegation for all hangar buttons
   document.getElementById('hangar').addEventListener('click', (ev) => {
     const el = ev.target.closest('[data-action]');
@@ -122,10 +112,23 @@ export function initInput(app) {
     else if (a === 'upgrade') app.doAction('upgrade-ship', { shipId: el.dataset.id });
     else if (a === 'sell-ship') app.doAction('sell-ship', { shipId: el.dataset.id });
     else if (a === 'fit-module') app.doAction('fit-module', { shipId: el.dataset.ship, slotType: el.dataset.slot, slotIndex: Number(el.dataset.index), tier: Number(el.dataset.tier) });
+    else if (a === 'save-fitting-preset') app.doAction('save-fitting-preset', { name: document.getElementById('fitting-preset-name').value });
+    else if (a === 'apply-fitting-preset' || a === 'delete-fitting-preset') {
+      const name = document.getElementById('fitting-preset-select').value;
+      if (name) app.doAction(a, { name });
+    }
     else if (a === 'train-skill') app.doAction('train-skill', { skill: el.dataset.skill });
     else if (a === 'buy-drone') app.doAction('buy-drone', { type: el.dataset.type, tier: Number(el.dataset.tier) });
     else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
+    else if (a === 'sell-loot') app.doAction('sell-loot', { lootId: el.dataset.loot });
+    else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
     else if (a === 'craft-module') app.doAction('craft-module', { slotType: el.dataset.slot, tier: Number(el.dataset.tier) });
+    else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type });
+    else if (a === 'accept-agent-mission') app.doAction('agent-mission', { action: 'accept' });
+    else if (a === 'cancel-agent-mission') app.doAction('agent-mission', { action: 'cancel' });
+  });
+  document.getElementById('fitting-preset-select').addEventListener('change', (ev) => {
+    document.querySelector('[data-action="delete-fitting-preset"]').disabled = !ev.target.value;
   });
 
   window.addEventListener('resize', () => app.resize());

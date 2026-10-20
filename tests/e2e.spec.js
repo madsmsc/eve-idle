@@ -1,7 +1,5 @@
 'use strict';
 
-// TODO: these tests are too slow - reduce the number and complexity of the end-to-end checks where possible.
-
 const { test, expect } = require('@playwright/test');
 const cfg = require('../server/config');
 
@@ -9,10 +7,9 @@ const cfg = require('../server/config');
 // frontend against the real server, covering the full loop: input -> local
 // physics -> position sync -> server validation -> persisted state -> re-render.
 //
-// The canvas is the game, so we assert on the HUD (ISK, ship info, mining
-// indicator, engage button, combat banner, hangar) and on the server state
-// (via /api/state) rather than on canvas pixels. A small test hook
-// (window.__eve) lets us set a flight destination without pixel-perfect clicks.
+// Assert on rendered canvas pixels, the HUD, and server state (via /api/state).
+// A small test hook (window.__eve) lets us set a flight destination without
+// pixel-perfect clicks.
 
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -61,7 +58,19 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('ship-info')).toContainText('Rifter', { timeout: 15000 });
 });
 
-test('renders the world and HUD', async ({ page }) => {
+test('demo quick-start hint appears once and remembers dismissal', async ({ page }) => {
+  const hint = page.getByTestId('tutorial-hint');
+  await expect(hint).toBeVisible();
+  await page.getByTestId('tutorial-dismiss').click();
+  await expect(hint).toBeHidden();
+  await page.reload();
+  await page.getByTestId('mode-demo').click();
+  await expect(page.getByTestId('ship-info')).toContainText('Rifter', { timeout: 15000 });
+  await expect(hint).toBeHidden();
+});
+
+test('renders the world, minimap and HUD', async ({ page }) => {
+  const st = await getState(page);
   const world = page.locator('#world');
   await expect(world).toBeVisible();
   const box = await world.boundingBox();
@@ -78,13 +87,18 @@ test('renders the world and HUD', async ({ page }) => {
 
   await expect(page.getByTestId('isk')).toContainText('10.0K');
   await expect(page.getByTestId('ship-info')).toContainText('Rifter');
-  await expect(page.getByTestId('minimap')).toBeVisible();
+  const minimap = page.locator('#minimap');
+  await expect(minimap).toBeVisible();
+  await expect.poll(() => minimap.evaluate((canvas) => {
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const colors = new Set();
+    for (let i = 0; i < pixels.length; i += 16) {
+      colors.add(`${pixels[i]},${pixels[i + 1]},${pixels[i + 2]}`);
+    }
+    return colors.size;
+  })).toBeGreaterThan(1);
   // The ship starts at the station, far from any asteroid, so it is idle.
   await expect(page.getByTestId('mining-indicator')).toContainText('Idle');
-});
-
-test('world contains a star, planets, stations and belts', async ({ page }) => {
-  const st = await getState(page);
   expect(st.world.star).toBeTruthy();
   expect(st.world.planets.length).toBeGreaterThanOrEqual(1);
   expect(st.world.stations.length).toBeGreaterThanOrEqual(2);
@@ -138,12 +152,29 @@ test('click warps the ship to the clicked belt', async ({ page }) => {
   }).toPass({ timeout: 5000 });
 });
 
-test('HUD shows the current system name', async ({ page }) => {
-  const st = await getState(page);
-  await expect(page.getByTestId('system-name')).toContainText(st.system.name);
+test('overview map navigates to any system location and empty world clicks do not warp', async ({ page }) => {
+  const before = await getState(page);
+  const map = page.getByTestId('minimap');
+  const mapBox = await map.boundingBox();
+  const x = mapBox.x + mapBox.width * 0.72;
+  const y = mapBox.y + mapBox.height * 0.28;
+  await page.mouse.click(x, y);
+  await expect(async () => {
+    const s = await getState(page);
+    expect(Math.abs(s.activeShip.x - 0.72 * cfg.WORLD_SIZE)).toBeLessThan(50);
+    expect(Math.abs(s.activeShip.y - 0.28 * cfg.WORLD_SIZE)).toBeLessThan(50);
+  }).toPass({ timeout: 5000 });
+
+  const settled = await getState(page);
+  const worldBox = await page.locator('#world').boundingBox();
+  await page.mouse.click(worldBox.x + 5, worldBox.y + 5);
+  await page.waitForTimeout(700);
+  const after = await getState(page);
+  expect(dist(after.activeShip, settled.activeShip)).toBeLessThan(5);
+  expect(await map.getAttribute('aria-label')).toContain('overview map');
 });
 
-test('system name is tinted with the system color', async ({ page }) => {
+test('system HUD shows the system name and color', async ({ page }) => {
   const st = await getState(page);
   expect(st.world.color).toMatch(/^#[0-9a-f]{6}$/i);
   const nameEl = page.getByTestId('system-name');
@@ -155,15 +186,13 @@ test('system name is tinted with the system color', async ({ page }) => {
   }).toPass({ timeout: 5000 });
 });
 
-test('warp button teleports the ship to a belt', async ({ page }) => {
+test('warp buttons teleport the ship to a belt and a rat', async ({ page }) => {
   await page.getByTestId('warp-belt').click();
   await expect(async () => {
     const s = await getState(page);
     expect(s.world.belts.some((b) => dist(s.activeShip, b) < 5)).toBe(true);
   }).toPass({ timeout: 5000 });
-});
 
-test('warp button teleports the ship to a rat', async ({ page }) => {
   await page.getByTestId('warp-rat').click();
   await expect(async () => {
     const s = await getState(page);
@@ -180,6 +209,7 @@ test('gate jump moves the ship to the connected system', async ({ page }) => {
     const s = await getState(page);
     expect(dist(s.activeShip, gate)).toBeLessThan(5);
   }).toPass({ timeout: 5000 });
+  await expect(page.getByTestId('gate-jump')).toContainText('%');
   await page.getByTestId('gate-jump').click();
   await expect(async () => {
     const s = await getState(page);
@@ -191,18 +221,6 @@ test('HUD shows the controlling faction and standing', async ({ page }) => {
   const st = await getState(page);
   expect(st.activeFaction && st.activeFaction.name).toBeTruthy();
   await expect(page.getByTestId('faction')).toContainText(st.activeFaction.name);
-});
-
-test('the gate-jump button shows the destination ambush risk', async ({ page }) => {
-  const st = await getState(page);
-  const gate = st.system.gates[0];
-  await page.evaluate((id) => window.__eve.warp(id), gate.id);
-  await expect(async () => {
-    const s = await getState(page);
-    expect(dist(s.activeShip, gate)).toBeLessThan(5);
-  }).toPass({ timeout: 5000 });
-  // The button reads "⇄ <System> · <N>%".
-  await expect(page.getByTestId('gate-jump')).toContainText('%');
 });
 
 test('the hangar lists every faction with standing and ambush risk', async ({ page }) => {
@@ -230,44 +248,22 @@ test('mining: fly to an asteroid and cargo grows', async ({ page }) => {
   }).toPass({ timeout: 30000 });
 });
 
-test('flying to a belt auto-mines from the belt center', async ({ page }) => {
+test('belt mining grows cargo and auto-recalls on a full hold @slow', async ({ page }) => {
   const st = await getState(page);
   const belt = st.world.belts[0];
   await page.evaluate(({ x, y }) => window.__eve.setDestination(x, y), belt);
-
-  // Parked on the belt center the ship is in range of a rock, so it mines.
-  // The context only reads "Mining" once the ship has arrived (destination
-  // cleared) and is in range of a rock, so it is the definitive signal.
   await expect(page.getByTestId('context')).toContainText('Mining', { timeout: 30000 });
   await expect(page.getByTestId('mining-indicator')).toContainText('Mining', { timeout: 5000 });
-});
-
-test('a full cargo hold triggers an auto-recall to the station', async ({ page }) => {
-  const st = await getState(page);
-  const belt = st.world.belts[0];
-  await page.evaluate(({ x, y }) => window.__eve.setDestination(x, y), belt);
-  await expect(page.getByTestId('context')).toContainText('Mining', { timeout: 30000 });
+  await expect(async () => {
+    const s = await getState(page);
+    expect(Object.values(s.minerals).reduce((total, amount) => total + amount, 0)).toBeGreaterThan(0);
+  }).toPass({ timeout: 10000 });
 
   // The rifter's small hold fills in ~10s; once full the ship turns for home.
   await expect(page.getByTestId('context')).toContainText(/Cargo full/i, { timeout: 45000 });
 });
 
-test('combat: fly to an enemy and engage', async ({ page }) => {
-  const st = await getState(page);
-  const enemy = nearest(st.world.enemies.filter((e) => e.alive), st.activeShip);
-  await page.evaluate(({ x, y }) => window.__eve.setDestination(x, y), enemy);
-
-  // Wait until the SERVER sees the ship within engage range of the target.
-  await expect(async () => {
-    const s = await getState(page);
-    expect(dist(s.activeShip, enemy)).toBeLessThan(200);
-  }).toPass({ timeout: 30000 });
-
-  await page.getByTestId('engage-btn').click();
-  await expect(page.getByTestId('combat-banner')).toBeVisible({ timeout: 5000 });
-});
-
-test('combat resolves: the rat dies on a win, the ship is lost on a defeat', async ({ page }) => {
+test('combat engages and resolves as a win or loss @slow', async ({ page }) => {
   const st = await getState(page);
   const enemy = nearest(st.world.enemies.filter((e) => e.alive), st.activeShip);
   await page.evaluate(({ x, y }) => window.__eve.setDestination(x, y), enemy);
@@ -297,7 +293,7 @@ test('combat resolves: the rat dies on a win, the ship is lost on a defeat', asy
   }
 });
 
-test('death screen: a destroyed ship shows the death screen with the killmail', async ({ page }) => {
+test('death screen shows the killmail when a ship is destroyed @slow', async ({ page }) => {
   const st = await getState(page);
   // Engage the strongest rat. The stock rifter can't beat a faction/dread, so
   // the ship is destroyed and the death screen appears.
@@ -359,21 +355,6 @@ test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship'
   const s = await getState(page);
   expect(s.ships.length).toBe(shipsBefore);
   expect(s.combatLog[0].disengaged).toBe(true);
-});
-
-test('loadout: selecting a fit updates the active ship', async ({ page }) => {
-  // The loadout selector is visible with the stock fit highlighted.
-  await expect(page.getByTestId('loadout-panel')).toBeVisible();
-  await expect(page.getByTestId('loadout-balanced')).toHaveClass(/active/);
-
-  // Switch to the tank fit.
-  await page.getByTestId('loadout-tank').click();
-  await expect(async () => {
-    const s = await getState(page);
-    expect(s.activeShip.loadout).toBe('tank');
-  }).toPass({ timeout: 5000 });
-  await expect(page.getByTestId('loadout-tank')).toHaveClass(/active/);
-  await expect(page.getByTestId('loadout-balanced')).not.toHaveClass(/active/);
 });
 
 test('fitting: fitting a module updates the active ship and spends ISK', async ({ page }) => {
@@ -509,7 +490,7 @@ test('mode menu: START boots the storyline with zero ISK, DEMO resumes the sandb
 // as the course advances and ending at certification with the jump gates open.
 // A single chain replaces five per-mission tests that each replayed the opening
 // missions, so the browser suite covers the same ground in a fraction of the time.
-test('storyline: pilot training from rookie to certification (m1–m8) unlocks the gates', async ({ page }) => {
+test('storyline: pilot training from rookie to certification (m1–m8) unlocks the gates @slow', async ({ page }) => {
   test.setTimeout(420000);
   await page.request.post('/api/reset');
   await page.goto('/');
