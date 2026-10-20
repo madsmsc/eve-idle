@@ -99,13 +99,15 @@ describe('App scene tree', () => {
 });
 
 describe('UI panel refresh', () => {
-  test('refreshes the hangar only while the overlay is open', async () => {
+  test('refreshes only the overlays that are open', async () => {
     const { UINode } = await import('../public/ui/ui.js');
-    const app = { hangarOpen: false };
+    const app = { hangarOpen: false, characterOpen: false, inventoryOpen: false };
     const ui = new UINode(app);
     const refreshed = [];
     ui.hud.refreshPanels = () => refreshed.push('hud');
     ui.hangar.refresh = () => refreshed.push('hangar');
+    ui.character.refresh = () => refreshed.push('character');
+    ui.inventory.refresh = () => refreshed.push('inventory');
 
     ui.refreshPanels();
     assert.deepEqual(refreshed, ['hud']);
@@ -113,6 +115,11 @@ describe('UI panel refresh', () => {
     app.hangarOpen = true;
     ui.refreshPanels();
     assert.deepEqual(refreshed, ['hud', 'hud', 'hangar']);
+
+    app.characterOpen = true;
+    app.inventoryOpen = true;
+    ui.refreshPanels();
+    assert.deepEqual(refreshed, ['hud', 'hud', 'hangar', 'hud', 'hangar', 'character', 'inventory']);
   });
 });
 

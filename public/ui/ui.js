@@ -8,12 +8,16 @@ import { MinimapNode } from './minimap.js';
 import { HealthBarNode } from '../view/combat.js';
 import { HudNode } from './hud.js';
 import { HangarNode } from './hangar.js';
+import { CharacterNode } from './character.js';
+import { InventoryNode } from './inventory.js';
 import { OverlaysNode } from './overlays.js';
 
 export class UINode extends Node {
   constructor(app) {
     super(app);
     this.hangar = this.add(new HangarNode());
+    this.character = this.add(new CharacterNode());
+    this.inventory = this.add(new InventoryNode());
     this.add(new MinimapNode());
     this.add(new HealthBarNode());
     this.hud = this.add(new HudNode());
@@ -23,5 +27,7 @@ export class UINode extends Node {
   refreshPanels() {
     this.hud.refreshPanels();
     if (this.app.hangarOpen) this.hangar.refresh();
+    if (this.app.characterOpen) this.character.refresh();
+    if (this.app.inventoryOpen) this.inventory.refresh();
   }
 }

@@ -19,6 +19,13 @@ async function getState(page) {
   return (await (await page.request.get('/api/state')).json()).state;
 }
 
+// The ship spawns docked at the home station; warp off the pad so combat and
+// other space-only actions are possible.
+async function undock(page) {
+  await page.evaluate(() => window.__eve.warp(null, { x: 200, y: 200 }));
+  await page.waitForFunction(() => window.__eve.state && window.__eve.state.docked === false);
+}
+
 // Nearest living object of the given world list to the ship.
 function nearest(list, ship) {
   return list.slice().sort((a, b) => dist(a, ship) - dist(b, ship))[0];
@@ -264,6 +271,7 @@ test('belt mining grows cargo and auto-recalls on a full hold @slow', async ({ p
 });
 
 test('combat engages and resolves as a win or loss @slow', async ({ page }) => {
+  await undock(page);
   const st = await getState(page);
   const enemy = nearest(st.world.enemies.filter((e) => e.alive), st.activeShip);
   await page.evaluate(({ x, y }) => window.__eve.setDestination(x, y), enemy);
@@ -294,6 +302,7 @@ test('combat engages and resolves as a win or loss @slow', async ({ page }) => {
 });
 
 test('death screen shows the killmail when a ship is destroyed @slow', async ({ page }) => {
+  await undock(page);
   const st = await getState(page);
   // Engage the strongest rat. The stock rifter can't beat a faction/dread, so
   // the ship is destroyed and the death screen appears.
@@ -317,6 +326,7 @@ test('death screen shows the killmail when a ship is destroyed @slow', async ({ 
 });
 
 test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship', async ({ page }) => {
+  await undock(page);
   const st = await getState(page);
   // Prefer a pirate (a long fight for the starting rifter) so we have time to act.
   const pirates = st.world.enemies.filter((e) => e.alive && e.type === 'pirate');
@@ -406,15 +416,93 @@ test('rejects an unaffordable purchase with a toast', async ({ page }) => {
   expect(s.ships.length).toBe(1);
 });
 
-test('docking gates the market', async ({ page }) => {
-  // The ship spawns docked at the home station, so the market is open.
+test('station view shows while docked and Launch undocks', async ({ page }) => {
+  // The ship spawns docked at the home station, so the station view replaces the world.
+  await expect(page.getByTestId('station-view')).toBeVisible();
+  await expect(page.getByTestId('station-view-name')).toContainText('Station A');
+  // Launch undocks: the ship returns to space and the station view hides.
+  await page.getByTestId('station-launch').click();
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.docked).toBe(false);
+  }).toPass({ timeout: 5000 });
+  await expect(page.getByTestId('station-view')).toBeHidden();
+});
+
+test('the hangar is only available while docked', async ({ page }) => {
+  // The ship spawns docked at the home station, so the hangar opens and sells.
   await page.getByTestId('hangar-btn').click();
   await expect(page.getByTestId('sell-iron-100')).toBeEnabled();
 
-  // Fly to open space (far from every station); the live hangar must lock.
+  // Fly to open space (far from every station); the hangar closes and can't reopen.
   await page.evaluate(() => window.__eve.setDestination(600, 600));
   await page.waitForFunction(() => window.__eve.state && window.__eve.state.docked === false);
-  await expect(page.getByTestId('sell-iron-100')).toBeDisabled();
+  await expect(page.getByTestId('hangar')).toBeHidden();
+  await page.getByTestId('hangar-btn').click();
+  await expect(page.getByTestId('hangar')).toBeHidden();
+  await expect(page.getByTestId('toast')).toContainText(/Dock at a station/i);
+});
+
+test('character sheet shows standings for every faction, in space and docked', async ({ page }) => {
+  // In space: open via the keyboard shortcut.
+  await undock(page);
+  await page.keyboard.press('c');
+  await expect(page.getByTestId('character-sheet')).toBeVisible();
+  let st = await getState(page);
+  for (const f of st.factions) {
+    await expect(page.getByTestId(`standing-${f.key}`)).toContainText(f.standing.toFixed(1));
+  }
+  await page.getByTestId('character-close').click();
+  await expect(page.getByTestId('character-sheet')).toBeHidden();
+
+  // Docked: open via the HUD button (standings are available everywhere).
+  await page.getByTestId('character-btn').click();
+  await expect(page.getByTestId('character-sheet')).toBeVisible();
+  st = await getState(page);
+  await expect(page.getByTestId('character-pilot')).toContainText('Battles Won');
+});
+
+test('inventory: deposit mined cargo into quantum storage and withdraw it back', async ({ page }) => {
+  // Mine a bit of ore so the hold has something to deposit.
+  const st = await getState(page);
+  const ast = st.world.asteroids.find((a) => a.amount > 0);
+  await page.evaluate(([x, y]) => window.__eve.warp(null, { x, y }), [ast.x, ast.y]);
+  await expect(async () => {
+    const s = await getState(page);
+    expect(Object.values(s.minerals).reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
+  }).toPass({ timeout: 15000 });
+
+  // Dock again and open the inventory.
+  await page.evaluate((id) => window.__eve.warp(id), st.world.stations[0].id);
+  await page.waitForFunction(() => window.__eve.state && window.__eve.state.docked === true);
+  await page.getByTestId('inventory-btn').click();
+  await expect(page.getByTestId('inventory')).toBeVisible();
+
+  const mined = await getState(page);
+  const mineral = Object.keys(mined.minerals).find((k) => mined.minerals[k] > 0);
+  expect(mineral).toBeTruthy();
+  const deposited = mined.minerals[mineral];
+
+  // Deposit the whole hold into storage (the panel re-renders on sync, so click
+  // via evaluate to avoid Playwright's element-stability wait).
+  await page.evaluate((k) => document.querySelector(`[data-testid="inv-deposit-${k}-all"]`).click(), mineral);
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.storage.minerals[mineral]).toBe(deposited);
+    expect(s.minerals[mineral]).toBe(0);
+  }).toPass({ timeout: 5000 });
+
+  // Withdraw some back into the hold (the storage row only appears once the
+  // inventory re-renders after the deposit sync, so wait for the button first).
+  const takeBtn = deposited >= 100 ? '100' : 'all';
+  const taken = Math.min(100, deposited);
+  await page.waitForSelector(`[data-testid="inv-withdraw-${mineral}-${takeBtn}"]`, { timeout: 5000 });
+  await page.evaluate(({ k, btn }) => document.querySelector(`[data-testid="inv-withdraw-${k}-${btn}"]`).click(), { k: mineral, btn: takeBtn });
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.storage.minerals[mineral]).toBe(deposited - taken);
+    expect(s.minerals[mineral]).toBe(taken);
+  }).toPass({ timeout: 5000 });
 });
 
 test('reset returns to a fresh game', async ({ page }) => {

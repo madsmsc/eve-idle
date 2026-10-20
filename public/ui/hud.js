@@ -47,7 +47,7 @@ export class HudNode extends Node {
       const droneTxt = drones.mining.length + drones.combat.length
         ? ` · 🤖${drones.mining.length}⛏/${drones.combat.length}⚔`
         : '';
-      info.innerHTML = `<span class="name">${active.name}</span> <span class="meta">Lv${active.level} · ⛏${active.mining.toFixed(0)}/s · ⚔${active.combat.toFixed(0)}${droneTxt} · ${cargo}</span>`;
+      info.innerHTML = `<span class="name">${active.name}</span> <span class="meta">⛏${active.mining.toFixed(0)}/s · ⚔${active.combat.toFixed(0)}${droneTxt} · ${cargo}</span>`;
     } else {
       info.innerHTML = `<span class="meta">No ship — open the Hangar to buy one</span>`;
     }

@@ -1,15 +1,13 @@
 'use strict';
 
-// The active ship, rendered centered on screen. It draws its own hull, the
-// click-to-move destination line, and the mining beam; the drones orbiting the
-// rock you mine are its children (each drone is a child node).
+// The active ship node: it draws the ship, the click-to-move destination line,
+// and the mining beam, and it owns the ship's own actions (warp, gate jump,
+// engage, in-fight actions). The mining drones orbiting the rock you mine are
+// its children. While docked at a station the ship is safely in the hangar, so
+// nothing is drawn (the station view replaces the world).
 import { Node } from '../core/node.js';
-import { clamp } from '../core/util.js';
-
-// TODO: files should not have "node" appended - let's assume all files in the frontend are nodes. 
-// even classes that may never be rendered or updated. all files must be classes and all
-// classes must extend node (except maybe a few wiring classes like app/api and possibly cam/util).
-// we must really lean into the scene graph structure
+import { api } from '../core/api.js';
+import { clamp, dist } from '../core/util.js';
 
 export class ShipNode extends Node {
   constructor(app) {
@@ -17,7 +15,97 @@ export class ShipNode extends Node {
     this.add(new MiningDroneNode());
   }
 
+  // ---- ship actions ----
+  // The ship decides how it moves: these used to live on the app orchestrator,
+  // but they belong to the ship node so the scene graph owns the ship's behaviour.
+
+  async doWarp(targetId, opts) {
+    opts = opts || {};
+    if (this.app.state.combat) {
+      try {
+        const data = await api('/api/state');
+        this.app.onServerState(data.state);
+      } catch (e) {
+        this.app.toast(e.message, true);
+        return false;
+      }
+      if (this.app.state.combat) {
+        if (!opts.silent) this.app.toast('Cannot warp while in combat', true);
+        return false;
+      }
+    }
+    const payload = targetId ? { targetId } : { x: opts.x, y: opts.y };
+    this.app.warpPending = true;
+    const ok = await this.app.doAction('warp', payload);
+    this.app.warpPending = false;
+    if (ok) {
+      const active = this.app.state.ships.find((s) => s.id === this.app.state.activeShipId);
+      if (active) this.app.player.snap(active.x, active.y);
+      // Every warp plays the same tunnel/flash so it feels weighty and consistent.
+      this.app.warpFx = performance.now();
+      if (!opts.silent) this.app.toast('Warping…');
+    }
+    return ok;
+  }
+
+  warpToNearest(kind) {
+    const poi = this.app.player.nearestPoiOf(kind);
+    if (!poi) {
+      this.app.toast(`No ${kind} in this system`, true);
+      return;
+    }
+    this.doWarp(poi.id);
+  }
+
+  async doGateJump() {
+    const g = this.app.player.nearestGate();
+    if (!g) {
+      this.app.toast('Not at a gate', true);
+      return;
+    }
+    const targetName = (this.app.state.systemNames || []).find((s) => s.id === g.targetSystemId);
+    this.app.warpPending = true;
+    const ok = await this.app.doAction('gate', { gateId: g.id });
+    this.app.warpPending = false;
+    if (ok) {
+      // A jump feels like a warp (the tunnel) plus its own gate effect on top.
+      this.app.warpFx = performance.now();
+      this.app.gateFx = performance.now();
+      if (this.app.state.combat) {
+        this.app.toast('⚠ Ambushed at the gate!', true);
+        this.app.camera.addShake(1);
+      } else {
+        this.app.toast('Jumping to ' + (targetName ? targetName.name : 'system') + '…');
+      }
+    }
+  }
+
+  async doEngage() {
+    let target = null;
+    if (this.app.targetEnemyId) {
+      const e = this.app.state.world.enemies.find((x) => x.id === this.app.targetEnemyId && x.alive);
+      if (e && dist(e.x, e.y, this.app.player.x, this.app.player.y) <= this.app.constants.engageRange) target = e;
+    }
+    if (!target) target = this.app.player.nearestEnemyInRange();
+    if (!target) {
+      this.app.toast('No target in range', true);
+      return;
+    }
+    const ok = await this.app.doAction('engage', { enemyId: target.id });
+    if (ok) this.app.toast('Engaged!');
+  }
+
+  async doCombatAction(action) {
+    const ok = await this.app.doAction('combat-action', { action });
+    if (ok) {
+      if (action === 'disengage') this.app.toast('Disengaged — rat escaped');
+      else if (action === 'shieldBoost') this.app.toast('Shield boosted');
+      else if (action === 'overload') this.app.toast('Weapons overloaded');
+    }
+  }
+
   render(now) {
+    if (this.app.state.docked) return super.render(now);
     this.drawDestination(now);
     this.drawBeam(now);
     this.drawShip();

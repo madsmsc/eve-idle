@@ -60,10 +60,9 @@ export class HangarNode extends Node {
       const row = document.createElement('div');
       row.className = 'row' + (isActive ? ' active' : '');
       row.innerHTML = `
-        <span class="label">${s.name} <span class="sub">Lv${s.level} · ⛏${s.mining.toFixed(0)}/s · ⚔${s.combat.toFixed(0)}${isActive ? ' · active' : ''}${inCombat ? ' · in combat' : ''}</span></span>
+        <span class="label">${s.name} <span class="sub">⛏${s.mining.toFixed(0)}/s · ⚔${s.combat.toFixed(0)}${isActive ? ' · active' : ''}${inCombat ? ' · in combat' : ''}</span></span>
         <span class="actions">
           <button class="mini" data-action="set-active" data-id="${s.id}" data-testid="ship-${s.id}-active" ${isActive ? 'disabled' : ''}>Active</button>
-          <button class="mini" data-action="upgrade" data-id="${s.id}" data-testid="ship-${s.id}-upgrade" ${inCombat ? 'disabled' : ''}>Up ${fmt(s.upgradeCost)}</button>
           <button class="mini danger" data-action="sell-ship" data-id="${s.id}" data-testid="ship-${s.id}-sell" ${inCombat ? 'disabled' : ''}>Sell ${fmt(s.sellValue)}</button>
         </span>`;
       fleet.appendChild(row);

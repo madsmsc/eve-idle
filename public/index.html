@@ -25,7 +25,6 @@
       <div id="system-name" class="system-name" data-testid="system-name"></div>
       <div id="isk" class="isk" data-testid="isk">0 ISK</div>
       <div id="cargo" class="cargo" data-testid="cargo"></div>
-      <!-- TODO: is threat and faction really used for anything? i assume threat is the difficulty of the system and faction is the enemies and owners of the stations in the system? -->
       <div id="threat" class="threat" data-testid="threat"></div>
       <div id="faction" class="faction" data-testid="faction"></div>
     </div>
@@ -41,7 +40,7 @@
     </div>
 
     <div class="hud-bc" id="controls-hint">
-      <span>click = warp there</span><span>E = engage</span><span>H = hangar</span><span>scroll = zoom</span>
+      <span>click = warp there</span><span>E = engage</span><span>H = hangar</span><span>C = char</span><span>I = inventory</span><span>scroll = zoom</span>
     </div>
 
     <div class="hud-br">
@@ -54,6 +53,8 @@
         <button id="gate-jump" class="hud-btn gate-btn" data-testid="gate-jump" hidden>⇄ Jump</button>
         <button id="engage" class="hud-btn" data-testid="engage-btn" disabled>Engage</button>
         <button id="hangar-btn" class="hud-btn" data-testid="hangar-btn">Hangar</button>
+        <button id="character-btn" class="hud-btn" data-testid="character-btn">Char</button>
+        <button id="inventory-btn" class="hud-btn" data-testid="inventory-btn">Inventory</button>
       </div>
     </div>
 
@@ -98,8 +99,18 @@
     </div>
   </div>
 
-  <!-- Hangar / market overlay (toggle with H) -->
-<!-- TODO: when docking at a station/hangar, the world UI should be replaced and the player ship is removed from space so no damage can be taken, no modules used, etc... that also means the hangar menu shold only be available when docked - and we need some kind of "station background" image when you're docked -->
+  <!-- Docked view: while the ship is at a station the world is replaced by a
+       station interior and the ship is safely in the hangar. The hangar menu is
+       only available while docked. -->
+  <div id="station-view" class="station-view" data-testid="station-view" hidden>
+    <div class="station-view-panel">
+      <div id="station-view-name" class="station-view-name" data-testid="station-view-name"></div>
+      <div class="station-view-sub">Docked — your ship is safely in the hangar. Open the Hangar (H) to trade, or click the map / a destination to undock.</div>
+      <button id="station-launch" class="hud-btn" data-testid="station-launch">Launch</button>
+    </div>
+  </div>
+
+  <!-- Hangar / market overlay (toggle with H) — only available while docked -->
   <div id="hangar" class="hangar" data-testid="hangar" hidden>
     <div class="hangar-header">
       <h2>Hangar &amp; Market</h2>
@@ -160,6 +171,46 @@
       <section>
         <h3>Killboard</h3>
         <ul id="combat-log" class="combat-log" data-testid="combat-log"></ul>
+      </section>
+    </div>
+  </div>
+
+  <!-- Character sheet: pilot standings with every faction. Openable in space or
+       docked (C or the Char button) — the HUD only shows the active system's
+       faction, this shows the whole picture. -->
+  <div id="character-sheet" class="character-sheet" data-testid="character-sheet" hidden>
+    <div class="character-card">
+      <div class="character-header">
+        <h2>Character</h2>
+        <button id="character-close" class="hud-btn" data-testid="character-close">Close</button>
+      </div>
+      <div class="character-body">
+        <div id="character-pilot" class="character-pilot" data-testid="character-pilot"></div>
+        <h3>Faction Standing</h3>
+        <div id="character-factions" class="character-factions" data-testid="character-factions"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inventory: the active ship's contents (openable anywhere) plus the quantum
+       storage shared by every station (docked to access it). -->
+  <div id="inventory" class="inventory" data-testid="inventory" hidden>
+    <div class="inventory-header">
+      <h2>Inventory</h2>
+      <button id="inventory-close" class="hud-btn" data-testid="inventory-close">Close</button>
+    </div>
+    <div class="inventory-body">
+      <section>
+        <h3>Ship Cargo <span class="sub" id="inv-cargo-usage"></span></h3>
+        <div id="inv-ship" class="inv-list" data-testid="inv-ship"></div>
+      </section>
+      <section>
+        <h3>Loot <span class="sub">modules</span></h3>
+        <div id="inv-loot" class="inv-list" data-testid="inv-loot"></div>
+      </section>
+      <section>
+        <h3>Quantum Storage <span class="sub">shared by all stations</span></h3>
+        <div id="inv-storage" class="inv-list" data-testid="inv-storage"></div>
       </section>
     </div>
   </div>

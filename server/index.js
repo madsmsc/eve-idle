@@ -135,13 +135,6 @@ function createApp({ dataFile } = {}) {
         persist();
         return { state };
       }
-      case 'upgrade-ship': {
-        const r = game.upgradeShip(state, payload.shipId);
-        if (r.error) return r;
-        state = r.state;
-        persist();
-        return { state };
-      }
       case 'set-active': {
         const r = game.setActive(state, payload.shipId);
         if (r.error) return r;
@@ -235,6 +228,20 @@ function createApp({ dataFile } = {}) {
       }
       case 'sell-all': {
         const r = game.sellAll(state);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'deposit': {
+        const r = game.deposit(state, payload.mineral, payload.amount);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'withdraw': {
+        const r = game.withdraw(state, payload.mineral, payload.amount);
         if (r.error) return r;
         state = r.state;
         persist();

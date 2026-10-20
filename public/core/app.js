@@ -8,9 +8,9 @@ import { api } from './api.js';
 import { Camera } from './camera.js';
 import { Player } from './player.js';
 import { hexToRgb, dist } from './util.js';
-import { initInput } from './input.js';
+import { Input } from './input.js';
 import { WorldNode, StarNode, BeltNode, PlanetNode, MoonNode, AsteroidNode, StationNode, GateNode, EnemyNode } from '../view/world.js';
-import { ShipNode } from '../view/ship-node.js';
+import { ShipNode } from '../view/ship.js';
 import { CombatNode } from '../view/combat.js';
 import { EffectsNode } from '../view/effects.js';
 import { UINode } from '../ui/ui.js';
@@ -31,9 +31,12 @@ export class App {
     this.targetEnemyId = null;
     this.combatFx = { enemyId: null, enemyX: 0, enemyY: 0, battleStartPerf: 0, explosions: [] };
     this.hangarOpen = false;
+    this.characterOpen = false;
+    this.inventoryOpen = false;
     this.autoPilot = false;
     this.lastAutoTick = 0;
     this.warpFx = 0;
+    this.gateFx = 0;
     this.warpPending = false;
     this.toastTimer = null;
     this.deathTimer = null;
@@ -42,9 +45,11 @@ export class App {
 
     this.player = new Player(this);
     this.camera = new Camera(this);
+    this.ship = new ShipNode(this);
 
     this.world = new WorldNode(this);
     this.world
+      .add(this.player)
       .add(new StarNode())
       .add(new BeltNode())
       .add(new PlanetNode())
@@ -53,7 +58,7 @@ export class App {
       .add(new StationNode())
       .add(new GateNode())
       .add(new EnemyNode())
-      .add(new ShipNode(this))
+      .add(this.ship)
       .add(new CombatNode())
       .add(new EffectsNode());
     this.ui = new UINode(this);
@@ -116,8 +121,10 @@ export class App {
     this.applySystemColor();
     const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
     if (active) this.player.snap(active.x, active.y);
-    initInput(this);
+    this.input = new Input(this);
+    this.input.wire();
     this.ui.refreshPanels();
+    this.syncDockedView();
     this.showFirstTimeTutorial();
     this.lastFrame = performance.now();
     requestAnimationFrame(this.frame);
@@ -169,6 +176,29 @@ export class App {
     }
     this.updateCombatFx(prevShipPos);
     this.ui.refreshPanels();
+    this.syncDockedView();
+  }
+
+  // Docked stations replace the world with a station view and make the hangar
+  // available; leaving the station hides it and closes the hangar.
+  syncDockedView() {
+    const docked = this.state && this.state.docked;
+    const view = document.getElementById('station-view');
+    if (view) view.hidden = !docked;
+    if (docked && this.state.dockedStation) {
+      const nameEl = document.getElementById('station-view-name');
+      if (nameEl) nameEl.textContent = this.state.dockedStation;
+    }
+    if (this.hangarOpen && !docked) this.toggleHangar(false);
+  }
+
+  // Undock: warp just off the pad so the ship is in space again.
+  launch() {
+    const station =
+      this.state.world.stations.find((s) => s.name === this.state.dockedStation) ||
+      this.state.world.stations[0];
+    if (!station) return;
+    this.ship.doWarp(null, { x: station.x + this.constants.dockRange + 200, y: station.y, silent: true });
   }
 
   // Detect combat start/resolution so we can play the right explosion. The server
@@ -211,94 +241,53 @@ export class App {
     }
   }
 
-  // TODO: why is this app's responsibility? shouldn't the responsibility for moving the ship be on
-  // the ship/player/whatever node? we need to focus on moving EVERYTHING to nodes in the scene graph
-  // so there is as little as possible logic outside them.
-  // also, the warping appears instant sometimes. please make it feel weightier and consistent.
-  async doWarp(targetId, opts) {
-    opts = opts || {};
-    if (this.state.combat) {
-      try {
-        const data = await api('/api/state');
-        this.onServerState(data.state);
-      } catch (e) {
-        this.toast(e.message, true);
-        return false;
-      }
-      if (this.state.combat) {
-        if (!opts.silent) this.toast('Cannot warp while in combat', true);
-        return false;
-      }
-    }
-    const payload = targetId ? { targetId } : { x: opts.x, y: opts.y };
-    this.warpPending = true;
-    const ok = await this.doAction('warp', payload);
-    this.warpPending = false;
-    if (ok) {
-      const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
-      if (active) this.player.snap(active.x, active.y);
-      if (!opts.silent) this.toast('Warping…');
-    }
-    return ok;
+  // The ship node owns the ship's movement and combat actions; these are thin
+  // wiring delegators so input, the test hook and autopilot can keep talking to
+  // the app while the logic lives in the scene graph (ShipNode).
+  doWarp(targetId, opts) {
+    return this.ship.doWarp(targetId, opts);
   }
 
   warpToNearest(kind) {
-    const poi = this.player.nearestPoiOf(kind);
-    if (!poi) {
-      this.toast(`No ${kind} in this system`, true);
-      return;
-    }
-    this.doWarp(poi.id);
+    return this.ship.warpToNearest(kind);
   }
 
-  async doGateJump() {
-    const g = this.player.nearestGate();
-    if (!g) {
-      this.toast('Not at a gate', true);
-      return;
-    }
-    const targetName = (this.state.systemNames || []).find((s) => s.id === g.targetSystemId);
-    this.warpPending = true;
-    const ok = await this.doAction('gate', { gateId: g.id });
-    this.warpPending = false;
-    if (ok) {
-      if (this.state.combat) {
-        this.toast('⚠ Ambushed at the gate!', true);
-        this.camera.addShake(1);
-      } else {
-        this.toast('Jumping to ' + (targetName ? targetName.name : 'system') + '…');
-      }
-    }
+  doGateJump() {
+    return this.ship.doGateJump();
   }
 
-  async doEngage() {
-    let target = null;
-    if (this.targetEnemyId) {
-      const e = this.state.world.enemies.find((x) => x.id === this.targetEnemyId && x.alive);
-      if (e && dist(e.x, e.y, this.player.x, this.player.y) <= this.constants.engageRange) target = e;
-    }
-    if (!target) target = this.player.nearestEnemyInRange();
-    if (!target) {
-      this.toast('No target in range', true);
-      return;
-    }
-    const ok = await this.doAction('engage', { enemyId: target.id });
-    if (ok) this.toast('Engaged!');
+  doEngage() {
+    return this.ship.doEngage();
   }
 
-  async doCombatAction(action) {
-    const ok = await this.doAction('combat-action', { action });
-    if (ok) {
-      if (action === 'disengage') this.toast('Disengaged — rat escaped');
-      else if (action === 'shieldBoost') this.toast('Shield boosted');
-      else if (action === 'overload') this.toast('Weapons overloaded');
-    }
+  doCombatAction(action) {
+    return this.ship.doCombatAction(action);
   }
 
   toggleHangar(force) {
-    this.hangarOpen = force !== undefined ? force : !this.hangarOpen;
+    const wantOpen = force !== undefined ? force : !this.hangarOpen;
+    if (wantOpen && !(this.state && this.state.docked)) {
+      this.toast('Dock at a station to use the hangar', true);
+      return;
+    }
+    this.hangarOpen = wantOpen;
     document.getElementById('hangar').hidden = !this.hangarOpen;
     if (this.hangarOpen) this.ui.hangar.refresh();
+  }
+
+  // Character sheet (standings) is available in space and docked.
+  toggleCharacter(force) {
+    this.characterOpen = force !== undefined ? force : !this.characterOpen;
+    document.getElementById('character-sheet').hidden = !this.characterOpen;
+    if (this.characterOpen) this.ui.character.refresh();
+  }
+
+  // Inventory (ship contents + quantum storage) is available in space and docked;
+  // storage deposit/withdraw still requires docking.
+  toggleInventory(force) {
+    this.inventoryOpen = force !== undefined ? force : !this.inventoryOpen;
+    document.getElementById('inventory').hidden = !this.inventoryOpen;
+    if (this.inventoryOpen) this.ui.inventory.refresh();
   }
 
   // ---- autopilot ----
@@ -325,7 +314,7 @@ export class App {
         this.doAction('sell-all', {});
       } else {
         const belt = this.player.nearestPoiOf('belt');
-        if (belt) this.doWarp(belt.id, { silent: true });
+        if (belt) this.ship.doWarp(belt.id, { silent: true });
       }
       return;
     }
@@ -335,7 +324,7 @@ export class App {
     }
     if (!this.player.nearestAsteroid()) {
       const belt = this.player.nearestPoiOf('belt');
-      if (belt) this.doWarp(belt.id, { silent: true });
+      if (belt) this.ship.doWarp(belt.id, { silent: true });
     }
   }
 
@@ -347,7 +336,6 @@ export class App {
     this.camera.update(dt);
     if (this.state) {
       this.player.maybeAutoRecall();
-      this.player.update(dt);
       this.root.update(dt).render(now);
       this.updateAutoPilot(now);
       if (now - this.lastSync > SYNC_MS && !this.warpPending) {

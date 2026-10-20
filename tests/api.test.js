@@ -136,14 +136,12 @@ describe('HTTP API', () => {
   test('POST /api/engage rejects out-of-range target (400)', async () => {
     const st = (await api(srv.base, '/api/state')).data.state;
     const e = st.world.enemies[0];
-    // The ship starts at the station; pick an enemy far from it.
-    const ship = st.ships.find((s) => s.id === st.activeShipId);
-    const far = Math.hypot(e.x - ship.x, e.y - ship.y) > cfg.ENGAGE_RANGE;
-    if (!far) {
-      // If the first enemy is close, just assert the endpoint responds sanely.
-      const r = await api(srv.base, '/api/engage', { enemyId: e.id });
-      assert.ok([200, 400].includes(r.status));
-      return;
+    // Park the ship in open space (not docked), far from the target.
+    await api(srv.base, '/api/warp', { x: 200, y: 200 });
+    const after = (await api(srv.base, '/api/state')).data.state;
+    const ship = after.ships.find((s) => s.id === after.activeShipId);
+    if (Math.hypot(e.x - ship.x, e.y - ship.y) <= cfg.ENGAGE_RANGE) {
+      await api(srv.base, '/api/warp', { x: cfg.WORLD_SIZE - 200, y: 200 });
     }
     const r = await api(srv.base, '/api/engage', { enemyId: e.id });
     assert.equal(r.status, 400);
@@ -285,6 +283,31 @@ describe('HTTP API', () => {
     const r = await api(srv.base, '/api/craft-module', { slotType: 'weapon', tier: 3 });
     assert.equal(r.status, 400);
     assert.ok(r.data.error);
+  });
+
+  test('POST /api/deposit and /api/withdraw move minerals via quantum storage', async () => {
+    const cur = srv.app.getState();
+    const active = cur.ships.find((s) => s.id === cur.activeShipId);
+    active.cargo = { iron: 100, bauxite: 0, gadolinium: 0, megacyte: 0 };
+    srv.app.setState(cur);
+    const dep = await api(srv.base, '/api/deposit', { mineral: 'iron', amount: 100 });
+    assert.equal(dep.status, 200);
+    assert.equal(dep.data.state.storage.minerals.iron, 100);
+    assert.equal(dep.data.state.minerals.iron, 0); // hold emptied (minerals = hold)
+    const wd = await api(srv.base, '/api/withdraw', { mineral: 'iron', amount: 40 });
+    assert.equal(wd.status, 200);
+    assert.equal(wd.data.state.storage.minerals.iron, 60);
+    assert.equal(wd.data.state.minerals.iron, 40);
+  });
+
+  test('POST /api/deposit and /api/withdraw reject when not docked (400)', async () => {
+    await api(srv.base, '/api/tick', { x: 100, y: 100 });
+    const dep = await api(srv.base, '/api/deposit', { mineral: 'iron', amount: 10 });
+    assert.equal(dep.status, 400);
+    assert.match(dep.data.error, /dock/i);
+    const wd = await api(srv.base, '/api/withdraw', { mineral: 'iron', amount: 10 });
+    assert.equal(wd.status, 400);
+    assert.match(wd.data.error, /dock/i);
   });
 
   test('mining works over HTTP: fly to an asteroid, tick, cargo grows', async () => {

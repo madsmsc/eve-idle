@@ -223,7 +223,7 @@ describe('missions', () => {
     const s = game.createInitialState(T0, 42, 'story');
     const before = s.isk;
     const attacker = sys(s).enemies.find((e) => e.missionTag === 'attacker');
-    s.ships[0].level = 100; // guarantee the win
+    s.ships[0].fitting.weapon[0] = 4; // fit a Faction weapon to guarantee the win
     s.ships[0].x = attacker.x;
     s.ships[0].y = attacker.y;
     const eng = game.engage(s, attacker.id, T0).state;
@@ -323,7 +323,7 @@ describe('missions', () => {
     game.startMission(s, 'm6');
     const hub = sys(s).enemies.find((e) => e.missionTag === 'dronhub');
     assert.ok(hub, 'drone hub spawned');
-    s.ships[0].level = 100; // guarantee the win
+    s.ships[0].fitting.weapon[0] = 4; // fit a Faction weapon to guarantee the win
     s.ships[0].x = hub.x;
     s.ships[0].y = hub.y;
     const eng = game.engage(s, hub.id, T0).state;
@@ -444,7 +444,7 @@ describe('position sync', () => {
   });
 });
 
-describe('buyShip / sellShip / upgrade / setActive', () => {
+describe('buyShip / sellShip / setActive', () => {
   test('buying spawns a ship at the station and charges ISK', () => {
     const s = fresh();
     const s2 = game.buyShip(s, 'falcon').state;
@@ -466,15 +466,6 @@ describe('buyShip / sellShip / upgrade / setActive', () => {
     const s2 = game.sellShip(s, id).state;
     assert.equal(s2.ships.length, 1);
     assert.ok(Math.abs(s2.isk - (before + 2500)) < 1e-6);
-  });
-
-  test('upgrading raises level and mining', () => {
-    const s = fresh();
-    const id = s.ships[0].id;
-    const before = game.shipMining(s.ships[0]);
-    const s2 = game.upgradeShip(s, id).state;
-    assert.equal(s2.ships[0].level, 2);
-    assert.ok(game.shipMining(s2.ships[0]) > before);
   });
 
   test('setActive switches the piloted ship', () => {
@@ -522,6 +513,85 @@ describe('sellMinerals', () => {
     assert.ok(game.sellAll(s).error);
     const empty = fresh();
     assert.ok(game.sellAll(empty).error); // docked but empty hold
+  });
+});
+
+describe('quantum storage', () => {
+  // Park the active ship at the first station of a *different* system, proving
+  // storage follows the pilot (shared by every station) rather than the system.
+  function atOtherStation(state) {
+    const other = Object.keys(state.systems).find((id) => id !== sys(state).id);
+    const ship = state.ships.find((sh) => sh.id === state.activeShipId);
+    ship.systemId = other;
+    ship.x = state.systems[other].stations[0].x;
+    ship.y = state.systems[other].stations[0].y;
+  }
+
+  test('deposits minerals from the cargo hold into storage', () => {
+    const s = withCargo(fresh(), { iron: 150, bauxite: 60 });
+    const r = game.deposit(s, 'iron', 100);
+    assert.equal(r.state.ships[0].cargo.iron, 50);
+    assert.equal(r.state.storage.minerals.iron, 100);
+    assert.equal(r.state.storage.minerals.bauxite, 0);
+  });
+
+  test('deposit rejects when not docked, over-depositing or with a bad amount', () => {
+    const s = withCargo(fresh(), { iron: 10 });
+    s.ships[0].x = 100;
+    s.ships[0].y = 100; // not docked
+    assert.ok(game.deposit(s, 'iron', 5).error);
+    assert.ok(game.deposit(s, 'iron', 50).error); // more than the hold
+    assert.ok(game.deposit(s, 'iron', 0).error);
+    assert.ok(game.deposit(s, 'not-a-mineral', 5).error);
+  });
+
+  test('withdraws minerals from storage into the cargo hold', () => {
+    const s = withCargo(fresh(), {});
+    s.storage = game.emptyStorage();
+    s.storage.minerals.iron = 300;
+    const r = game.withdraw(s, 'iron', 40);
+    assert.equal(r.state.ships[0].cargo.iron, 40);
+    assert.equal(r.state.storage.minerals.iron, 260);
+  });
+
+  test('withdraw respects the cargo hold capacity', () => {
+    const s = withCargo(fresh(), { iron: 50 });
+    s.storage = game.emptyStorage();
+    s.storage.minerals.iron = 500;
+    const r = game.withdraw(s, 'iron', 'all');
+    assert.equal(r.state.ships[0].cargo.iron, cfg.SHIPS.rifter.cargo); // hold full
+    assert.ok(r.state.storage.minerals.iron > 0);
+  });
+
+  test('withdraw rejects when not docked, over-withdrawing or with a full hold', () => {
+    const s = withCargo(fresh(), {});
+    s.storage = game.emptyStorage();
+    s.storage.minerals.iron = 100;
+    s.ships[0].x = 100;
+    s.ships[0].y = 100; // not docked
+    assert.ok(game.withdraw(s, 'iron', 10).error);
+    s.ships[0].x = sys(s).stations[0].x;
+    s.ships[0].y = sys(s).stations[0].y;
+    assert.ok(game.withdraw(s, 'iron', 500).error); // more than stored
+    withCargo(s, { iron: cfg.SHIPS.rifter.cargo });
+    assert.ok(game.withdraw(s, 'iron', 1).error); // no room in the hold
+  });
+
+  test('quantum storage is shared across systems', () => {
+    const s = withCargo(fresh(), { bauxite: 80 });
+    const deposited = game.deposit(s, 'bauxite', 80).state;
+    atOtherStation(deposited);
+    const r = game.withdraw(deposited, 'bauxite', 40);
+    assert.equal(r.state.storage.minerals.bauxite, 40);
+    assert.equal(r.state.ships[0].cargo.bauxite, 40);
+  });
+
+  test('storage is exposed in the view and survives ship loss', () => {
+    const s = withCargo(fresh(), { iron: 30 });
+    const deposited = game.deposit(s, 'iron', 30).state;
+    const v = game.view(deposited);
+    assert.equal(v.storage.minerals.iron, 30);
+    assert.equal(deposited.storage.minerals.iron, 30); // state-level, not per-ship
   });
 });
 
@@ -594,14 +664,20 @@ describe('engage + combat', () => {
 
   test('rejects engaging out of range', () => {
     const s = fresh();
-    atStation(s);
     const e = sys(s).enemies[0];
-    // Make sure the station is far from this enemy.
-    if (Math.hypot(e.x - s.ships[0].x, e.y - s.ships[0].y) <= cfg.ENGAGE_RANGE) {
-      s.ships[0].x = e.x + cfg.WORLD_SIZE / 2;
-    }
+    // Park in open space (not docked) on the opposite side of the world.
+    s.ships[0].x = e.x > cfg.WORLD_SIZE / 2 ? 100 : cfg.WORLD_SIZE - 100;
+    s.ships[0].y = 100;
     const r = game.engage(s, e.id, T0);
     assert.ok(r.error && /range/i.test(r.error));
+  });
+
+  test('rejects engaging while docked', () => {
+    const s = fresh();
+    atStation(s);
+    const e = sys(s).enemies[0];
+    const r = game.engage(s, e.id, T0);
+    assert.ok(r.error && /docked/i.test(r.error));
   });
 
   test('rejects a second engage while in combat', () => {
@@ -1445,7 +1521,8 @@ describe('loot drops', () => {
   // 1 = never drop), returning the resolved state.
   function winAgainst(state, enemyType, rng, shipType = 'brutix') {
     state.ships[0].type = shipType;
-    state.ships[0].level = 100; // guarantee the win regardless of the enemy
+    state.ships[0].fitting = game.emptyFitting(shipType);
+    state.ships[0].fitting.weapon[0] = 4; // fit a Faction weapon to guarantee the win
     const e = sys(state).enemies[0];
     e.type = enemyType;
     state.ships[0].x = e.x;
@@ -1484,7 +1561,7 @@ describe('loot drops', () => {
     const loot = s.loot[0];
     const r = game.equipLoot(s, loot.id);
     assert.ok(!r.error, r.error);
-    assert.equal(r.state.ships[0].fitting[loot.slotType][0], loot.tier);
+    assert.ok(r.state.ships[0].fitting[loot.slotType].includes(loot.tier), 'loot lands in an empty slot');
     assert.equal(r.state.loot.length, 0, 'loot is consumed');
     assert.ok(Math.abs(r.state.isk - s.isk) < 1e-6, 'equipping loot is free');
   });

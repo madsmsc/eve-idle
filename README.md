@@ -1,24 +1,29 @@
 # EVE Idle
 
 A small idle game rendered as a 2D top-down world. Warp to asteroid belts to
-mine, stations to trade, and hostile ships to fight. Use your earnings to
-upgrade ships, modules, skills, and drones. A parked ship keeps mining while
-you are away, and a full cargo hold recalls it to a station to sell.
+mine, stations to trade, and hostile ships to fight. Use your earnings to buy
+ships, fit modules, and train skills and drones. A ship's stats are its base
+stats plus its equipped modules. A parked ship keeps mining while you are away,
+and a full cargo hold recalls it to a station to sell.
 
 ## How to play
 
 - Navigate with the system overview map, click visible objects, or use the
   nearest belt, station, and rat buttons. Warp to a gate and jump to another
-  system.
-// TODO: this navigation does not work well - maybe we need to change the world to smaller "pockets"
-// like in eve online and those are smaller and easily navigable by clicking things.
-// but that leaves the navigation between pockets in the same system - do you have an idea?
+  system. Navigation is single-click: every belt, station, rat, moon, planet and
+  gate is reachable by clicking it (or its dot on the overview map), so systems
+  stay large and open instead of being split into small "pockets".
 - Engage nearby enemies to fight. Use shield boost, weapon overload, or
   disengage. Ship loss costs your cargo; insurance covers part of the ship's
   purchase price.
 - Use the Hangar to manage ships, modules, fitting presets, skills, drones,
   loot, industry, achievements, and agent contracts. Module tier changes have
   a cost or refund. Selling loot and refining modules require docking.
+- Press C (or the Char button) any time to open the character sheet and see
+  your standing with every faction, not just the active system's. Press I (or
+  Inventory) to see the ship's contents plus **quantum storage** — a single
+  warehouse every station shares, so ore deposited at one dock can be
+  withdrawn at any other (and survives ship loss).
 - Each system has its own security level, faction, and market prices. Faction
   standing affects prices and gate ambush risk. Drones add mining or combat
   support. Modules and ships can be crafted from ore while docked.
@@ -89,14 +94,18 @@ root: Node
 │   └── EffectsNode
 └── UINode
     ├── HangarNode
+    ├── CharacterNode
+    ├── InventoryNode
     ├── MinimapNode
     ├── HealthBarNode
     ├── HudNode
     └── OverlaysNode
 ```
 
-// TODO: i was expecting deeper nesting, so for example asteroid being a child of belt, and a best containing many asteroids.
-// but maybe thats not how you envisioned it. please let me know.
+The scene graph is flat and keyed by entity type: one node per kind of thing
+(e.g. `BeltNode`, `AsteroidNode`), each iterating that kind from the current
+state. Asteroids carry a `beltId` back to their belt rather than being nested
+under it, which keeps rendering O(types) and keeps the tree stable across syncs.
 
 Key files/folders:
 
@@ -105,7 +114,7 @@ server/       Game configuration, rules, persistence, and HTTP API
 public/
   core/       App orchestration, input, player motion, camera, and API sync
   view/       World, ship, combat, and effects rendering
-  ui/         Minimap, HUD, Hangar, and overlays
+  ui/         Minimap, HUD, Hangar, character sheet, inventory, and overlays
   main.js     Browser entry point
 tests/        Unit, API, client, and Playwright E2E tests
 ```

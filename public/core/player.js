@@ -4,11 +4,15 @@
 // truth; this is the smooth local interpolation between syncs plus the
 // click-to-move destination. It also answers proximity queries ("what is near
 // me?") used by the HUD, autopilot and input.
+//
+// It is a scene-graph node (the ship's "body"): its update() runs from the tree
+// via root.update(dt), alongside the render nodes.
+import { Node } from './node.js';
 import { clamp, dist } from './util.js';
 
-export class Player {
+export class Player extends Node {
   constructor(app) {
-    this.app = app;
+    super(app);
     this.x = 0;
     this.y = 0;
     this.vx = 0;

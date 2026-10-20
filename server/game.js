@@ -19,9 +19,6 @@ const {
   START_STORY_ISK,
   MODES,
   MAX_OFFLINE_SECONDS,
-  UPGRADE_BASE,
-  UPGRADE_GROWTH,
-  LEVEL_MULT,
   INSURANCE_FRACTION,
   SHIELD_BOOST_COST,
   SHIELD_BOOST_COOLDOWN,
@@ -133,23 +130,23 @@ function clamp(v, lo, hi) {
 function clone(s) {
   return JSON.parse(JSON.stringify(s));
 }
-function levelMult(level) {
-  return Math.pow(LEVEL_MULT, level - 1);
-}
+// A ship's effective stats are its base stats plus the flat bonus of every
+// fitted module, multiplied by trained skills. There is no level/upgrade system:
+// ships are what they are, and modules (or better ships) are how you get stronger.
 function shipMining(ship, mults, drone = 0) {
-  return (SHIPS[ship.type].mining * levelMult(ship.level) + moduleBonus(ship, 'mining') + drone) * (mults ? mults.mining : 1);
+  return (SHIPS[ship.type].mining + moduleBonus(ship, 'mining') + drone) * (mults ? mults.mining : 1);
 }
 function shipCombat(ship) {
-  return SHIPS[ship.type].combat * levelMult(ship.level);
+  return SHIPS[ship.type].combat;
 }
 function shipDps(ship, mults, drone = 0) {
-  return (SHIPS[ship.type].dps * levelMult(ship.level) + moduleBonus(ship, 'weapon') + drone) * (mults ? mults.dps : 1);
+  return (SHIPS[ship.type].dps + moduleBonus(ship, 'weapon') + drone) * (mults ? mults.dps : 1);
 }
 function shipShield(ship, mults) {
-  return (SHIPS[ship.type].shield * levelMult(ship.level) + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1);
+  return (SHIPS[ship.type].shield + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1);
 }
 function shipHull(ship, mults) {
-  return (SHIPS[ship.type].hull * levelMult(ship.level) + moduleBonus(ship, 'armor')) * (mults ? mults.hull : 1);
+  return (SHIPS[ship.type].hull + moduleBonus(ship, 'armor')) * (mults ? mults.hull : 1);
 }
 function shipCargo(ship, mults) {
   return (SHIPS[ship.type].cargo + moduleBonus(ship, 'cargo')) * (mults ? mults.cargo : 1);
@@ -274,7 +271,6 @@ function craftShip(state, type) {
   const ship = {
     id: nextId(),
     type,
-    level: 1,
     x: sys.stations[0].x,
     y: sys.stations[0].y,
     systemId: sys.id,
@@ -452,10 +448,6 @@ function effectivePrices(systemId, standing, security = 0.5) {
   for (const key of Object.keys(base)) out[key] = Math.max(1, Math.round(base[key] * mult));
   return out;
 }
-function upgradeCost(ship) {
-  const base = UPGRADE_BASE * (SHIPS[ship.type].cost / 5000 + 1);
-  return Math.floor(base * Math.pow(UPGRADE_GROWTH, ship.level - 1));
-}
 function shipInCombat(state, shipId) {
   return !!(state.combat && state.combat.shipId === shipId);
 }
@@ -468,6 +460,13 @@ function threatLevel(state) {
 // A fresh, empty cargo hold (one key per mineral).
 function emptyCargo() {
   return Object.fromEntries(Object.keys(MINERALS).map((k) => [k, 0]));
+}
+// Quantum storage: a single player-level warehouse shared by every station in
+// every system. It lives on the state (not per-system), so any station lets you
+// deposit or withdraw the same contents. Unlike the active ship's hold, storage
+// survives ship loss.
+function emptyStorage() {
+  return { minerals: emptyCargo() };
 }
 // Total minerals carried in the active ship's cargo hold.
 function cargoUsed(state) {
@@ -807,7 +806,6 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
   const rifter = {
     id: nextId(),
     type: 'rifter',
-    level: 1,
     x: homeSystem.stations[0].x,
     y: homeSystem.stations[0].y,
     systemId: homeSystem.id,
@@ -832,6 +830,7 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
     standing: emptyStanding(),
     drones: emptyDroneBay(),
     loot: [],
+    storage: emptyStorage(),
     fittingPresets: [],
     stats: {
       totalMineralsMined: 0,
@@ -1047,7 +1046,6 @@ function resolveCombat(s, now, won, rng = Math.random) {
       const pod = {
         id: nextId(),
         type: 'rifter',
-        level: 1,
         x: home.x,
         y: home.y,
         systemId: sys.id,
@@ -1113,7 +1111,6 @@ function buyShip(state, type) {
   const ship = {
     id: nextId(),
     type,
-    level: 1,
     x: sys.stations[0].x,
     y: sys.stations[0].y,
     systemId: sys.id,
@@ -1134,20 +1131,6 @@ function sellShip(state, shipId) {
   s.isk += SHIPS[s.ships[idx].type].sellValue;
   s.ships.splice(idx, 1);
   if (s.activeShipId === shipId) s.activeShipId = s.ships.length ? s.ships[0].id : null;
-  return { state: s };
-}
-
-function upgradeShip(state, shipId) {
-  const s = clone(state);
-  const ship = s.ships.find((sh) => sh.id === shipId);
-  if (!ship) return { error: 'Ship not found' };
-  if (shipInCombat(s, shipId)) return { error: 'Ship is in combat' };
-  const cost = upgradeCost(ship);
-  if (s.isk < cost) {
-    return { error: `Not enough ISK (need ${cost}, have ${Math.floor(s.isk)})` };
-  }
-  s.isk -= cost;
-  ship.level += 1;
   return { state: s };
 }
 
@@ -1241,6 +1224,48 @@ function sellAll(state) {
   return { state: s };
 }
 
+// Move minerals from the active ship's cargo hold into quantum storage. Storage
+// is shared by every station (see emptyStorage), so you can park ore at any
+// dock and pick it up anywhere else. Docking is required.
+function deposit(state, mineral, amount) {
+  const def = MINERALS[mineral];
+  if (!def) return { error: `Unknown mineral: ${mineral}` };
+  if (!isDocked(state)) return { error: 'Dock at a station to access storage' };
+  const s = clone(state);
+  if (!s.storage) s.storage = emptyStorage();
+  const active = s.ships.find((sh) => sh.id === s.activeShipId);
+  if (!active) return { error: 'No active ship' };
+  const amt = amount === 'all' ? active.cargo[mineral] : Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) return { error: 'Invalid amount' };
+  if (amt > active.cargo[mineral] + 1e-9) return { error: `Not enough ${def.name} in cargo` };
+  const moved = Math.min(amt, active.cargo[mineral]);
+  active.cargo[mineral] -= moved;
+  s.storage.minerals[mineral] = (s.storage.minerals[mineral] || 0) + moved;
+  return { state: s };
+}
+
+// Move minerals from quantum storage back into the active ship's cargo hold,
+// limited by the hold's free space. Docking is required.
+function withdraw(state, mineral, amount) {
+  const def = MINERALS[mineral];
+  if (!def) return { error: `Unknown mineral: ${mineral}` };
+  if (!isDocked(state)) return { error: 'Dock at a station to access storage' };
+  const s = clone(state);
+  if (!s.storage) s.storage = emptyStorage();
+  const active = s.ships.find((sh) => sh.id === s.activeShipId);
+  if (!active) return { error: 'No active ship' };
+  const have = s.storage.minerals[mineral] || 0;
+  const amt = amount === 'all' ? have : Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) return { error: 'Invalid amount' };
+  if (amt > have + 1e-9) return { error: `Not enough ${def.name} in storage` };
+  const room = shipCargo(active, skillMults(s)) - cargoUsed(s);
+  const moved = Math.min(amt, have, Math.max(0, room));
+  if (moved <= 0) return { error: 'Cargo hold is full' };
+  active.cargo[mineral] += moved;
+  s.storage.minerals[mineral] -= moved;
+  return { state: s };
+}
+
 // Engage the enemy you are standing next to with your active ship. Starts a
 // real-time damage race: both sides' shield/hull/dps are captured here and the
 // fight is simulated on subsequent ticks.
@@ -1255,11 +1280,10 @@ function startCombat(s, enemyId, now) {
   const threat = threatLevel(s);
   const est = enemyCombatStats(enemy.type, threat, enemy, sys.security || 0.5);
   const shipDef = SHIPS[ship.type];
-  const lv = levelMult(ship.level);
   const mults = skillMults(s);
-  const shipShieldMax = (shipDef.shield * lv + moduleBonus(ship, 'shield')) * mults.shield;
-  const shipHullMax = (shipDef.hull * lv + moduleBonus(ship, 'armor')) * mults.hull;
-  const playerDps = (shipDef.dps * lv + moduleBonus(ship, 'weapon') + droneBonus(s, 'combat')) * mults.dps;
+  const shipShieldMax = (shipDef.shield + moduleBonus(ship, 'shield')) * mults.shield;
+  const shipHullMax = (shipDef.hull + moduleBonus(ship, 'armor')) * mults.hull;
+  const playerDps = (shipDef.dps + moduleBonus(ship, 'weapon') + droneBonus(s, 'combat')) * mults.dps;
   s.combat = {
     shipId: ship.id,
     enemyId,
@@ -1290,6 +1314,7 @@ function startCombat(s, enemyId, now) {
 function engage(state, enemyId, now = Date.now()) {
   const s = clone(state);
   if (s.combat) return { error: 'Already in combat' };
+  if (isDocked(state)) return { error: 'Cannot engage while docked — launch first' };
   const ship = s.ships.find((sh) => sh.id === s.activeShipId);
   if (!ship) return { error: 'No active ship' };
   const sys = activeSystem(s);
@@ -1512,7 +1537,6 @@ function grantShips(state, types) {
     const n = {
       id: nextId(),
       type: types[i],
-      level: 1,
       x: clamp(home.x + Math.cos(ang) * rad, 60, sys.width - 60),
       y: clamp(home.y + Math.sin(ang) * rad, 60, sys.height - 60),
       systemId: sys.id,
@@ -1691,27 +1715,25 @@ function missionView(state) {
 
 function shipView(ship, mults, drone) {
   const def = SHIPS[ship.type];
-  const lv = levelMult(ship.level);
   const d = drone || { mining: 0, dps: 0 };
   return {
     id: ship.id,
     type: ship.type,
     name: def.name,
-    level: ship.level,
     x: ship.x,
     y: ship.y,
     systemId: ship.systemId,
-    // Effective stats: base scaled by level, fitted modules add a flat bonus,
-    // drones add a player-level bonus, and trained skills multiply the result.
+    // Effective stats: base stats plus the flat bonus of every fitted module,
+    // with drones adding a player-level bonus and trained skills multiplying
+    // the result. No level/upgrade system.
     mining: shipMining(ship, mults, d.mining),
-    combat: def.combat * lv,
-    dps: (def.dps * lv + moduleBonus(ship, 'weapon') + d.dps) * (mults ? mults.dps : 1),
-    shield: (def.shield * lv + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1),
-    hull: (def.hull * lv + moduleBonus(ship, 'armor')) * (mults ? mults.hull : 1),
+    combat: def.combat,
+    dps: (def.dps + moduleBonus(ship, 'weapon') + d.dps) * (mults ? mults.dps : 1),
+    shield: (def.shield + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1),
+    hull: (def.hull + moduleBonus(ship, 'armor')) * (mults ? mults.hull : 1),
     cargo: shipCargo(ship, mults),
     slots: def.slots,
     fitting: ship.fitting || emptyFitting(ship.type),
-    upgradeCost: upgradeCost(ship),
     sellValue: def.sellValue,
     cost: def.cost,
   };
@@ -1775,6 +1797,11 @@ function view(state) {
       tier: l.tier,
       name: MODULES[l.slotType] ? MODULES[l.slotType].name : l.slotType,
     })),
+    // Quantum storage (shared by every station) — mirrors of the raw state so
+    // the client can render the inventory overlay.
+    storage: {
+      minerals: (state.storage && state.storage.minerals) || emptyCargo(),
+    },
     combat: state.combat
       ? combatView(state.combat)
       : null,
@@ -1866,7 +1893,6 @@ module.exports = {
   tick,
   buyShip,
   sellShip,
-  upgradeShip,
   setActive,
   fitModule,
   saveFittingPreset,
@@ -1893,6 +1919,9 @@ module.exports = {
   craftModule,
   sellMinerals,
   sellAll,
+  deposit,
+  withdraw,
+  emptyStorage,
   cargoUsed,
   cargoCapacity,
   engage,
@@ -1911,8 +1940,6 @@ module.exports = {
   shipShield,
   shipHull,
   shipCargo,
-  upgradeCost,
-  levelMult,
   nearestAsteroidInRange,
   isDocked,
   dockedStation,

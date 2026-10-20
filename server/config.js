@@ -57,9 +57,6 @@ const START_ISK = 10000;
 const START_STORY_ISK = 0;  // the storyline pays its own way via mission rewards
 const MODES = ['demo', 'story'];
 const MAX_OFFLINE_SECONDS = 8 * 3600;
-const UPGRADE_BASE = 500;
-const UPGRADE_GROWTH = 1.5;
-const LEVEL_MULT = 1.2;
 
 // When a ship is destroyed its cargo hold is lost with it (the core EVE risk).
 // Insurance refunds a fraction of the ship's purchase cost — never the cargo.
@@ -351,9 +348,6 @@ module.exports = {
   START_STORY_ISK,
   MODES,
   MAX_OFFLINE_SECONDS,
-  UPGRADE_BASE,
-  UPGRADE_GROWTH,
-  LEVEL_MULT,
   INSURANCE_FRACTION,
   SHIELD_BOOST_COST,
   SHIELD_BOOST_COOLDOWN,
