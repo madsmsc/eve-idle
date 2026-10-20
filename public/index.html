@@ -25,6 +25,7 @@
       <div id="system-name" class="system-name" data-testid="system-name"></div>
       <div id="isk" class="isk" data-testid="isk">0 ISK</div>
       <div id="cargo" class="cargo" data-testid="cargo"></div>
+      <!-- TODO: is threat and faction really used for anything? i assume threat is the difficulty of the system and faction is the enemies and owners of the stations in the system? -->
       <div id="threat" class="threat" data-testid="threat"></div>
       <div id="faction" class="faction" data-testid="faction"></div>
     </div>
@@ -45,6 +46,7 @@
 
     <div class="hud-br">
       <div class="warp-panel" data-testid="warp-panel">
+        <!-- these buttons all need hotkeys - let's start with 1,2,3,... etc. and also render a small square to the left of the buttons with that number to show what to press-->
         <button id="auto-pilot" class="hud-btn auto-btn" data-testid="auto-pilot">▶ Auto</button>
         <button id="warp-belt" class="hud-btn warp-btn" data-testid="warp-belt">⚡ Belt</button>
         <button id="warp-station" class="hud-btn warp-btn" data-testid="warp-station">⚡ Station</button>
@@ -97,6 +99,7 @@
   </div>
 
   <!-- Hangar / market overlay (toggle with H) -->
+<!-- TODO: when docking at a station/hangar, the world UI should be replaced and the player ship is removed from space so no damage can be taken, no modules used, etc... that also means the hangar menu shold only be available when docked - and we need some kind of "station background" image when you're docked -->
   <div id="hangar" class="hangar" data-testid="hangar" hidden>
     <div class="hangar-header">
       <h2>Hangar &amp; Market</h2>

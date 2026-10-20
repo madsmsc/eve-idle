@@ -10,6 +10,9 @@ you are away, and a full cargo hold recalls it to a station to sell.
 - Navigate with the system overview map, click visible objects, or use the
   nearest belt, station, and rat buttons. Warp to a gate and jump to another
   system.
+// TODO: this navigation does not work well - maybe we need to change the world to smaller "pockets"
+// like in eve online and those are smaller and easily navigable by clicking things.
+// but that leaves the navigation between pockets in the same system - do you have an idea?
 - Engage nearby enemies to fight. Use shield boost, weapon overload, or
   disengage. Ship loss costs your cargo; insurance covers part of the ship's
   purchase price.
@@ -92,7 +95,10 @@ root: Node
     └── OverlaysNode
 ```
 
-Key files:
+// TODO: i was expecting deeper nesting, so for example asteroid being a child of belt, and a best containing many asteroids.
+// but maybe thats not how you envisioned it. please let me know.
+
+Key files/folders:
 
 ```text
 server/       Game configuration, rules, persistence, and HTTP API

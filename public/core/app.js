@@ -211,6 +211,10 @@ export class App {
     }
   }
 
+  // TODO: why is this app's responsibility? shouldn't the responsibility for moving the ship be on
+  // the ship/player/whatever node? we need to focus on moving EVERYTHING to nodes in the scene graph
+  // so there is as little as possible logic outside them.
+  // also, the warping appears instant sometimes. please make it feel weightier and consistent.
   async doWarp(targetId, opts) {
     opts = opts || {};
     if (this.state.combat) {

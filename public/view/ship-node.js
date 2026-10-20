@@ -6,6 +6,11 @@
 import { Node } from '../core/node.js';
 import { clamp } from '../core/util.js';
 
+// TODO: files should not have "node" appended - let's assume all files in the frontend are nodes. 
+// even classes that may never be rendered or updated. all files must be classes and all
+// classes must extend node (except maybe a few wiring classes like app/api and possibly cam/util).
+// we must really lean into the scene graph structure
+
 export class ShipNode extends Node {
   constructor(app) {
     super(app);
