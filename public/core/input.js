@@ -149,6 +149,12 @@ export class Input {
       else if (a === 'cancel-agent-mission') app.doAction('agent-mission', { action: 'cancel' });
     });
 
+    // station services sidebar: switch the visible panel
+    document.getElementById('hangar').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.hangar-nav-btn');
+      if (btn) app.ui.hangar.showService(btn.dataset.panel);
+    });
+
     // event delegation for the inventory overlay (quantum-storage transfers)
     document.getElementById('inventory').addEventListener('click', (ev) => {
       const el = ev.target.closest('button[data-action]');

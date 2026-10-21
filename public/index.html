@@ -124,90 +124,104 @@
     <div class="hangar-header">
       <h2>Station Services</h2>
     </div>
-    <div class="hangar-body">
-      <section>
-        <h3>Cargo</h3>
-        <div id="hangar-cargo" class="hangar-cargo" data-testid="hangar-cargo"></div>
-      </section>
-      <section>
-        <h3>Fleet</h3>
-        <div id="hangar-fleet" class="hangar-fleet" data-testid="hangar-fleet"></div>
-      </section>
-      <section>
-        <h3>Fitting <span class="sub">active ship</span></h3>
-        <div class="fitting-presets">
-          <input id="fitting-preset-name" maxlength="24" placeholder="Preset name" aria-label="Fitting preset name" />
-          <button class="mini" data-action="save-fitting-preset" data-testid="save-fitting-preset">Save</button>
-          <select id="fitting-preset-select" aria-label="Saved fitting presets"></select>
-          <button class="mini" data-action="apply-fitting-preset" data-testid="apply-fitting-preset">Apply</button>
-          <button class="mini danger" data-action="delete-fitting-preset" data-testid="delete-fitting-preset">Delete</button>
-        </div>
-        <div id="hangar-fitting" class="hangar-fitting" data-testid="hangar-fitting"></div>
-      </section>
-      <section>
-        <h3>Skills <span class="sub" id="hangar-sp" data-testid="hangar-sp"></span></h3>
-        <div id="hangar-skills" class="hangar-skills" data-testid="hangar-skills"></div>
-      </section>
-      <section>
-        <h3>Achievements</h3>
-        <div id="hangar-achievements" data-testid="hangar-achievements"></div>
-      </section>
-      <section>
-        <h3>Agent Missions <span class="sub" id="agent-mission-cooldown"></span></h3>
-        <div id="hangar-agent-missions" data-testid="hangar-agent-missions"></div>
-      </section>
-      <section>
-        <h3>Factions <span class="sub">standing &amp; ambush risk</span></h3>
-        <div id="hangar-factions" class="hangar-factions" data-testid="hangar-factions"></div>
-      </section>
-      <section>
-        <h3>Drone Bay <span class="sub" id="drone-bay-count"></span></h3>
-        <div id="hangar-drones" class="hangar-drones" data-testid="hangar-drones"></div>
-      </section>
-      <section>
-        <h3>Loot <span class="sub">equip into empty slots</span></h3>
-        <div id="hangar-loot" class="hangar-loot" data-testid="hangar-loot"></div>
-      </section>
-      <section>
-        <h3>Industry <span class="sub">craft modules from ore</span></h3>
-        <div id="hangar-industry" class="hangar-industry" data-testid="hangar-industry"></div>
-      </section>
-      <section>
-        <h3>Shipyard</h3>
-        <div id="hangar-shop" class="hangar-shop" data-testid="hangar-shop"></div>
-      </section>
-      <section>
-        <h3>Killboard</h3>
-        <ul id="combat-log" class="combat-log" data-testid="combat-log"></ul>
-      </section>
+    <div class="hangar-layout">
+      <nav class="hangar-nav" data-testid="hangar-nav" aria-label="Station services">
+        <button class="hangar-nav-btn active" data-panel="cargo" data-testid="hangar-tab-cargo">Cargo</button>
+        <button class="hangar-nav-btn" data-panel="fleet" data-testid="hangar-tab-fleet">Fleet</button>
+        <button class="hangar-nav-btn" data-panel="fitting" data-testid="hangar-tab-fitting">Fitting</button>
+        <button class="hangar-nav-btn" data-panel="skills" data-testid="hangar-tab-skills">Skills</button>
+        <button class="hangar-nav-btn" data-panel="achievements" data-testid="hangar-tab-achievements">Achievements</button>
+        <button class="hangar-nav-btn" data-panel="missions" data-testid="hangar-tab-missions">Agent Missions</button>
+        <button class="hangar-nav-btn" data-panel="factions" data-testid="hangar-tab-factions">Factions</button>
+        <button class="hangar-nav-btn" data-panel="drones" data-testid="hangar-tab-drones">Drone Bay</button>
+        <button class="hangar-nav-btn" data-panel="loot" data-testid="hangar-tab-loot">Loot</button>
+        <button class="hangar-nav-btn" data-panel="industry" data-testid="hangar-tab-industry">Industry</button>
+        <button class="hangar-nav-btn" data-panel="shipyard" data-testid="hangar-tab-shipyard">Shipyard</button>
+        <button class="hangar-nav-btn" data-panel="killboard" data-testid="hangar-tab-killboard">Killboard</button>
+      </nav>
+      <div class="hangar-body">
+        <section data-panel="cargo" class="active">
+          <h3>Cargo</h3>
+          <div id="hangar-cargo" class="hangar-cargo" data-testid="hangar-cargo"></div>
+        </section>
+        <section data-panel="fleet">
+          <h3>Fleet</h3>
+          <div id="hangar-fleet" class="hangar-fleet" data-testid="hangar-fleet"></div>
+        </section>
+        <section data-panel="fitting">
+          <h3>Fitting <span class="sub">active ship</span></h3>
+          <div class="fitting-presets">
+            <input id="fitting-preset-name" maxlength="24" placeholder="Preset name" aria-label="Fitting preset name" />
+            <button class="mini" data-action="save-fitting-preset" data-testid="save-fitting-preset">Save</button>
+            <select id="fitting-preset-select" aria-label="Saved fitting presets"></select>
+            <button class="mini" data-action="apply-fitting-preset" data-testid="apply-fitting-preset">Apply</button>
+            <button class="mini danger" data-action="delete-fitting-preset" data-testid="delete-fitting-preset">Delete</button>
+          </div>
+          <div id="hangar-fitting" class="hangar-fitting" data-testid="hangar-fitting"></div>
+        </section>
+        <section data-panel="skills">
+          <h3>Skills <span class="sub" id="hangar-sp" data-testid="hangar-sp"></span></h3>
+          <div id="hangar-skills" class="hangar-skills" data-testid="hangar-skills"></div>
+        </section>
+        <section data-panel="achievements">
+          <h3>Achievements</h3>
+          <div id="hangar-achievements" data-testid="hangar-achievements"></div>
+        </section>
+        <section data-panel="missions">
+          <h3>Agent Missions <span class="sub" id="agent-mission-cooldown"></span></h3>
+          <div id="hangar-agent-missions" data-testid="hangar-agent-missions"></div>
+        </section>
+        <section data-panel="factions">
+          <h3>Factions <span class="sub">standing &amp; ambush risk</span></h3>
+          <div id="hangar-factions" class="hangar-factions" data-testid="hangar-factions"></div>
+        </section>
+        <section data-panel="drones">
+          <h3>Drone Bay <span class="sub" id="drone-bay-count"></span></h3>
+          <div id="hangar-drones" class="hangar-drones" data-testid="hangar-drones"></div>
+        </section>
+        <section data-panel="loot">
+          <h3>Loot <span class="sub">equip into empty slots</span></h3>
+          <div id="hangar-loot" class="hangar-loot" data-testid="hangar-loot"></div>
+        </section>
+        <section data-panel="industry">
+          <h3>Industry <span class="sub">craft modules from ore</span></h3>
+          <div id="hangar-industry" class="hangar-industry" data-testid="hangar-industry"></div>
+        </section>
+        <section data-panel="shipyard">
+          <h3>Shipyard</h3>
+          <div id="hangar-shop" class="hangar-shop" data-testid="hangar-shop"></div>
+        </section>
+        <section data-panel="killboard">
+          <h3>Killboard</h3>
+          <ul id="combat-log" class="combat-log" data-testid="combat-log"></ul>
+        </section>
+      </div>
     </div>
   </div>
 
   <!-- Character sheet: pilot standings with every faction. Openable in space or
        docked (C or the Char button) — the HUD only shows the active system's
        faction, this shows the whole picture. -->
-  <div id="character-sheet" class="character-sheet" data-testid="character-sheet" hidden>
-    <div class="character-card">
-      <div class="character-header">
-        <h2>Character</h2>
-        <button id="character-close" class="hud-btn" data-testid="character-close">Close</button>
-      </div>
-      <div class="character-body">
-        <div id="character-pilot" class="character-pilot" data-testid="character-pilot"></div>
-        <h3>Faction Standing</h3>
-        <div id="character-factions" class="character-factions" data-testid="character-factions"></div>
-      </div>
+  <div id="character-sheet" class="panel panel--left" data-testid="character-sheet" hidden>
+    <div class="panel-header">
+      <h2>Character</h2>
+      <button id="character-close" class="hud-btn" data-testid="character-close">Close</button>
+    </div>
+    <div class="panel-body">
+      <div id="character-pilot" class="character-pilot" data-testid="character-pilot"></div>
+      <h3>Faction Standing</h3>
+      <div id="character-factions" class="character-factions" data-testid="character-factions"></div>
     </div>
   </div>
 
   <!-- Inventory: the active ship's contents (openable anywhere) plus the quantum
        storage shared by every station (docked to access it). -->
-  <div id="inventory" class="inventory" data-testid="inventory" hidden>
-    <div class="inventory-header">
+  <div id="inventory" class="panel panel--right" data-testid="inventory" hidden>
+    <div class="panel-header">
       <h2>Inventory</h2>
       <button id="inventory-close" class="hud-btn" data-testid="inventory-close">Close</button>
     </div>
-    <div class="inventory-body">
+    <div class="panel-body">
       <section>
         <h3>Ship Cargo <span class="sub" id="inv-cargo-usage"></span></h3>
         <div id="inv-ship" class="inv-list" data-testid="inv-ship"></div>

@@ -10,6 +10,8 @@
   --good: #35d07f;
   --bad: #ff5c7a;
   --gold: #ffcf5c;
+  --char-w: min(400px, 90vw);
+  --inv-w: min(380px, 90vw);
   font-size: 14px;
 }
 
@@ -326,13 +328,14 @@ html, body {
 .hangar {
   position: fixed;
   inset: 76px 0 0;
+  left: 0;
+  right: 0;
   height: calc(100% - 76px);
-  width: 100%;
-  max-width: none;
   background: transparent;
   z-index: 11;
   display: flex;
   flex-direction: column;
+  transition: left 0.22s ease, right 0.22s ease;
 }
 .hangar[hidden] { display: none; }
 .hangar-header {
@@ -343,16 +346,54 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 .hangar-header h2 { margin: 0; font-size: 0.9rem; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+.hangar-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+.hangar-nav {
+  flex-shrink: 0;
+  width: 172px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 12px 24px;
+  border-right: 1px solid var(--border);
+  background: rgba(5, 9, 17, 0.55);
+}
+.hangar-nav-btn {
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.hangar-nav-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.hangar-nav-btn.active {
+  color: var(--accent);
+  background: rgba(79, 209, 255, 0.1);
+  border-color: var(--border);
+  font-weight: 600;
+}
 .hangar-body {
+  flex: 1;
+  min-width: 0;
   padding: 18px 24px 32px;
   overflow-y: auto;
-  flex: 1;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr));
   align-content: start;
   align-items: start;
   gap: 16px;
 }
+.hangar-body section[data-panel] { display: none; }
+.hangar-body section[data-panel].active { display: block; }
 .hangar-body section {
   min-width: 0;
   margin: 0;
@@ -379,8 +420,43 @@ html, body {
   .station-view-sub { display: none; }
   .hangar { inset-block-start: 68px; height: calc(100% - 68px); }
   .hangar-header { padding-inline: 14px; }
+  .hangar-layout { flex-direction: column; }
+  .hangar-nav {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px 10px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .hangar-nav-btn { white-space: nowrap; }
   .hangar-body { padding: 12px 14px 24px; grid-template-columns: 1fr; }
 }
+
+/* While docked the character and inventory panes fold out from the corners
+   (just below the station header) and the station services reflow to fit
+   between them, so every pane stays visible at the same time. */
+@keyframes slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+body.docked .panel {
+  top: 76px;
+  height: calc(100% - 76px);
+}
+@media (max-width: 600px) {
+  body.docked .panel {
+    top: 68px;
+    height: calc(100% - 68px);
+  }
+}
+body.docked.char-open .hangar { left: var(--char-w); }
+body.docked.inv-open .hangar { right: var(--inv-w); }
 
 .hangar-cargo, .hangar-fleet, .hangar-shop, .hangar-fitting, .hangar-skills, .hangar-factions, .hangar-drones, .hangar-loot, .hangar-industry { display: flex; flex-direction: column; gap: 6px; }
 .skill-cat { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-top: 4px; }
@@ -417,43 +493,58 @@ html, body {
 .fit-btn { min-width: 26px; }
 .fit-btn.active { background: rgba(79, 209, 255, 0.25); border-color: var(--accent); color: #fff; }
 
-/* ---------- Character sheet overlay ---------- */
-.character-sheet {
+/* ---------- Shared overlay panels ----------
+   A panel is a fixed full-height side sheet with a header and a scrollable
+   body. `.panel--left` folds from the left corner, `.panel--right` from the
+   right; while docked they tuck below the station header. A new UI overlay is
+   just `class="panel panel--left|right"` with a `.panel-header` + `.panel-body`. */
+.panel {
   position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: grid;
-  place-items: center;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(2px);
-}
-.character-sheet[hidden] { display: none; }
-.character-card {
-  width: min(440px, 92vw);
+  top: 0;
+  height: 100%;
   background: var(--panel-solid);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
-  max-height: 86vh;
+  z-index: 20;
   display: flex;
   flex-direction: column;
 }
-.character-header {
+.panel[hidden] { display: none; }
+.panel--left {
+  left: 0;
+  width: var(--char-w);
+  border-right: 1px solid var(--border);
+  box-shadow: 12px 0 40px rgba(0, 0, 0, 0.5);
+  animation: slide-in-left 0.22s ease-out;
+}
+.panel--right {
+  right: 0;
+  width: var(--inv-w);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
+  animation: slide-in-right 0.22s ease-out;
+}
+.panel-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
 }
-.character-header h2 { margin: 0; font-size: 1.05rem; color: var(--accent); letter-spacing: 1px; }
-.character-body { padding: 14px 16px; overflow-y: auto; }
-.character-body h3 {
-  margin: 14px 0 8px;
+.panel-header h2 { margin: 0; font-size: 1.05rem; color: var(--accent); letter-spacing: 1px; }
+.panel-body { flex: 1; min-height: 0; padding: 14px 16px; overflow-y: auto; }
+.panel-body section { margin-bottom: 20px; }
+.panel-body > h3,
+.panel-body section h3 {
+  margin: 0 0 8px;
   font-size: 0.78rem;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 1px;
 }
+.panel-body > h3 { margin-top: 14px; }
+
+/* Character sheet content */
 .character-pilot { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .char-stat {
   display: flex;
@@ -484,39 +575,7 @@ html, body {
 .char-faction-standing { color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 700; }
 .char-faction-risk { color: var(--muted); font-size: 0.78rem; }
 
-/* ---------- Inventory overlay ---------- */
-.inventory {
-  position: fixed;
-  top: 0;
-  right: 0;
-  height: 100%;
-  width: 380px;
-  max-width: 90vw;
-  background: var(--panel-solid);
-  border-left: 1px solid var(--border);
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
-}
-.inventory[hidden] { display: none; }
-.inventory-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.inventory-header h2 { margin: 0; font-size: 1.05rem; color: var(--accent); letter-spacing: 1px; }
-.inventory-body { padding: 14px 16px; overflow-y: auto; flex: 1; }
-.inventory-body section { margin-bottom: 20px; }
-.inventory-body h3 {
-  margin: 0 0 8px;
-  font-size: 0.78rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
+/* Inventory content */
 .inv-list { display: flex; flex-direction: column; gap: 6px; }
 
 .combat-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; max-height: 200px; overflow: auto; }

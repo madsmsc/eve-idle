@@ -449,6 +449,7 @@ test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship'
 });
 
 test('fitting: fitting a module updates the active ship and spends ISK', async ({ page }) => {
+  await page.getByTestId('hangar-tab-fitting').click();
   await expect(page.getByTestId('hangar-fitting')).toBeVisible();
   // The stock rifter has one weapon slot, empty (tier 0) by default.
   await expect(page.getByTestId('fit-weapon-0-t0')).toHaveClass(/active/);
@@ -467,10 +468,34 @@ test('fitting: fitting a module updates the active ship and spends ISK', async (
 });
 
 test('skills: the hangar shows the skill tree and SP', async ({ page }) => {
+  await page.getByTestId('hangar-tab-skills').click();
   await expect(page.getByTestId('hangar-skills')).toBeVisible();
   // A fresh account has no skill points, so training is unavailable.
   await expect(page.getByTestId('hangar-sp')).toContainText('0 SP');
   await expect(page.getByTestId('skill-gunnery')).toBeDisabled();
+});
+
+test('station services: the sidebar shows one panel at a time', async ({ page }) => {
+  // Cargo is the default service.
+  await expect(page.getByTestId('hangar-tab-cargo')).toHaveClass(/active/);
+  await expect(page.getByTestId('hangar-cargo')).toBeVisible();
+
+  // Clicking Fleet shows only the fleet panel.
+  await page.getByTestId('hangar-tab-fleet').click();
+  await expect(page.getByTestId('hangar-tab-fleet')).toHaveClass(/active/);
+  await expect(page.getByTestId('hangar-tab-cargo')).not.toHaveClass(/active/);
+  await expect(page.getByTestId('hangar-fleet')).toBeVisible();
+  await expect(page.getByTestId('hangar-cargo')).toBeHidden();
+
+  // Jump straight to Shipyard and buy a ship (click via evaluate since the panel
+  // re-renders on sync).
+  await page.getByTestId('hangar-tab-shipyard').click();
+  await expect(page.getByTestId('hangar-shop')).toBeVisible();
+  await page.evaluate(() => document.querySelector('[data-testid="buy-falcon"]').click());
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.ships.length).toBe(2);
+  }).toPass({ timeout: 5000 });
 });
 
 test('hangar: open it and buy a ship', async ({ page }) => {
@@ -555,6 +580,51 @@ test('character sheet shows standings for every faction, in space and docked', a
   await expect(page.getByTestId('character-pilot')).toContainText('Battles Won');
 });
 
+test('character and inventory panes fold out from the corners and the hangar reflows between them while docked', async ({ page }) => {
+  // The ship spawns docked; open both panes with the shortcuts so they appear
+  // side by side with the station services still visible in the middle.
+  await page.keyboard.press('c');
+  await page.keyboard.press('i');
+  await expect(page.getByTestId('character-sheet')).toBeVisible();
+  await expect(page.getByTestId('inventory')).toBeVisible();
+
+  const vw = await page.evaluate(() => window.innerWidth);
+  const bounds = (testid) => page.getByTestId(testid).evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top };
+  });
+
+  // Panes slide in over ~220ms; wait for them to settle at the corners.
+  await expect(async () => {
+    const c = await bounds('character-sheet');
+    const i = await bounds('inventory');
+    expect(Math.abs(c.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(i.right - vw)).toBeLessThanOrEqual(1);
+  }).toPass({ timeout: 2000 });
+  const char = await bounds('character-sheet');
+  const inv = await bounds('inventory');
+
+  // Panes anchor to the left and right corners, just below the station header.
+  expect(Math.abs(char.left)).toBeLessThanOrEqual(1);
+  expect(Math.abs(inv.right - vw)).toBeLessThanOrEqual(1);
+  expect(char.top).toBeGreaterThan(0);
+
+  // The station services reflow to sit between the two open panes (they animate
+  // into place, so poll until the transition settles).
+  await expect(async () => {
+    const hangar = await bounds('hangar');
+    expect(hangar.left).toBeGreaterThanOrEqual(char.right - 1);
+    expect(hangar.right).toBeLessThanOrEqual(inv.left + 1);
+  }).toPass({ timeout: 2000 });
+
+  // Closing them restores the full-width station services.
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('character-sheet')).toBeHidden();
+  await expect(page.getByTestId('inventory')).toBeHidden();
+  const hangarWidth = await page.getByTestId('hangar').evaluate((el) => el.getBoundingClientRect().width);
+  expect(hangarWidth).toBe(vw);
+});
+
 test('inventory: deposit mined cargo into quantum storage and withdraw it back', async ({ page }) => {
   // Mine a bit of ore so the hold has something to deposit.
   const st = await getState(page);
@@ -627,6 +697,7 @@ test('drone bay: buy a mining drone and it boosts the active ship', async ({ pag
 });
 
 test('industry: the hangar lists module blueprints craftable from ore', async ({ page }) => {
+  await page.getByTestId('hangar-tab-industry').click();
   await expect(page.getByTestId('hangar')).toBeVisible();
   await expect(page.getByTestId('hangar-industry')).toBeVisible();
   // A weapon blueprint with a mineral recipe is listed (not craftable: no ore).

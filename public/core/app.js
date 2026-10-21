@@ -184,6 +184,7 @@ export class App {
   syncDockedView() {
     const docked = this.state && this.state.docked;
     const wasOpen = this.hangarOpen;
+    document.body.classList.toggle('docked', !!docked);
     const view = document.getElementById('station-view');
     if (view) view.hidden = !docked;
     if (docked && this.state.dockedStation) {
@@ -295,19 +296,24 @@ export class App {
     if (this.hangarOpen) this.ui.hangar.refresh();
   }
 
+  // Generic corner-panel open/close. Tracks the open flag, reflects it on <body>
+  // (so CSS can reflow the docked hangar) and re-renders the panel when shown.
+  setPanel(flagKey, elementId, bodyClass, refresh, force) {
+    this[flagKey] = force !== undefined ? force : !this[flagKey];
+    document.body.classList.toggle(bodyClass, this[flagKey]);
+    document.getElementById(elementId).hidden = !this[flagKey];
+    if (this[flagKey]) refresh();
+  }
+
   // Character sheet (standings) is available in space and docked.
   toggleCharacter(force) {
-    this.characterOpen = force !== undefined ? force : !this.characterOpen;
-    document.getElementById('character-sheet').hidden = !this.characterOpen;
-    if (this.characterOpen) this.ui.character.refresh();
+    this.setPanel('characterOpen', 'character-sheet', 'char-open', () => this.ui.character.refresh(), force);
   }
 
   // Inventory (ship contents + quantum storage) is available in space and docked;
   // storage deposit/withdraw still requires docking.
   toggleInventory(force) {
-    this.inventoryOpen = force !== undefined ? force : !this.inventoryOpen;
-    document.getElementById('inventory').hidden = !this.inventoryOpen;
-    if (this.inventoryOpen) this.ui.inventory.refresh();
+    this.setPanel('inventoryOpen', 'inventory', 'inv-open', () => this.ui.inventory.refresh(), force);
   }
 
   // ---- autopilot ----
