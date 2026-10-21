@@ -24,15 +24,18 @@ export class Player extends Node {
     this.orbitAngle = 0;
   }
 
-  setDestination(x, y) {
+  setDestination(x, y, dockTargetId = null) {
+    if (this.app.docking || this.undock) return;
     this.destination = {
       x: clamp(x, 0, this.app.constants.worldSize),
       y: clamp(y, 0, this.app.constants.worldSize),
     };
+    this.dockTargetId = dockTargetId;
   }
 
   // Snap to a server-authoritative position (warp / jump / respawn).
   snap(x, y) {
+    this.drift = null;
     this.x = x;
     this.y = y;
     this.vx = 0;
@@ -49,6 +52,7 @@ export class Player extends Node {
   orbitTarget() {
     const state = this.app.state;
     const enemyId = (state.combat && state.combat.enemyId) || this.app.targetEnemyId;
+    const enemyRadius = 150;
     if (enemyId) {
       const enemy = state.world.enemies.find((e) => e.id === enemyId && e.alive);
       const destinationIsEnemy = !this.destination || !!(
@@ -56,13 +60,21 @@ export class Player extends Node {
       );
       if (enemy && (
         (state.combat && state.combat.enemyId === enemyId) ||
-        (destinationIsEnemy && dist(enemy.x, enemy.y, this.x, this.y) <= this.app.constants.engageRange)
+        (destinationIsEnemy && dist(enemy.x, enemy.y, this.x, this.y) <= enemyRadius + 12)
       )) {
-        return { target: enemy, radius: 150 };
+        return { target: enemy, radius: enemyRadius };
       }
     }
 
-    if (!state.combat && !this.destination) {
+    if (!state.combat && this.destination) {
+      const asteroid = state.world.asteroids.find((a) =>
+        a.amount > 0 &&
+        dist(a.x, a.y, this.destination.x, this.destination.y) < 1
+      );
+      if (asteroid && dist(asteroid.x, asteroid.y, this.x, this.y) <= 112) {
+        return { target: asteroid, radius: 100 };
+      }
+    } else if (!state.combat) {
       const asteroid = this.nearestAsteroid();
       if (asteroid) return { target: asteroid, radius: 100 };
     }
@@ -108,7 +120,91 @@ export class Player extends Node {
     if (speed > 4) this.heading = Math.atan2(this.vy, this.vx);
   }
 
+  // Undocking: the ship starts at the station's centre and flies out to the
+  // dock boundary (where the server already placed it), then keeps drifting.
+  startUndock(station) {
+    this.x = station.x;
+    this.y = station.y;
+    this.vx = 0;
+    this.vy = 0;
+    this.heading = 0;
+    this.destination = null;
+    this.undock = { station, t: 0 };
+    this.app.undocking = true;
+  }
+
+  updateUndock(dt) {
+    const u = this.undock;
+    u.t += dt;
+    const speed = Math.min(45, 14 + u.t * 4);
+    const exitX = u.station.x + this.app.constants.dockRange + 30;
+    this.x = Math.min(exitX, this.x + speed * dt);
+    this.y = u.station.y;
+    this.vx = speed;
+    this.vy = 0;
+    this.heading = 0;
+    if (this.x >= exitX) {
+      this.undock = null;
+      this.app.undocking = false;
+      this.drift = { ax: 1, ay: 0, t: 2.2 };
+    }
+  }
+
+  // Docking cutscene: glide slowly into the station centre, fading to black
+  // over the last stretch; the app swaps in the hangar once it is black.
+  updateDocking(dt) {
+    const dock = this.app.docking;
+    const st = dock.station;
+    const dx = st.x - this.x;
+    const dy = st.y - this.y;
+    const d = Math.hypot(dx, dy);
+    dock.elapsed += dt;
+    const speed = d > 1 ? Math.max(70, Math.min(170, d * 0.8)) : 0;
+    const step = Math.min(d, speed * dt);
+    if (d > 1) {
+      this.vx = (dx / d) * speed;
+      this.vy = (dy / d) * speed;
+      this.x += (dx / d) * step;
+      this.y += (dy / d) * step;
+      this.heading = Math.atan2(dy, dx);
+    } else {
+      this.vx = 0;
+      this.vy = 0;
+    }
+    if (!dock.fading && (d < 70 || dock.elapsed > 3.5)) {
+      dock.fading = true;
+      dock.fadeStart = dock.elapsed;
+      this.app.setDockFade(true);
+    }
+    if (dock.fading && dock.elapsed - dock.fadeStart >= 1) this.app.finishDocking();
+  }
+
+  updateDrift(dt) {
+    const dr = this.drift;
+    dr.t += dt;
+    const speed = Math.min(90, 25 + dr.t * 30);
+    this.vx = dr.ax * speed;
+    this.vy = dr.ay * speed;
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.clampToWorld();
+    if (dr.t > 3.5) this.drift = null;
+  }
+
   update(dt) {
+    if (this.app.docking) {
+      this.updateDocking(dt);
+      return;
+    }
+    if (this.undock) {
+      this.updateUndock(dt);
+      return;
+    }
+    if (this.drift && !this.destination && !this.app.state.combat) {
+      this.updateDrift(dt);
+      return;
+    }
+    if (this.drift && (this.destination || this.app.state.combat)) this.drift = null;
     const C = this.app.constants;
     const state = this.app.state;
     const orbit = this.orbitTarget();
@@ -167,6 +263,7 @@ export class Player extends Node {
       );
       if (inbound) return;
     }
+    this.dockTargetId = ns.station.id;
     this.destination = { x: ns.station.x, y: ns.station.y };
   }
 
@@ -228,6 +325,21 @@ export class Player extends Node {
       }
     }
     return best;
+  }
+
+  // Closest asteroid with ore left in a belt (falls back to the belt centre).
+  beltApproachPoint(belt) {
+    let best = null;
+    let bd = Infinity;
+    for (const a of this.app.state.world.asteroids) {
+      if (a.beltId !== belt.id || a.amount <= 0) continue;
+      const d = dist(a.x, a.y, this.x, this.y);
+      if (d < bd) {
+        bd = d;
+        best = a;
+      }
+    }
+    return best || belt;
   }
 
   nearestPoiOf(kind) {

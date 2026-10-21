@@ -20,6 +20,9 @@ export class Input {
       if (k === 'h') app.toggleHangar();
       if (k === 'c') app.toggleCharacter();
       if (k === 'i') app.toggleInventory();
+      if (k === 'f') app.toggleFitting();
+      if (k === 'l') app.toggleLoot();
+      if (k === 'q') app.toggleStorage();
       if (k === 'a') app.toggleAutoPilot();
       if (k === 'b') app.navigateToNearest('belt');
       if (k === 's') app.navigateToNearest('station');
@@ -28,6 +31,9 @@ export class Input {
         app.toggleHangar(false);
         app.toggleCharacter(false);
         app.toggleInventory(false);
+        app.toggleFitting(false);
+        app.toggleLoot(false);
+        app.toggleStorage(false);
       }
     });
 
@@ -104,6 +110,12 @@ export class Input {
     document.getElementById('character-close').addEventListener('click', () => app.toggleCharacter(false));
     document.getElementById('inventory-btn').addEventListener('click', () => app.toggleInventory());
     document.getElementById('inventory-close').addEventListener('click', () => app.toggleInventory(false));
+    document.getElementById('fitting-btn').addEventListener('click', () => app.toggleFitting());
+    document.getElementById('fitting-close').addEventListener('click', () => app.toggleFitting(false));
+    document.getElementById('loot-btn').addEventListener('click', () => app.toggleLoot());
+    document.getElementById('loot-close').addEventListener('click', () => app.toggleLoot(false));
+    document.getElementById('storage-btn').addEventListener('click', () => app.toggleStorage());
+    document.getElementById('storage-close').addEventListener('click', () => app.toggleStorage(false));
     document.getElementById('death-dismiss').addEventListener('click', () => app.overlays.hideDeath());
     document.getElementById('navigate-belt').addEventListener('click', () => app.navigateToNearest('belt'));
     document.getElementById('navigate-station').addEventListener('click', () => app.navigateToNearest('station'));
@@ -123,12 +135,11 @@ export class Input {
     });
 
     // event delegation for all hangar buttons
-    document.getElementById('hangar').addEventListener('click', (ev) => {
+    const onHangarAction = (ev) => {
       const el = ev.target.closest('[data-action]');
       if (!el) return;
       const a = el.dataset.action;
-      if (a === 'sell-mineral') app.doAction('sell-minerals', { mineral: el.dataset.mineral, amount: el.dataset.amount });
-      else if (a === 'sell-all') app.doAction('sell-all', {});
+      if (a === 'sell-all') app.doAction('sell-all', {});
       else if (a === 'buy-ship') app.doAction('buy-ship', { type: el.dataset.type });
       else if (a === 'set-active') app.doAction('set-active', { shipId: el.dataset.id });
       else if (a === 'sell-ship') app.doAction('sell-ship', { shipId: el.dataset.id });
@@ -147,7 +158,10 @@ export class Input {
       else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type });
       else if (a === 'accept-agent-mission') app.doAction('agent-mission', { action: 'accept' });
       else if (a === 'cancel-agent-mission') app.doAction('agent-mission', { action: 'cancel' });
-    });
+    };
+    document.getElementById('hangar').addEventListener('click', onHangarAction);
+    document.getElementById('fitting-panel').addEventListener('click', onHangarAction);
+    document.getElementById('loot-panel').addEventListener('click', onHangarAction);
 
     // station services sidebar: switch the visible panel
     document.getElementById('hangar').addEventListener('click', (ev) => {
@@ -155,14 +169,26 @@ export class Input {
       if (btn) app.ui.hangar.showService(btn.dataset.panel);
     });
 
-    // event delegation for the inventory overlay (quantum-storage transfers)
-    document.getElementById('inventory').addEventListener('click', (ev) => {
+    // inventory grid selection + equip, and quantum-storage transfers
+    const onInventoryClick = (ev) => {
+      const cell = ev.target.closest('[data-cell]');
+      if (cell) {
+        app.ui.inventory.select(cell.dataset.cell);
+        return;
+      }
       const el = ev.target.closest('button[data-action]');
-      if (!el) return;
+      if (!el || el.disabled) return;
       const a = el.dataset.action;
       if (a === 'deposit') app.doAction('deposit', { mineral: el.dataset.mineral, amount: el.dataset.amount });
       else if (a === 'withdraw') app.doAction('withdraw', { mineral: el.dataset.mineral, amount: el.dataset.amount });
-    });
+      else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
+      else if (a === 'sell-mineral') app.doAction('sell-minerals', { mineral: el.dataset.mineral, amount: el.dataset.amount });
+      else if (a === 'sell-all') app.doAction('sell-all', {});
+      else if (a === 'sell-loot') app.doAction('sell-loot', { lootId: el.dataset.loot });
+      else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
+    };
+    document.getElementById('inventory').addEventListener('click', onInventoryClick);
+    document.getElementById('storage-panel').addEventListener('click', onInventoryClick);
     document.getElementById('fitting-preset-select').addEventListener('change', (ev) => {
       document.querySelector('[data-action="delete-fitting-preset"]').disabled = !ev.target.value;
     });

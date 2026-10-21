@@ -1,6 +1,6 @@
 'use strict';
 
-// Screen-space toast + death-screen overlays.
+// Action messages and death-screen overlays.
 import { Node } from '../core/node.js';
 import { fmt } from '../core/util.js';
 
@@ -17,11 +17,7 @@ export class OverlaysNode extends Node {
   }
 
   toast(msg, isError) {
-    const el = document.getElementById('toast');
-    el.textContent = msg;
-    el.className = 'toast show' + (isError ? ' error' : '');
-    clearTimeout(this.app.toastTimer);
-    this.app.toastTimer = setTimeout(() => { el.className = 'toast'; }, 2600);
+    this.app.ui.hud.pushEvent(msg, isError ? 'bad' : '');
   }
 
   showDeath(mail) {

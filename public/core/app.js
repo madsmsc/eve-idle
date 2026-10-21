@@ -33,12 +33,14 @@ export class App {
     this.hangarOpen = false;
     this.characterOpen = false;
     this.inventoryOpen = false;
+    this.fittingOpen = false;
+    this.lootOpen = false;
+    this.storageOpen = false;
     this.autoPilot = false;
     this.lastAutoTick = 0;
     this.warpFx = 0;
     this.gateFx = 0;
     this.warpPending = false;
-    this.toastTimer = null;
     this.deathTimer = null;
     this.lastFrame = 0;
     this.lastSync = 0;
@@ -156,10 +158,19 @@ export class App {
   }
 
   onServerState(newState) {
+    if (this.docking) {
+      // Keep presenting the ship as in space until the cutscene finishes.
+      this.docking.dockedStation = newState.dockedStation;
+      newState.docked = false;
+      newState.dockedStation = null;
+    } else if (newState.docked && this.state && !this.state.docked) {
+      this.beginDocking(newState);
+    }
     const prevActive = this.state ? this.state.activeShipId : null;
     const prevShipPos = { x: this.player.x, y: this.player.y };
     const prevSystem = this.state ? this.state.system.id : null;
     this.state = newState;
+    this.player.dockTargetId = newState.dockTargetId || null;
     this.applySystemColor();
     const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
     if (active) {
@@ -177,6 +188,35 @@ export class App {
     this.updateCombatFx(prevShipPos);
     this.ui.refreshPanels();
     this.syncDockedView();
+  }
+
+  // The server flags the ship as docked the moment it is in range; the client
+  // plays a short fly-in + fade before showing the station UI.
+  beginDocking(newState) {
+    const station = newState.world.stations.find((s) => s.name === newState.dockedStation);
+    if (!station) return;
+    this.docking = { station, dockedStation: newState.dockedStation, elapsed: 0, fading: false, fadeStart: 0 };
+    newState.docked = false;
+    newState.dockedStation = null;
+  }
+
+  setDockFade(on) {
+    const el = document.getElementById('dock-fade');
+    el.classList.toggle('on', on);
+    el.classList.toggle('out', !on);
+  }
+
+  finishDocking() {
+    const dock = this.docking;
+    this.docking = null;
+    this.player.snap(dock.station.x, dock.station.y);
+    if (this.state) {
+      this.state.docked = true;
+      this.state.dockedStation = dock.dockedStation;
+      this.ui.refreshPanels();
+      this.syncDockedView();
+    }
+    this.setDockFade(false);
   }
 
   // Docked stations replace the world with a station view and make the hangar
@@ -204,12 +244,19 @@ export class App {
     if (!station) return;
     if (this.autoPilot && !keepAutoPilot) this.toggleAutoPilot();
     this.player.suppressAutoRecall = true;
+    // Fade to black, then reappear at the station itself and fly out of it.
+    this.setDockFade(true);
+    await new Promise((resolve) => setTimeout(resolve, 900));
     const launched = await this.ship.doWarp(null, {
-      x: station.x + this.constants.dockRange + 200,
+      x: station.x + this.constants.dockRange + 30,
       y: station.y,
       silent: true,
+      noFx: true,
     });
-    if (!launched) this.player.suppressAutoRecall = false;
+    if (launched) this.player.startUndock(station);
+    else this.player.suppressAutoRecall = false;
+    this.setDockFade(false);
+    return launched;
   }
 
   // Detect combat start/resolution so we can play the right explosion. The server
@@ -245,7 +292,11 @@ export class App {
   async sync() {
     if (!this.state || !this.state.activeShip) return;
     try {
-      const data = await api('/api/tick', { x: this.player.x, y: this.player.y });
+      const data = await api('/api/tick', {
+        x: this.player.x,
+        y: this.player.y,
+        dockTargetId: this.player.dockTargetId,
+      });
       this.onServerState(data.state);
     } catch (e) {
       /* transient; keep going */
@@ -310,10 +361,39 @@ export class App {
     this.setPanel('characterOpen', 'character-sheet', 'char-open', () => this.ui.character.refresh(), force);
   }
 
-  // Inventory (ship contents + quantum storage) is available in space and docked;
-  // storage deposit/withdraw still requires docking.
+  // Inventory (cargo grid), Fitting and Quantum Storage share the right edge, so
+  // opening one closes the others. Storage transfers still require docking.
   toggleInventory(force) {
-    this.setPanel('inventoryOpen', 'inventory', 'inv-open', () => this.ui.inventory.refresh(), force);
+    this.toggleRightPanel('inventoryOpen', 'inventory', force);
+  }
+
+  toggleFitting(force) {
+    this.toggleRightPanel('fittingOpen', 'fitting-panel', force);
+  }
+
+  toggleLoot(force) {
+    this.toggleRightPanel('lootOpen', 'loot-panel', force);
+  }
+
+  toggleStorage(force) {
+    this.toggleRightPanel('storageOpen', 'storage-panel', force);
+  }
+
+  toggleRightPanel(flagKey, elementId, force) {
+    const open = force !== undefined ? force : !this[flagKey];
+    const all = [
+      ['inventoryOpen', 'inventory'],
+      ['fittingOpen', 'fitting-panel'],
+      ['lootOpen', 'loot-panel'],
+      ['storageOpen', 'storage-panel'],
+    ];
+    for (const [key, id] of all) {
+      if (key !== flagKey && this[key]) {
+        this[key] = false;
+        document.getElementById(id).hidden = true;
+      }
+    }
+    this.setPanel(flagKey, elementId, 'inv-open', () => this.ui.inventory.refresh(), open);
   }
 
   // ---- autopilot ----
@@ -342,7 +422,10 @@ export class App {
         const belt = this.player.nearestPoiOf('belt');
         if (belt) {
           this.launch({ keepAutoPilot: true }).then((launched) => {
-            if (launched && this.autoPilot) this.player.setDestination(belt.x, belt.y);
+            if (launched && this.autoPilot) {
+              const p = this.player.beltApproachPoint(belt);
+              this.player.setDestination(p.x, p.y);
+            }
           });
         }
       }
@@ -354,7 +437,10 @@ export class App {
     }
     if (!this.player.nearestAsteroid()) {
       const belt = this.player.nearestPoiOf('belt');
-      if (belt) this.player.setDestination(belt.x, belt.y);
+      if (belt) {
+        const p = this.player.beltApproachPoint(belt);
+        this.player.setDestination(p.x, p.y);
+      }
     }
   }
 
@@ -368,7 +454,7 @@ export class App {
       this.player.maybeAutoRecall();
       this.root.update(dt).render(now);
       this.updateAutoPilot(now);
-      if (now - this.lastSync > SYNC_MS && !this.warpPending) {
+      if (now - this.lastSync > SYNC_MS && !this.warpPending && !this.undocking) {
         this.lastSync = now;
         this.sync();
       }

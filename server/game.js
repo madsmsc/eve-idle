@@ -270,6 +270,8 @@ function craftShip(state, type) {
     x: sys.stations[0].x,
     y: sys.stations[0].y,
     systemId: sys.id,
+    dockTargetId: dockedStation(s)?.id || null,
+    dockedStationId: dockedStation(s)?.id || null,
     cargo: emptyCargo(),
     fitting: emptyFitting(type),
   };
@@ -321,6 +323,7 @@ function buyDrone(state, droneType, tier) {
 // Equip a looted module (see resolveCombat for how rats drop them) into the
 // first empty slot of its type on the active ship, free of charge.
 function equipLoot(state, lootId) {
+  if (!isDocked(state)) return { error: 'Dock at a station to equip modules' };
   const s = clone(state);
   if (!Array.isArray(s.loot)) s.loot = [];
   const idx = s.loot.findIndex((l) => l && l.id === lootId);
@@ -553,6 +556,12 @@ function dockedStation(state) {
   const ship = state.ships.find((sh) => sh.id === state.activeShipId);
   const sys = activeSystem(state);
   if (!ship || !sys) return null;
+  if (ship.dockedStationId !== undefined) {
+    const station = sys.stations.find((st) => st.id === ship.dockedStationId);
+    return station && dist(ship.x, ship.y, station.x, station.y) <= DOCK_RANGE ? station : null;
+  }
+  // Preserve docking for saves created before station-directed docking intent
+  // was stored, while all new states use the explicit station marker.
   let best = null;
   let bd = Infinity;
   for (const st of sys.stations) {
@@ -812,6 +821,8 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
     x: homeSystem.stations[0].x,
     y: homeSystem.stations[0].y,
     systemId: homeSystem.id,
+    dockTargetId: homeSystem.stations[0].id,
+    dockedStationId: homeSystem.stations[0].id,
     cargo: emptyCargo(),
     fitting: emptyFitting('rifter'),
   };
@@ -942,6 +953,11 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
     }
     active.x = nx;
     active.y = ny;
+    const targetStation = sys.stations.find((st) => st.id === pos.dockTargetId);
+    active.dockTargetId = targetStation ? targetStation.id : null;
+    active.dockedStationId = targetStation && dist(active.x, active.y, targetStation.x, targetStation.y) <= DOCK_RANGE
+      ? targetStation.id
+      : null;
   }
 
   if (active && !shipInCombat(s, active.id) && seconds > 0) {
@@ -1052,6 +1068,8 @@ function resolveCombat(s, now, won, rng = Math.random) {
         x: home.x,
         y: home.y,
         systemId: sys.id,
+        dockTargetId: home.id,
+        dockedStationId: home.id,
         cargo: emptyCargo(),
         fitting: emptyFitting('rifter'),
       };
@@ -1117,6 +1135,8 @@ function buyShip(state, type) {
     x: sys.stations[0].x,
     y: sys.stations[0].y,
     systemId: sys.id,
+    dockTargetId: dockedStation(s)?.id || null,
+    dockedStationId: dockedStation(s)?.id || null,
     cargo: emptyCargo(),
     fitting: emptyFitting(type),
   };
@@ -1141,6 +1161,9 @@ function setActive(state, shipId) {
   const s = clone(state);
   const ship = s.ships.find((sh) => sh.id === shipId);
   if (!ship) return { error: 'Ship not found' };
+  const station = dockedStation(s);
+  ship.dockTargetId = station ? station.id : null;
+  ship.dockedStationId = station ? station.id : null;
   s.activeShipId = shipId;
   return { state: s };
 }
@@ -1389,6 +1412,22 @@ function findPoi(sys, id) {
   );
 }
 
+// Approaching a belt means approaching its nearest rock that still has ore, so
+// the whole belt is mineable without clicking individual asteroids.
+function closestBeltAsteroid(sys, belt, from) {
+  let best = null;
+  let bd = Infinity;
+  for (const a of sys.asteroids || []) {
+    if (a.beltId !== belt.id || a.amount <= 0) continue;
+    const d = Math.hypot(a.x - from.x, a.y - from.y);
+    if (d < bd) {
+      bd = d;
+      best = a;
+    }
+  }
+  return best;
+}
+
 // Warp the active ship instantly within its own system. `targetId` may be a POI
 // id (belt/station/rat/planet/moon/gate/star) or, if omitted, raw {x, y}
 // coordinates. This is the single-click navigation: no long flights.
@@ -1404,11 +1443,17 @@ function warp(state, targetId, x, y) {
   if (targetId) {
     const poi = findPoi(sys, targetId);
     if (!poi) return { error: 'Warp target not found in this system' };
-    tx = poi.x;
-    ty = poi.y;
+    const rock = poi.id && String(poi.id).startsWith('belt_') ? closestBeltAsteroid(sys, poi, ship) : null;
+    tx = (rock || poi).x;
+    ty = (rock || poi).y;
+    const station = sys.stations.find((st) => st.id === poi.id);
+    ship.dockTargetId = station ? station.id : null;
+    ship.dockedStationId = station ? station.id : null;
   } else if (Number.isFinite(x) && Number.isFinite(y)) {
     tx = x;
     ty = y;
+    ship.dockTargetId = null;
+    ship.dockedStationId = null;
   } else {
     return { error: 'Invalid warp target' };
   }
@@ -1473,6 +1518,8 @@ function gateJump(state, gateId, rng = Math.random, now = Date.now()) {
   ship.systemId = targetSys.id;
   ship.x = clamp(arriveX, 0, targetSys.width);
   ship.y = clamp(arriveY, 0, targetSys.height);
+  ship.dockTargetId = null;
+  ship.dockedStationId = null;
   // Ambush risk: the less you are liked by the destination's faction, the more
   // likely a predator is waiting on the other side of the gate.
   if (rng() < ambushChance(s, targetSys.id)) {
@@ -1541,6 +1588,8 @@ function grantShips(state, types) {
       x: clamp(home.x + Math.cos(ang) * rad, 60, sys.width - 60),
       y: clamp(home.y + Math.sin(ang) * rad, 60, sys.height - 60),
       systemId: sys.id,
+      dockTargetId: null,
+      dockedStationId: null,
       cargo: emptyCargo(),
       fitting: emptyFitting(types[i]),
     };
@@ -1859,6 +1908,7 @@ function view(state) {
   const ds = dockedStation(state);
   v.docked = !!ds;
   v.dockedStation = ds ? ds.name : null;
+  v.dockTargetId = active ? active.dockTargetId || null : null;
   v.cargoUsed = cargoUsed(state);
   v.cargoCapacity = cargoCapacity(state);
   v.cargoFull = v.cargoCapacity > 0 && v.cargoUsed >= v.cargoCapacity;

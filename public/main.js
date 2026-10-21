@@ -19,6 +19,7 @@ window.__eve = {
   getDestination: () => app.player.destination && { ...app.player.destination },
   warp: (targetId, opts) => app.doWarp(targetId, { silent: true, ...(opts || {}) }),
   combatAction: (action) => app.doCombatAction(action),
+  showDeath: (mail) => app.overlays.showDeath(mail),
   setAutoPilot: (on) => {
     if (app.autoPilot !== !!on) app.toggleAutoPilot();
   },

@@ -318,7 +318,7 @@ describe('missions', () => {
     const home = sys(s2).stations[0];
     s2.ships[0].x = home.x;
     s2.ships[0].y = home.y;
-    s2 = game.tick(s2, T0 + 100001);
+    s2 = game.tick(s2, T0 + 100001, { x: home.x, y: home.y, dockTargetId: home.id });
     assert.deepEqual(s2.mission.completed, ['m3', 'm4']);
     assert.equal(s2.mission.active, 'm5');
     assert.equal(s2.ships[0].fitting.mining[0], 1, 'm5 grant fits a Mining Laser I');
@@ -632,6 +632,22 @@ describe('docking', () => {
     const v = game.view(s);
     assert.equal(v.docked, true);
     assert.equal(v.dockedStation, sys(s).stations[0].name);
+  });
+
+  test('passing within dock range does not dock unless the station is the target', () => {
+    const s = fresh();
+    const station = sys(s).stations[0];
+    let state = game.warp(s, null, station.x + cfg.DOCK_RANGE - 1, station.y).state;
+    state = game.tick(state, T0 + 1, { x: station.x + cfg.DOCK_RANGE - 1, y: station.y });
+    assert.equal(game.view(state).docked, false);
+
+    state = game.tick(state, T0 + 2, {
+      x: station.x + cfg.DOCK_RANGE - 1,
+      y: station.y,
+      dockTargetId: station.id,
+    });
+    assert.equal(game.view(state).docked, true);
+    assert.equal(game.view(state).dockedStation, station.name);
   });
 });
 
@@ -1208,14 +1224,28 @@ describe('skill tree', () => {
 });
 
 describe('warp', () => {
-  test('warps the active ship to a belt in its system', () => {
+  test('warps the active ship into a belt in its system', () => {
     const s = fresh();
     const belt = sys(s).belts[0];
     const r = game.warp(s, belt.id);
     assert.ok(!r.error);
     const ship = r.state.ships[0];
-    assert.ok(Math.abs(ship.x - belt.x) < 1e-6);
-    assert.ok(Math.abs(ship.y - belt.y) < 1e-6);
+    assert.ok(sys(s).asteroids.some((a) => a.beltId === belt.id && a.x === ship.x && a.y === ship.y));
+  });
+
+  test('warping to a belt lands on its closest asteroid with ore left', () => {
+    const s = fresh();
+    const belt = sys(s).belts[0];
+    const rocks = sys(s).asteroids.filter((a) => a.beltId === belt.id);
+    const ship = s.ships[0];
+    const d = (a) => Math.hypot(a.x - ship.x, a.y - ship.y);
+    rocks.sort((a, b) => d(a) - d(b));
+    rocks[0].amount = 0; // an empty rock is skipped
+    const r = game.warp(s, belt.id);
+    assert.ok(!r.error);
+    const out = r.state.ships[0];
+    assert.ok(Math.abs(out.x - rocks[1].x) < 1e-6);
+    assert.ok(Math.abs(out.y - rocks[1].y) < 1e-6);
   });
 
   test('warps to a station and to a rat', () => {
@@ -1574,7 +1604,11 @@ describe('loot drops', () => {
 
   test('equipLoot fits a looted module into the first empty slot, consuming it', () => {
     const s = winAgainst(fresh(), 'dread', () => 0);
+    const home = fresh().ships[0];
     const loot = s.loot[0];
+    const away = game.equipLoot(s, loot.id);
+    assert.match(away.error, /dock/i);
+    Object.assign(s.ships[0], { x: home.x, y: home.y, systemId: home.systemId });
     const r = game.equipLoot(s, loot.id);
     assert.ok(!r.error, r.error);
     assert.ok(r.state.ships[0].fitting[loot.slotType].includes(loot.tier), 'loot lands in an empty slot');

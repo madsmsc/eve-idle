@@ -21,6 +21,7 @@ export class ShipNode extends Node {
 
   async doWarp(targetId, opts) {
     opts = opts || {};
+    if (this.app.docking) return false;
     if (this.app.state.combat) {
       try {
         const data = await api('/api/state');
@@ -42,7 +43,7 @@ export class ShipNode extends Node {
       const active = this.app.state.ships.find((s) => s.id === this.app.state.activeShipId);
       if (active) this.app.player.snap(active.x, active.y);
       // Every warp plays the same tunnel/flash so it feels weighty and consistent.
-      this.app.warpFx = performance.now();
+      if (!opts.noFx) this.app.warpFx = performance.now();
       if (!opts.silent) this.app.toast('Warping…');
     }
     return ok;
@@ -74,7 +75,7 @@ export class ShipNode extends Node {
         this.app.toast('Navigation target is no longer available', true);
         return false;
       }
-      destination = target;
+      destination = lists.belts.includes(target) ? this.app.player.beltApproachPoint(target) : target;
       if (lists.enemies.some((enemy) => enemy.id === targetId)) this.app.targetEnemyId = targetId;
       else this.app.targetEnemyId = null;
     } else {
@@ -85,7 +86,10 @@ export class ShipNode extends Node {
       this.app.toast('Invalid navigation destination', true);
       return false;
     }
-    this.app.player.setDestination(destination.x, destination.y);
+    const dockTargetId = targetId && this.app.state.world.stations.some((station) => station.id === targetId)
+      ? targetId
+      : null;
+    this.app.player.setDestination(destination.x, destination.y, dockTargetId);
     if (!opts.silent) this.app.toast('Destination set');
     return true;
   }

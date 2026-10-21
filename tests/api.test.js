@@ -326,8 +326,8 @@ describe('HTTP API', () => {
     const r = await api(srv.base, '/api/warp', { targetId: belt.id });
     assert.equal(r.status, 200);
     const ship = r.data.state.ships.find((s) => s.id === r.data.state.activeShipId);
-    assert.ok(Math.abs(ship.x - belt.x) < 1e-6);
-    assert.ok(Math.abs(ship.y - belt.y) < 1e-6);
+    const rocks = st.world.asteroids.filter((a) => a.beltId === belt.id && a.amount > 0);
+    assert.ok(rocks.some((a) => Math.abs(ship.x - a.x) < 1e-6 && Math.abs(ship.y - a.y) < 1e-6), 'lands on an asteroid of the belt');
   });
 
   test('POST /api/warp rejects an unknown target (400)', async () => {

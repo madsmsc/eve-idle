@@ -438,6 +438,38 @@ describe('Player target orbit', () => {
     assert.ok(angle > 0.5, `ship did not orbit far enough: ${angle}`);
   });
 
+  test('starts orbiting an asteroid as soon as the orbit radius is reached', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const asteroid = { id: 'rock-1', x: 500, y: 500, amount: 100, mineral: 'iron' };
+    const app = {
+      constants: {
+        worldSize: 1000,
+        damping: 0.985,
+        maxSpeed: 600,
+        arriveRadius: 24,
+        engageRange: 240,
+        miningRange: 160,
+      },
+      state: { combat: null, world: { enemies: [], asteroids: [asteroid] } },
+      targetEnemyId: null,
+    };
+    const player = new Player(app);
+    player.x = 100;
+    player.y = 500;
+    player.setDestination(asteroid.x, asteroid.y);
+
+    let closestDistance = Infinity;
+    for (let i = 0; i < 300; i++) {
+      player.update(0.05);
+      closestDistance = Math.min(closestDistance, Math.hypot(player.x - asteroid.x, player.y - asteroid.y));
+    }
+
+    const distance = Math.hypot(player.x - asteroid.x, player.y - asteroid.y);
+    assert.ok(closestDistance > 95, `ship moved too close before orbiting: ${closestDistance}`);
+    assert.ok(Math.abs(distance - 100) < 5, `orbit radius was ${distance}`);
+    assert.ok(player.destination, 'approach destination remains associated with its asteroid orbit');
+  });
+
   test('manual destinations take priority over orbiting a previously selected rat', async () => {
     const { Player } = await import('../public/core/player.js');
     const enemy = { id: 'rat-1', x: 500, y: 500, alive: true };
@@ -459,5 +491,29 @@ describe('Player target orbit', () => {
     player.setDestination(900, 900);
     player.update(0.05);
     assert.ok(player.x > enemy.x + 150, 'ship should continue toward the manual destination');
+  });
+});
+
+describe('Inventory grid stacks', () => {
+  test('ore uses one unlimited stack and grid capacity grows with loot items', async () => {
+    const { InventoryNode } = await import('../public/ui/inventory.js');
+    const app = {
+      state: {
+        minerals: { iron: 1000000 },
+        loot: Array.from({ length: 30 }, (_, index) => ({
+          id: `loot-${index}`,
+          name: `Module ${index}`,
+          slotType: 'weapon',
+          tier: 1,
+        })),
+      },
+      catalog: { minerals: { iron: {} } },
+    };
+    const inventory = new InventoryNode(app);
+    const { cells, total } = inventory.buildCells();
+    assert.equal(cells.filter((cell) => cell.kind === 'ore').length, 1);
+    assert.equal(cells[0].count, 1000000);
+    assert.equal(cells.filter((cell) => cell.kind === 'loot').length, 30);
+    assert.equal(total, 36);
   });
 });

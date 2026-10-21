@@ -154,15 +154,40 @@ test('space status bars persist, docked status is hidden, and shortcuts are labe
   await expect(page.getByTestId('auto-pilot')).not.toHaveClass(/on/);
 });
 
-test('the hangar shows the active system market price', async ({ page }) => {
-  const st = await getState(page);
-  // The active system exposes a price for every mineral.
-  expect(st.world.prices).toBeTruthy();
-  expect(st.world.prices.iron).toBeGreaterThanOrEqual(1);
-  expect(st.world.prices.bauxite).toBeGreaterThanOrEqual(1);
-  // Station services list the active system's price, not a fixed base price.
-  const localPrice = st.world.prices.iron;
-  await expect(page.getByTestId('hangar-cargo')).toContainText(`${localPrice} ISK/u`);
+test('cargo, fitting, and loot are accessible from HUD buttons while docked', async ({ page }) => {
+  await expect(page.getByTestId('hangar-tab-cargo')).toHaveCount(0);
+  await expect(page.getByTestId('hangar-tab-fitting')).toHaveCount(0);
+  await expect(page.getByTestId('hangar-tab-loot')).toHaveCount(0);
+  await expect(page.getByTestId('inventory-btn')).toBeVisible();
+  await expect(page.getByTestId('fitting-btn')).toBeVisible();
+  await expect(page.getByTestId('loot-btn')).toBeVisible();
+  await expect(page.getByTestId('storage-btn')).toBeVisible();
+
+  await page.getByTestId('inventory-btn').click();
+  await expect(page.getByTestId('inventory')).toBeVisible();
+  await page.getByTestId('fitting-btn').click();
+  await expect(page.getByTestId('fitting-panel')).toBeVisible();
+  await expect(page.getByTestId('inventory')).toBeHidden();
+  await page.getByTestId('loot-btn').click();
+  await expect(page.getByTestId('loot-panel')).toBeVisible();
+  await expect(page.getByTestId('fitting-panel')).toBeHidden();
+  await page.getByTestId('loot-close').click();
+});
+
+test('inventory stacks ore without a slot cap and scrolls when item count grows', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__eve.state.loot = Array.from({ length: 100 }, (_, index) => ({
+      id: `overflow-${index}`,
+      name: `Module ${index}`,
+      slotType: 'weapon',
+      tier: 1,
+    }));
+  });
+  await page.keyboard.press('i');
+  const grid = page.getByTestId('inv-grid');
+  await expect(grid.locator('.inv-cell')).toHaveCount(102);
+  await expect.poll(() => grid.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await expect(grid).toHaveCSS('overflow-y', 'auto');
 });
 
 test('manual keys no longer pilot the ship', async ({ page }) => {
@@ -266,12 +291,14 @@ test('navigation buttons route the ship to belts, hostiles, and stations', async
   let state = await getState(page);
   const start = await page.evaluate(() => window.__eve.getShip());
   const belt = nearest(state.world.belts, start);
+  // Approaching a belt targets its closest asteroid, not the belt centre.
+  const rock = nearest(state.world.asteroids.filter((a) => a.beltId === belt.id && a.amount > 0), start);
   await page.getByTestId('navigate-belt').click();
-  await expect.poll(() => page.evaluate(() => window.__eve.getDestination())).toMatchObject({ x: belt.x, y: belt.y });
+  await expect.poll(() => page.evaluate(() => window.__eve.getDestination())).toMatchObject({ x: rock.x, y: rock.y });
   await page.waitForTimeout(700);
   let moving = await page.evaluate(() => window.__eve.getShip());
   expect(dist(moving, start)).toBeGreaterThan(10);
-  expect(dist(moving, belt)).toBeLessThan(dist(start, belt));
+  expect(dist(moving, rock)).toBeLessThan(dist(start, rock));
 
   state = await getState(page);
   const rat = nearest(state.world.enemies.filter((enemy) => enemy.alive), moving);
@@ -386,25 +413,13 @@ test('combat engages and resolves as a win or loss @slow', async ({ page }) => {
   }
 });
 
-test('death screen shows the killmail when a ship is destroyed @slow', async ({ page }) => {
-  await undock(page);
-  const st = await getState(page);
-  // Engage the strongest rat. The stock rifter can't beat a faction/dread, so
-  // the ship is destroyed and the death screen appears.
-  const strength = { pirate: 1, gang: 2, faction: 3, dread: 4 };
-  const enemy = st.world.enemies
-    .filter((e) => e.alive)
-    .sort((a, b) => strength[b.type] - strength[a.type])[0];
-  await page.evaluate(({ x, y }) => window.__eve.setDestination(x, y), enemy);
-  await expect(async () => {
-    const s = await getState(page);
-    expect(dist(s.activeShip, enemy)).toBeLessThan(200);
-  }).toPass({ timeout: 30000 });
-
-  await page.getByTestId('engage-btn').click();
-  await expect(page.getByTestId('death-screen')).toBeVisible({ timeout: 40000 });
-  await expect(page.getByTestId('death-detail')).toContainText(/lost to/i);
-
+test('death screen shows the killmail when a ship is destroyed', async ({ page }) => {
+  // Jita only spawns rats the starter ship beats, so a real loss isn't possible
+  // here (the server-side loss path is covered in game.test.js); drive the overlay.
+  await page.evaluate(() => window.__eve.showDeath({ ship: 'Rifter', enemy: 'Faction Destroyer', system: 'Jita', cargoLost: 5, insurance: 0 }));
+  await expect(page.getByTestId('death-screen')).toBeVisible();
+  await expect(page.getByTestId('death-detail')).toContainText(/Rifter lost to Faction Destroyer/i);
+  await expect(page.getByTestId('death-detail')).toContainText('5 units of cargo lost');
   // Dismiss it.
   await page.getByTestId('death-dismiss').click();
   await expect(page.getByTestId('death-screen')).toBeHidden();
@@ -435,6 +450,8 @@ test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship'
   // via evaluate to avoid Playwright's element-stability wait.)
   const iskBefore = (await getState(page)).isk;
   await page.evaluate(() => document.querySelector('[data-testid="act-boost"]').click());
+  await expect(page.getByTestId('context-log')).toContainText('Shield boosted');
+  await expect(page.getByTestId('toast')).toHaveCount(0);
   await expect(async () => {
     const s = await getState(page);
     expect(s.isk).toBeLessThan(iskBefore);
@@ -453,8 +470,8 @@ test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship'
 });
 
 test('fitting: fitting a module updates the active ship and spends ISK', async ({ page }) => {
-  await page.getByTestId('hangar-tab-fitting').click();
-  await expect(page.getByTestId('hangar-fitting')).toBeVisible();
+  await page.getByTestId('fitting-btn').click();
+  await expect(page.getByTestId('fitting-panel')).toBeVisible();
   // The stock rifter has one weapon slot, empty (tier 0) by default.
   await expect(page.getByTestId('fit-weapon-0-t0')).toHaveClass(/active/);
 
@@ -480,16 +497,16 @@ test('skills: the hangar shows the skill tree and SP', async ({ page }) => {
 });
 
 test('station services: the sidebar shows one panel at a time', async ({ page }) => {
-  // Cargo is the default service.
-  await expect(page.getByTestId('hangar-tab-cargo')).toHaveClass(/active/);
-  await expect(page.getByTestId('hangar-cargo')).toBeVisible();
+  // Fleet is the default service; cargo, fitting, and loot are separate panes.
+  await expect(page.getByTestId('hangar-tab-fleet')).toHaveClass(/active/);
+  await expect(page.getByTestId('hangar-cargo')).toHaveCount(0);
+  await expect(page.getByTestId('hangar-fitting')).toHaveCount(0);
+  await expect(page.getByTestId('hangar-loot')).toHaveCount(0);
 
   // Clicking Fleet shows only the fleet panel.
   await page.getByTestId('hangar-tab-fleet').click();
   await expect(page.getByTestId('hangar-tab-fleet')).toHaveClass(/active/);
-  await expect(page.getByTestId('hangar-tab-cargo')).not.toHaveClass(/active/);
   await expect(page.getByTestId('hangar-fleet')).toBeVisible();
-  await expect(page.getByTestId('hangar-cargo')).toBeHidden();
 
   // Jump straight to Shipyard and buy a ship (click via evaluate since the panel
   // re-renders on sync).
@@ -515,9 +532,9 @@ test('hangar: open it and buy a ship', async ({ page }) => {
   }).toPass({ timeout: 5000 });
 });
 
-test('rejects an unaffordable purchase with a toast', async ({ page }) => {
+test('shows an unaffordable purchase message in the action log', async ({ page }) => {
   await page.evaluate(() => document.querySelector('[data-testid="buy-brutix"]').click()); // 250000 ISK, we have 10000
-  await expect(page.getByTestId('toast')).toContainText(/Not enough ISK/i);
+  await expect(page.getByTestId('context-log')).toContainText(/Not enough ISK/i);
   const s = await getState(page);
   expect(s.ships.length).toBe(1);
 });
@@ -543,18 +560,28 @@ test('station services replace the world and launching leaves a full ship in spa
   await expect(async () => {
     const s = await getState(page);
     expect(s.docked).toBe(false);
-    expect(s.activeShip.x).toBeGreaterThan(station.x + 300);
+    expect(s.activeShip.x).toBeGreaterThan(station.x + 260);
   }).toPass({ timeout: 5000 });
   await expect(page.getByTestId('station-view')).toBeHidden();
   const launched = await getState(page);
-  await page.waitForTimeout(1200);
+  expect(dist(launched.activeShip, station)).toBeLessThan(450);
+  const earlyPosition = await page.evaluate(() => window.__eve.getShip());
+  await page.waitForTimeout(2000);
+  const laterPosition = await page.evaluate(() => window.__eve.getShip());
+  const undockTravel = dist(earlyPosition, laterPosition);
+  expect(undockTravel).toBeGreaterThan(15);
+  expect(undockTravel).toBeLessThan(120);
+  // After the fly-out the ship drifts slowly away and is not pulled back in.
+  await expect.poll(async () => dist((await getState(page)).activeShip, station), { timeout: 16000 })
+    .toBeGreaterThan(300);
   const afterLaunch = await getState(page);
-  expect(dist(launched.activeShip, afterLaunch.activeShip)).toBeLessThan(5);
+  expect(afterLaunch.docked).toBe(false);
+  expect(dist(afterLaunch.activeShip, station)).toBeLessThan(600);
 });
 
 test('the hangar is only available while docked', async ({ page }) => {
   // Station services are available immediately while docked.
-  await expect(page.getByTestId('sell-iron-100')).toBeEnabled();
+  await expect(page.getByTestId('inventory-btn')).toBeVisible();
 
   // Fly to open space (far from every station); the hangar closes and can't reopen.
   await page.evaluate(() => window.__eve.setDestination(600, 600));
@@ -562,7 +589,17 @@ test('the hangar is only available while docked', async ({ page }) => {
   await expect(page.getByTestId('hangar')).toBeHidden();
   await page.keyboard.press('h');
   await expect(page.getByTestId('hangar')).toBeHidden();
-  await expect(page.getByTestId('toast')).toContainText(/Dock at a station/i);
+  await expect(page.getByTestId('context-log')).toContainText(/Dock at a station/i);
+});
+
+test('docking flies into the station and fades to black before the hangar shows', async ({ page }) => {
+  await undock(page);
+  const station = (await getState(page)).world.stations[0];
+  await page.evaluate((id) => window.__eve.warp(id), station.id);
+  await expect(page.getByTestId('dock-fade')).toHaveClass(/\bon\b/, { timeout: 10000 });
+  await expect(page.getByTestId('hangar')).toBeHidden();
+  await expect(page.getByTestId('hangar')).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId('dock-fade')).not.toHaveClass(/\bon\b/);
 });
 
 test('character sheet shows standings for every faction, in space and docked', async ({ page }) => {
@@ -658,8 +695,9 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   expect(mineral).toBeTruthy();
   const deposited = mined.minerals[mineral];
 
-  // Deposit the whole hold into storage (the panel re-renders on sync, so click
-  // via evaluate to avoid Playwright's element-stability wait).
+  // The hold is a grid of squares: select the ore stack, then deposit it all.
+  await page.evaluate((k) => document.querySelector(`[data-testid="inv-cell-${k}"]`).click(), mineral);
+  await expect(page.getByTestId('inv-grid')).toBeVisible();
   await page.evaluate((k) => document.querySelector(`[data-testid="inv-deposit-${k}-all"]`).click(), mineral);
   await expect(async () => {
     const s = await getState(page);
@@ -667,8 +705,11 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
     expect(s.minerals[mineral]).toBe(0);
   }).toPass({ timeout: 5000 });
 
-  // Withdraw some back into the hold (the storage row only appears once the
-  // inventory re-renders after the deposit sync, so wait for the button first).
+  // Quantum storage lives in its own pane (the row only appears once it
+  // re-renders after the deposit sync, so wait for the button first).
+  await page.keyboard.press('q');
+  await expect(page.getByTestId('storage-panel')).toBeVisible();
+  await expect(page.getByTestId('inventory')).toBeHidden();
   const takeBtn = deposited >= 100 ? '100' : 'all';
   const taken = Math.min(100, deposited);
   await page.waitForSelector(`[data-testid="inv-withdraw-${mineral}-${takeBtn}"]`, { timeout: 5000 });
@@ -678,6 +719,44 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
     expect(s.storage.minerals[mineral]).toBe(deposited - taken);
     expect(s.minerals[mineral]).toBe(taken);
   }).toPass({ timeout: 5000 });
+
+  // Mineral selling moved from the hangar Cargo tab to the cargo inventory.
+  await page.keyboard.press('i');
+  await expect(page.getByTestId('inventory')).toBeVisible();
+  await expect(page.getByTestId(`inv-cell-${mineral}`)).toBeVisible();
+  await page.evaluate((k) => document.querySelector(`[data-testid="inv-cell-${k}"]`).click(), mineral);
+  await expect(page.getByTestId(`inv-sell-${mineral}-all`)).toBeEnabled();
+  const iskBefore = (await getState(page)).isk;
+  await page.getByTestId(`inv-sell-${mineral}-all`).click();
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.minerals[mineral]).toBe(0);
+    expect(s.isk).toBeGreaterThan(iskBefore);
+  }).toPass({ timeout: 5000 });
+});
+
+test('fitting has its own pane with ship stats, and the inventory is a grid of squares', async ({ page }) => {
+  await page.keyboard.press('i');
+  await expect(page.getByTestId('inventory')).toBeVisible();
+  const cells = await page.getByTestId('inv-grid').locator('.inv-cell').count();
+  expect(cells).toBeGreaterThanOrEqual(24);
+  await expect(page.getByTestId('inv-fitting')).toBeHidden();
+
+  // Only one right-hand pane is open at a time.
+  await page.keyboard.press('f');
+  await expect(page.getByTestId('fitting-panel')).toBeVisible();
+  await expect(page.getByTestId('inventory')).toBeHidden();
+  await expect(page.getByTestId('inv-ship-stats')).toContainText(/Mining/);
+  await expect(page.getByTestId('inv-ship-stats')).toContainText(/Speed/);
+  await expect(page.getByTestId('inv-ship-stats')).toContainText(/Shield/);
+  await expect(page.getByTestId('inv-ship-stats')).toContainText(/Hull/);
+  await expect(page.getByTestId('inv-fitting')).toContainText('Weapon');
+
+  await page.keyboard.press('q');
+  await expect(page.getByTestId('storage-panel')).toBeVisible();
+  await expect(page.getByTestId('fitting-panel')).toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('storage-panel')).toBeHidden();
 });
 
 test('reset returns to a fresh game', async ({ page }) => {
@@ -854,6 +933,10 @@ async function warpUntil(page, targetId, done) {
     const s = await getState(page);
     expect(done(s)).toBe(true);
   }).toPass({ timeout: 45000 });
+  // Docking plays a fly-in + fade; let it finish before the next scripted move.
+  if ((await getState(page)).world.stations.some((st) => st.id === targetId)) {
+    await expect(page.getByTestId('hangar')).toBeVisible({ timeout: 10000 });
+  }
 }
 
 // Warp the active ship onto a living asteroid of each still-missing mineral and
