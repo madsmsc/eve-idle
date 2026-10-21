@@ -319,6 +319,7 @@ function createApp({ dataFile } = {}) {
           agentMissions: game.AGENT_MISSIONS,
           minerals: game.MINERALS,
           enemies: game.ENEMIES,
+          enemyTiers: game.ENEMY_TIERS,
           factions: game.FACTIONS,
           drones: game.DRONES,
           blueprints: game.BLUEPRINTS,

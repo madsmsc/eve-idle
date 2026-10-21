@@ -11,10 +11,44 @@ const ROMAN = ['—', 'I', 'II', 'III', 'IV'];
 
 export class InventoryNode extends Node {
   refresh() {
+    this.renderFitting();
     this.renderCargo();
     this.renderLoot();
     this.renderStorage();
     return this;
+  }
+
+  renderFitting() {
+    const { state, catalog } = this.app;
+    const ship = state.activeShip;
+    const el = document.getElementById('inv-fitting');
+    document.getElementById('inv-ship-name').textContent = ship ? ship.name : '';
+    el.innerHTML = '';
+    if (!ship) {
+      el.innerHTML = '<div class="row"><span class="sub">No active ship.</span></div>';
+      return;
+    }
+    const drones = state.drones || { mining: [], combat: [] };
+    const droneTxt = drones.mining.length + drones.combat.length
+      ? ` · 🤖${drones.mining.length}⛏/${drones.combat.length}⚔`
+      : '';
+    const stats = document.createElement('div');
+    stats.className = 'row fitting-stats';
+    stats.dataset.testid = 'inv-ship-stats';
+    stats.innerHTML = `<span class="label"><span class="sub">⛏${ship.mining.toFixed(1)}/s · ⚔${fmt(ship.dps)} dps · 🛡${fmt(ship.shield)} · 🧱${fmt(ship.hull)} · 📦${fmt(ship.cargo)}${droneTxt}</span></span>`;
+    el.appendChild(stats);
+    for (const slotType of Object.keys(catalog.modules)) {
+      const count = ship.slots[slotType] || 0;
+      const tiers = ship.fitting[slotType] || [];
+      for (let i = 0; i < count; i++) {
+        const t = tiers[i] || 0;
+        const tierLabel = t === 4 ? 'Faction' : ROMAN[t];
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `<span class="label">${catalog.modules[slotType].name} <span class="sub">${t ? `Tier ${tierLabel}` : 'empty'}</span></span>`;
+        el.appendChild(row);
+      }
+    }
   }
 
   renderCargo() {

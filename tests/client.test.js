@@ -256,6 +256,105 @@ describe('EnemyNode status labels', () => {
       { color: '#ff657a', width: 33 },
     ]);
   });
+
+  test('marks the selected target with four corner brackets, not a full box or crosshair', async () => {
+    const { EnemyNode } = await import('../public/view/world.js');
+    const paths = [];
+    const rectangles = [];
+    let path = [];
+    const ctx = {
+      save() {},
+      restore() {},
+      translate() {},
+      rotate() {},
+      beginPath() { path = []; },
+      moveTo(x, y) { path.push([x, y]); },
+      lineTo(x, y) { path.push([x, y]); },
+      closePath() {},
+      fill() {},
+      stroke() { paths.push([...path]); },
+      fillRect() {},
+      strokeRect(x, y, width, height) { rectangles.push({ x, y, width, height }); },
+      fillText() {},
+    };
+    const enemy = { id: 'enemy-1', x: 100, y: 200, type: 'pirate', alive: true, seed: 1 };
+    const app = {
+      ctx,
+      camera: {
+        zoom: 1,
+        getViewBounds: () => ({ minX: 0, maxX: 500, minY: 0, maxY: 500 }),
+        worldToScreen: () => ({ x: 250, y: 250 }),
+      },
+      catalog: { enemies: { pirate: { name: 'Pirate Frigate', shield: 40, hull: 80 } } },
+      constants: { enemyHealthMultiplier: 0.65 },
+      state: { combat: null, world: { enemies: [enemy] } },
+      targetEnemyId: enemy.id,
+    };
+
+    new EnemyNode(app).render(0);
+
+    const targetPath = paths.find((points) => points.length === 12);
+    assert.ok(targetPath, 'selected target should render four L-shaped corners');
+    assert.ok(!rectangles.some(({ width, height }) => width > 20 && height > 20), 'should not draw a full target box');
+    assert.ok(!targetPath.some(([x, y]) => x === 250 || y === 250), 'should not draw a crosshair through the target');
+  });
+});
+
+describe('Ship destination indicator', () => {
+  test('hides the blue destination crosshair when the destination is the selected rat', async () => {
+    const { ShipNode } = await import('../public/view/ship.js');
+    const calls = { arcs: 0, strokes: 0 };
+    const ctx = {
+      save() {},
+      restore() {},
+      setLineDash() {},
+      beginPath() {},
+      moveTo() {},
+      lineTo() {},
+      arc() { calls.arcs++; },
+      stroke() { calls.strokes++; },
+    };
+    const enemy = { id: 'rat-1', x: 300, y: 400, alive: true };
+    const app = {
+      ctx,
+      canvas: { width: 800, height: 600 },
+      camera: { worldToScreen: () => ({ x: 500, y: 400 }) },
+      player: { destination: { x: enemy.x, y: enemy.y } },
+      state: { world: { enemies: [enemy] } },
+      targetEnemyId: enemy.id,
+    };
+
+    new ShipNode(app).drawDestination(0);
+
+    assert.deepEqual(calls, { arcs: 0, strokes: 0 });
+  });
+
+  test('keeps the destination indicator for non-target navigation', async () => {
+    const { ShipNode } = await import('../public/view/ship.js');
+    let arcs = 0;
+    const ctx = {
+      save() {},
+      restore() {},
+      setLineDash() {},
+      beginPath() {},
+      moveTo() {},
+      lineTo() {},
+      arc() { arcs++; },
+      stroke() {},
+    };
+    const app = {
+      ctx,
+      canvas: { width: 800, height: 600 },
+      camera: { worldToScreen: () => ({ x: 500, y: 400 }) },
+      player: { destination: { x: 300, y: 400 } },
+      state: { world: { enemies: [] } },
+      targetEnemyId: null,
+    };
+
+    new ShipNode(app).drawDestination(0);
+
+    assert.equal(arcs, 1);
+  });
 });
 
 describe('Player auto-recall', () => {
@@ -278,5 +377,87 @@ describe('Player auto-recall', () => {
     app.state.cargoFull = true;
     player.maybeAutoRecall();
     assert.deepEqual(player.destination, station);
+  });
+});
+
+describe('Player target orbit', () => {
+  test('slowly orbits a selected rat during and outside combat', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const enemy = { id: 'rat-1', x: 500, y: 500, alive: true };
+    const app = {
+      constants: {
+        worldSize: 1000,
+        damping: 0.985,
+        maxSpeed: 600,
+        arriveRadius: 24,
+        engageRange: 240,
+        miningRange: 160,
+      },
+      state: { combat: null, world: { enemies: [enemy], asteroids: [] } },
+      targetEnemyId: enemy.id,
+    };
+    const player = new Player(app);
+    player.x = enemy.x + 150;
+    player.y = enemy.y;
+
+    for (let i = 0; i < 200; i++) player.update(0.05);
+    const distance = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+    const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+    assert.ok(Math.abs(distance - 150) < 5, `orbit radius was ${distance}`);
+    assert.ok(angle > 0.5, `ship did not orbit far enough: ${angle}`);
+
+    app.state.combat = { enemyId: enemy.id };
+    const beforeCombatOrbit = { x: player.x, y: player.y };
+    for (let i = 0; i < 40; i++) player.update(0.05);
+    assert.notDeepEqual({ x: player.x, y: player.y }, beforeCombatOrbit);
+  });
+
+  test('slowly orbits a nearby mineable asteroid', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const asteroid = { x: 500, y: 500, amount: 100, mineral: 'iron' };
+    const app = {
+      constants: {
+        worldSize: 1000,
+        damping: 0.985,
+        maxSpeed: 600,
+        arriveRadius: 24,
+        engageRange: 240,
+        miningRange: 160,
+      },
+      state: { combat: null, world: { enemies: [], asteroids: [asteroid] } },
+      targetEnemyId: null,
+    };
+    const player = new Player(app);
+    player.x = asteroid.x + 100;
+    player.y = asteroid.y;
+
+    for (let i = 0; i < 200; i++) player.update(0.05);
+    const distance = Math.hypot(player.x - asteroid.x, player.y - asteroid.y);
+    const angle = Math.atan2(player.y - asteroid.y, player.x - asteroid.x);
+    assert.ok(Math.abs(distance - 100) < 5, `orbit radius was ${distance}`);
+    assert.ok(angle > 0.5, `ship did not orbit far enough: ${angle}`);
+  });
+
+  test('manual destinations take priority over orbiting a previously selected rat', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const enemy = { id: 'rat-1', x: 500, y: 500, alive: true };
+    const app = {
+      constants: {
+        worldSize: 1000,
+        damping: 0.985,
+        maxSpeed: 600,
+        arriveRadius: 24,
+        engageRange: 240,
+        miningRange: 160,
+      },
+      state: { combat: null, world: { enemies: [enemy], asteroids: [] } },
+      targetEnemyId: enemy.id,
+    };
+    const player = new Player(app);
+    player.x = enemy.x + 150;
+    player.y = enemy.y;
+    player.setDestination(900, 900);
+    player.update(0.05);
+    assert.ok(player.x > enemy.x + 150, 'ship should continue toward the manual destination');
   });
 });

@@ -23,10 +23,9 @@
   <div id="hud">
     <div class="hud-tl">
       <div id="system-name" class="system-name" data-testid="system-name"></div>
-      <div id="isk" class="isk" data-testid="isk">0 ISK</div>
+      <div id="security" class="hud-line security" data-testid="security"></div>
+      <div id="faction" class="hud-line faction" data-testid="faction"></div>
       <div id="cargo" class="cargo" data-testid="cargo"></div>
-      <div id="threat" class="threat" data-testid="threat"></div>
-      <div id="faction" class="faction" data-testid="faction"></div>
     </div>
 
     <div class="hud-tr">
@@ -34,9 +33,11 @@
     </div>
 
     <div class="hud-bl">
-      <div id="context" class="context" data-testid="context"></div>
-      <div id="ship-info" class="ship-info" data-testid="ship-info"></div>
-      <div id="mining-indicator" class="mining-indicator" data-testid="mining-indicator"></div>
+      <div id="context" class="context" data-testid="context">
+        <div class="ctx-state" data-testid="context-state"><i class="ctx-dot"></i><span class="ctx-label"></span></div>
+        <div class="ctx-detail" data-testid="context-detail"></div>
+        <ul class="ctx-log" data-testid="context-log"></ul>
+      </div>
     </div>
 
     <div class="hud-br">
@@ -53,16 +54,16 @@
     </div>
 
     <div id="ship-status" class="ship-status" data-testid="ship-status" aria-label="Ship status">
+      <div class="status-bar speed" data-testid="status-speed">
+        <div class="status-heading"><span>Speed</span><span data-testid="status-speed-value"></span></div>
+        <div class="status-track"><i></i></div>
+      </div>
       <div class="status-bar shield" data-testid="status-shield">
         <div class="status-heading"><span>Shield</span><span data-testid="status-shield-value"></span></div>
         <div class="status-track"><i></i></div>
       </div>
       <div class="status-bar hull" data-testid="status-hull">
         <div class="status-heading"><span>Hull</span><span data-testid="status-hull-value"></span></div>
-        <div class="status-track"><i></i></div>
-      </div>
-      <div class="status-bar speed" data-testid="status-speed">
-        <div class="status-heading"><span>Speed</span><span data-testid="status-speed-value"></span></div>
         <div class="status-track"><i></i></div>
       </div>
     </div>
@@ -222,6 +223,10 @@
       <button id="inventory-close" class="hud-btn" data-testid="inventory-close">Close</button>
     </div>
     <div class="panel-body">
+      <section>
+        <h3>Ship <span class="sub" id="inv-ship-name"></span></h3>
+        <div id="inv-fitting" class="inv-list" data-testid="inv-fitting"></div>
+      </section>
       <section>
         <h3>Ship Cargo <span class="sub" id="inv-cargo-usage"></span></h3>
         <div id="inv-ship" class="inv-list" data-testid="inv-ship"></div>

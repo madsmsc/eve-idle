@@ -15,8 +15,9 @@ const {
   SHIP_BLUEPRINTS,
   MINERALS,
   ENEMIES,
-  START_ISK,
-  START_STORY_ISK,
+  ENEMY_TIERS,
+  spawnTable,
+  START_ISK,  START_STORY_ISK,
   MODES,
   MAX_OFFLINE_SECONDS,
   INSURANCE_FRACTION,
@@ -50,7 +51,6 @@ const {
   CRAFT_DISCOUNT,
   BLUEPRINTS,
   MISSION_ORDER,
-  MISSION_ENEMIES,
   MISSIONS,
   WORLD_SIZE,
   ASTEROID_FIELDS,
@@ -65,10 +65,6 @@ const {
   GATE_RANGE,
   MAX_SPEED,
   STATE_VERSION,
-  THREAT_ISK_STEP,
-  THREAT_STAT_GROWTH,
-  THREAT_REWARD_GROWTH,
-  THREAT_MAX,
 } = require('./config');
 
 let _counter = 0;
@@ -451,12 +447,6 @@ function effectivePrices(systemId, standing, security = 0.5) {
 function shipInCombat(state, shipId) {
   return !!(state.combat && state.combat.shipId === shipId);
 }
-// Threat level rises with total ISK earned. Each level makes rats tougher
-// (more defense) but also pay more, keeping combat meaningful as you progress.
-function threatLevel(state) {
-  const earned = (state.stats && state.stats.totalIskEarned) || 0;
-  return Math.min(THREAT_MAX, Math.floor(earned / THREAT_ISK_STEP));
-}
 // A fresh, empty cargo hold (one key per mineral).
 function emptyCargo() {
   return Object.fromEntries(Object.keys(MINERALS).map((k) => [k, 0]));
@@ -498,17 +488,31 @@ function applyPool(shieldMax, hullMax, damage) {
   return { shield, hull };
 }
 
-// The enemy's effective combat stats, scaled up by the current threat level.
-function enemyCombatStats(type, threat, fallback = null, security = 0.5) {
-  const def = ENEMIES[type] || fallback;
-  const g = (1 + THREAT_STAT_GROWTH * threat) * (1 + (0.5 - security) * 0.5);
+// The enemy's combat stats: its type's base numbers times its tier multiplier,
+// straight from enemies.json. Nothing else modifies them.
+function enemyCombatStats(enemy) {
+  const def = ENEMIES[enemy.type];
+  const tier = ENEMY_TIERS[enemy.tier] || ENEMY_TIERS.standard;
+  const m = tier ? tier.multiplier : 1;
   return {
-    shield: (def ? def.shield : 0) * g,
-    hull: (def ? def.hull : 0) * g,
-    dps: (def ? def.dps : 0) * g,
-    reward: (def ? def.iskReward : 0) * (1 + THREAT_REWARD_GROWTH * threat),
-    rangeDelay: def ? def.rangeDelay || 0 : 0,
+    shield: def ? def.shield * m : 0,
+    hull: def ? def.hull * m : 0,
+    dps: def ? def.dps * m : 0,
+    reward: def ? def.iskReward * m : 0,
+    rangeDelay: enemy.rangeDelay || 0,
   };
+}
+// Roll a rat (type + tier) from the spawn table allowed at `security`.
+function rollRat(security, rng) {
+  const table = spawnTable(security);
+  if (!table.length) return { type: 'pirate', tier: 'novice' };
+  let r = rng() * table.reduce((a, b) => a + b.weight, 0);
+  for (const row of table) {
+    r -= row.weight;
+    if (r < 0) return { type: row.type, tier: row.tier };
+  }
+  const last = table[table.length - 1];
+  return { type: last.type, tier: last.tier };
 }
 
 // The player's effective DPS (boosted while an overload is active).
@@ -581,7 +585,7 @@ function mulberry32(seed) {
 // `color` is a persistent, unique tint for the system's background so each
 // system is memorable by its hue (the "green system", the "purple system").
 const SYSTEM_DEFS = [
-  { id: 'sys_0', name: 'Jita',   color: '#ff9f45', security: 0.9, stationCount: 2, beltCount: 12, enemyCount: 10 },
+  { id: 'sys_0', name: 'Jita',   color: '#ff9f45', security: 1.0, stationCount: 2, beltCount: 12, enemyCount: 10 },
   { id: 'sys_1', name: 'Placid', color: '#3fd6a0', security: 0.5, stationCount: 2, beltCount: 16, enemyCount: 6 },
   { id: 'sys_2', name: 'Domain', color: '#a970ff', security: 0.1, stationCount: 1, beltCount: 8,  enemyCount: 20 },
 ];
@@ -735,9 +739,8 @@ function generateWorld(seed, profile) {
   for (let i = 0; i < profile.enemyCount; i++) {
     const x = 400 + rng() * (size - 800);
     const y = 400 + rng() * (size - 800);
-    const r = rng();
-    const type = r < 0.45 ? 'pirate' : r < 0.75 ? 'gang' : r < 0.92 ? 'faction' : 'dread';
-    enemies.push({ id: `en_${i + 1}`, x, y, type, alive: true, seed: Math.floor(rng() * 1e9) });
+    const { type, tier } = rollRat(profile.security, rng);
+    enemies.push({ id: `en_${i + 1}`, x, y, type, tier, alive: true, seed: Math.floor(rng() * 1e9) });
   }
 
   return {
@@ -991,7 +994,7 @@ function resolveCombat(s, now, won, rng = Math.random) {
   const sys = ship && s.systems ? s.systems[ship.systemId] : null;
   const enemy = sys ? sys.enemies.find((e) => e.id === c.enemyId) : null;
   const shipName = ship ? SHIPS[ship.type].name : 'Unknown';
-  const enemyName = enemy ? (ENEMIES[enemy.type] ? ENEMIES[enemy.type].name : enemy.name || enemy.type) : 'Unknown';
+  const enemyName = enemy ? (ENEMIES[enemy.type] ? ENEMIES[enemy.type].name : enemy.type) : 'Unknown';
   let iskGain = 0;
   let shipLost = false;
   let cargoLost = 0;
@@ -1012,7 +1015,7 @@ function resolveCombat(s, now, won, rng = Math.random) {
     s.stats.combatsWon += 1;
     // Loot: the rat can drop a module into your loot inventory. Stronger rats
     // drop better modules, more reliably (see LOOT_DROP_CHANCE / LOOT_TIERS).
-    if (enemy && LOOT_DROP_CHANCE[enemy.type] != null) {
+    if (enemy && !enemy.missionTag && LOOT_DROP_CHANCE[enemy.type] != null) {
       const chance = LOOT_DROP_CHANCE[enemy.type];
       if (rng() < chance) {
         const tierPool = LOOT_TIERS[enemy.type];
@@ -1277,8 +1280,7 @@ function startCombat(s, enemyId, now) {
   const ship = s.ships.find((sh) => sh.id === s.activeShipId);
   const sys = activeSystem(s);
   const enemy = sys.enemies.find((e) => e.id === enemyId);
-  const threat = threatLevel(s);
-  const est = enemyCombatStats(enemy.type, threat, enemy, sys.security || 0.5);
+  const est = enemyCombatStats(enemy);
   const shipDef = SHIPS[ship.type];
   const mults = skillMults(s);
   const shipShieldMax = (shipDef.shield + moduleBonus(ship, 'shield')) * mults.shield;
@@ -1423,12 +1425,10 @@ function ambushChance(state, systemId) {
   const chance = AMBUSH_BASE_CHANCE * (1 - standing * AMBUSH_STANDING_MOD) * (1 + (0.5 - security) * 0.7);
   return clamp(chance, AMBUSH_MIN_CHANCE, AMBUSH_MAX_CHANCE);
 }
-// Spawn a strong predator near the arrival point in `sys` (a gate ambush).
-// Weighted toward the tougher classes so the ambush is a real threat. Returns
-// the new enemy.
+// Spawn a predator near the arrival point in `sys` (a gate ambush), rolled from
+// the same security-based roster as the system's regular rats. Returns the new enemy.
 function spawnAmbush(sys, x, y, rng) {
-  const r = rng();
-  const type = r < 0.5 ? 'faction' : 'dread';
+  const { type, tier } = rollRat(sys.security, rng);
   const ang = rng() * Math.PI * 2;
   const rad = 60 + rng() * 120; // within ENGAGE_RANGE of the arrival point
   const enemy = {
@@ -1436,6 +1436,7 @@ function spawnAmbush(sys, x, y, rng) {
     x: clamp(x + Math.cos(ang) * rad, 60, sys.width - 60),
     y: clamp(y + Math.sin(ang) * rad, 60, sys.height - 60),
     type,
+    tier,
     alive: true,
     ambush: true,
     seed: Math.floor(rng() * 1e9),
@@ -1600,7 +1601,7 @@ function spawnMissionEnemies(state, def) {
   if (!sys) return;
   const home = sys.stations[0];
   for (const sp of def.spawn) {
-    const eDef = MISSION_ENEMIES[sp.type];
+    const eDef = ENEMIES[sp.type];
     if (!eDef) continue;
     for (let i = 0; i < sp.count; i++) {
       const ang = (i / Math.max(1, sp.count)) * Math.PI * 2;
@@ -1608,16 +1609,12 @@ function spawnMissionEnemies(state, def) {
       sys.enemies.push({
         id: nextId(),
         type: eDef.key,
-        name: eDef.name,
-        missionTag: sp.type,
+        tier: sp.tier || 'standard',
+        missionTag: sp.tag || sp.type,
         x: clamp(home.x + Math.cos(ang) * rad, 60, sys.width - 60),
         y: clamp(home.y + Math.sin(ang) * rad, 60, sys.height - 60),
-        shield: eDef.shield,
-        hull: eDef.hull,
-        dps: eDef.dps,
-        rangeDelay: eDef.rangeDelay || 0,
+        rangeDelay: sp.rangeDelay || 0,
         alive: true,
-        iskReward: eDef.iskReward,
       });
     }
   }
@@ -1833,7 +1830,19 @@ function view(state) {
           stations: sys.stations,
           belts: sys.belts,
           asteroids: sys.asteroids,
-          enemies: sys.enemies,
+          enemies: sys.enemies.map((enemy) => {
+            const stats = enemyCombatStats(enemy);
+            const tier = ENEMY_TIERS[enemy.tier] || ENEMY_TIERS.standard;
+            return {
+              ...enemy,
+              tier: tier.key,
+              tierName: tier.name,
+              shield: stats.shield,
+              hull: stats.hull,
+              dps: stats.dps,
+              reward: stats.reward,
+            };
+          }),
           gates: sys.gates,
           security: sys.security,
           prices: effectivePrices(sys.id, activeStanding, sys.security),
@@ -1850,7 +1859,6 @@ function view(state) {
   const ds = dockedStation(state);
   v.docked = !!ds;
   v.dockedStation = ds ? ds.name : null;
-  v.threat = threatLevel(state);
   v.cargoUsed = cargoUsed(state);
   v.cargoCapacity = cargoCapacity(state);
   v.cargoFull = v.cargoCapacity > 0 && v.cargoUsed >= v.cargoCapacity;
@@ -1873,6 +1881,8 @@ module.exports = {
   SKILLS,
   MINERALS,
   ENEMIES,
+  ENEMY_TIERS,
+  spawnTable,
   FACTIONS,
   DRONES,
   ACHIEVEMENTS,
@@ -1943,7 +1953,8 @@ module.exports = {
   nearestAsteroidInRange,
   isDocked,
   dockedStation,
-  threatLevel,
+  rollRat,
+  enemyCombatStats,
   activeSystem,
   generateSystems,
   resetIds,

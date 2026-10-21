@@ -23,7 +23,8 @@ export class CombatNode extends Node {
     const cy = this.app.canvas.height / 2;
 
     const combatDrones = state.drones && state.drones.combat ? state.drones.combat.length : 0;
-    const nDrones = combatDrones > 0 ? Math.min(combatDrones, 6) : 3;
+    const nDrones = Math.min(combatDrones, 6);
+    const hasLaser = !!(state.activeShip && (state.activeShip.fitting.weapon || []).some((t) => t > 0));
     const orbitR = 48 * this.app.camera.zoom;
     const orbitAng = now / 850;
     for (let i = 0; i < nDrones; i++) {
@@ -35,7 +36,7 @@ export class CombatNode extends Node {
         this.drawLaser(dx, dy, ep.x, ep.y, now, i * 7 + 1, '#ffd24a', '#ffb020');
       }
     }
-    this.drawLaser(cx, cy, ep.x, ep.y, now, 42, '#ffd24a', '#ffb020');
+    if (hasLaser) this.drawLaser(cx, cy, ep.x, ep.y, now, 42, '#ffd24a', '#ffb020');
     if (c.fightTime >= c.enemyRangeDelay && now % 900 < 150) {
       this.drawLaser(ep.x, ep.y, cx, cy, now, 99, '#ff4657', '#ff1728');
     }

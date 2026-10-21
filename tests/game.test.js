@@ -227,11 +227,17 @@ describe('missions', () => {
     s.ships[0].x = attacker.x;
     s.ships[0].y = attacker.y;
     const eng = game.engage(s, attacker.id, T0).state;
+    const pirate = cfg.ENEMIES.pirate;
+    assert.equal(attacker.type, 'pirate');
+    assert.equal(attacker.tier, 'standard');
+    assert.equal(eng.combat.enemyShieldMax, pirate.shield);
+    assert.equal(eng.combat.enemyHullMax, pirate.hull);
+    assert.equal(eng.combat.enemyDps, pirate.dps);
     const s2 = game.tick(eng, T0 + 100000, null, () => 1);
     assert.equal(s2.combatLog[0].won, true);
     assert.deepEqual(s2.mission.completed, ['m1']);
     assert.equal(s2.mission.active, 'm2');
-    assert.equal(s2.isk, before + cfg.MISSIONS.m1.completion.isk + cfg.MISSION_ENEMIES.attacker.iskReward);
+    assert.equal(s2.isk, before + cfg.MISSIONS.m1.completion.isk + pirate.iskReward);
     assert.equal(s2.ships[0].fitting.range[0], 1, 'm2 grant fits a Range Amplifier I');
   });
 
@@ -632,6 +638,7 @@ describe('docking', () => {
 describe('engage + combat', () => {
   // Place the active ship on a known enemy of a known type and engage it.
   function setupFight(state, shipType, enemyType) {
+    state.ships[0].systemId = 'sys_1';
     state.ships[0].type = shipType;
     const e = sys(state).enemies[0];
     e.type = enemyType;
@@ -656,9 +663,14 @@ describe('engage + combat', () => {
     assert.ok(!r.error);
     assert.equal(r.state.combat.enemyId, e.id);
     const c = r.state.combat;
+    const tier = cfg.ENEMY_TIERS[e.tier];
     assert.ok(c.shipShield > 0 && c.shipHull > 0);
     assert.ok(c.enemyShield > 0 && c.enemyHull > 0);
     assert.ok(c.playerDps > 0 && c.enemyDps > 0);
+    assert.equal(c.enemyShieldMax, cfg.ENEMIES[e.type].shield * tier.multiplier);
+    assert.equal(c.enemyHullMax, cfg.ENEMIES[e.type].hull * tier.multiplier);
+    assert.equal(c.enemyDps, cfg.ENEMIES[e.type].dps * tier.multiplier);
+    assert.equal(c.reward, cfg.ENEMIES[e.type].iskReward * tier.multiplier);
     assert.ok(fightDuration(c) > 0);
   });
 
@@ -726,9 +738,10 @@ describe('engage + combat', () => {
     const st = sys(s).stations[0];
     s = game.warp(s, st.id).state;
     s = game.buyShip(s, 'falcon').state;
+    const rifter = s.ships.find((sh) => sh.id === s.activeShipId);
+    rifter.systemId = 'sys_1';
     const e = sys(s).enemies[0];
     e.type = 'dread';
-    const rifter = s.ships.find((sh) => sh.id === s.activeShipId);
     rifter.x = e.x;
     rifter.y = e.y;
     s = game.engage(s, e.id, T0).state;
@@ -779,7 +792,7 @@ describe('engage + combat', () => {
   });
 
   test('shield boost restores the shield, costs ISK, and goes on cooldown', () => {
-    const s = setupFight(fresh(), 'brutix', 'pirate');
+    const s = setupFight(fresh(), 'brutix', 'gang');
     const iskBefore = s.isk;
     const c = s.combat;
     // Take a second of damage so the shield is no longer full.
@@ -843,18 +856,19 @@ describe('engage + combat', () => {
 });
 
 describe('range free-fire window', () => {
-  // Turn the first enemy into a mission-style short-range frigate (stats stored on
-  // the enemy object, like spawnMissionEnemies does) and engage it.
+  // Turn the first enemy into a mission-style short-range pirate (rangeDelay set
+  // on the enemy, like spawnMissionEnemies does) and engage it.
   function engageEnemyOfType(state, type, rangeDelay = 0) {
+    state.ships[0].systemId = 'sys_1';
     const e = sys(state).enemies[0];
-    Object.assign(e, { type, shield: 45, hull: 90, dps: 12, rangeDelay });
+    Object.assign(e, { type, tier: 'standard', rangeDelay });
     state.ships[0].x = e.x;
     state.ships[0].y = e.y;
     return game.engage(state, e.id, T0).state;
   }
 
   test('a short-range enemy grants an opening free-fire window before its guns bite', () => {
-    const s = engageEnemyOfType(fresh(), 'shortrange', 2);
+    const s = engageEnemyOfType(fresh(), 'pirate', 2);
     const playerBefore = s.combat.shipShield + s.combat.shipHull;
     const enemyBefore = s.combat.enemyShield + s.combat.enemyHull;
     // One second in: still inside the window, the player is untouched...
@@ -870,7 +884,7 @@ describe('range free-fire window', () => {
   test('fitting a range module extends the free-fire window', () => {
     let s = fresh();
     const e = sys(s).enemies[0];
-    Object.assign(e, { type: 'shortrange', shield: 45, hull: 90, dps: 12, rangeDelay: 2 });
+    Object.assign(e, { type: 'pirate', tier: 'standard', rangeDelay: 2 });
     s = game.fitModule(s, s.ships[0].id, 'range', 0, 1).state;
     s.ships[0].x = e.x;
     s.ships[0].y = e.y;
@@ -1294,6 +1308,7 @@ describe('faction standing', () => {
 
   test('losing a ship in a faction system lowers standing with that faction', () => {
     const s = fresh();
+    s.ships[0].systemId = 'sys_2';
     const e = sys(s).enemies[0];
     e.type = 'dread';
     s.ships[0].type = 'rifter';
@@ -1362,7 +1377,8 @@ describe('gate ambush', () => {
     assert.equal(targetSys.enemies.length, before + 1, 'an ambush enemy was spawned');
     const ambusher = targetSys.enemies[targetSys.enemies.length - 1];
     assert.equal(ambusher.ambush, true);
-    assert.ok(ambusher.type === 'faction' || ambusher.type === 'dread');
+    const allowed = cfg.spawnTable(targetSys.security).map((r) => `${r.type}:${r.tier}`);
+    assert.ok(allowed.includes(`${ambusher.type}:${ambusher.tier}`), 'ambush follows the system roster');
     assert.equal(r.state.combat.enemyId, ambusher.id);
   });
 
@@ -1586,6 +1602,7 @@ describe('loot drops', () => {
     const s = withCargo(fresh(), { iron: 10 });
     s.loot = [{ id: 'loot_survive', slotType: 'weapon', tier: 1 }];
     s.ships[0].type = 'rifter';
+    s.ships[0].systemId = 'sys_2';
     const e = sys(s).enemies[0];
     e.type = 'dread';
     s.ships[0].x = e.x;
@@ -1701,51 +1718,94 @@ describe('industry (blueprint crafting)', () => {
   });
 });
 
-describe('threat scaling', () => {
-  test('threat level rises with ISK earned and is capped', () => {
-    const s = fresh();
-    assert.equal(game.threatLevel(s), 0);
-    s.stats.totalIskEarned = cfg.THREAT_ISK_STEP;
-    assert.equal(game.threatLevel(s), 1);
-    s.stats.totalIskEarned = cfg.THREAT_ISK_STEP * 5;
-    assert.equal(game.threatLevel(s), 5);
-    s.stats.totalIskEarned = cfg.THREAT_ISK_STEP * 1000;
-    assert.equal(game.threatLevel(s), cfg.THREAT_MAX);
-  });
-
-  test('selling minerals banks ISK and raises the threat', () => {
+describe('enemy tiers and security rosters', () => {
+  test('selling minerals banks ISK', () => {
     const s = withCargo(fresh(), { iron: 100000 });
     const s2 = game.sellMinerals(s, 'iron', 'all').state;
     assert.ok(s2.stats.totalIskEarned > 0);
     assert.ok(s2.isk > s.isk);
-    assert.ok(game.threatLevel(s2) > 0);
   });
 
-  test('combat rewards scale up with the threat level', () => {
-    const base = fresh();
-    const e1 = sys(base).enemies[0];
-    e1.type = 'pirate';
-    base.ships[0].type = 'brutix';
-    base.ships[0].x = e1.x;
-    base.ships[0].y = e1.y;
-    const s1 = game.engage(base, e1.id, T0).state;
-    const baseReward = s1.combat.reward;
-
-    const hi = fresh();
-    hi.stats.totalIskEarned = cfg.THREAT_ISK_STEP * 10;
-    const e2 = sys(hi).enemies[0];
-    e2.type = 'pirate';
-    hi.ships[0].type = 'brutix';
-    hi.ships[0].x = e2.x;
-    hi.ships[0].y = e2.y;
-    const s2 = game.engage(hi, e2.id, T0).state;
-    const hiReward = s2.combat.reward;
-
-    assert.ok(hiReward > baseReward, `threat should raise the reward: ${hiReward} <= ${baseReward}`);
+  test('stats and rewards are exactly the JSON base x tier multiplier, and earnings never change them', () => {
+    const stats = (tier, earned) => {
+      const s = fresh();
+      s.stats.totalIskEarned = earned;
+      const e = sys(s).enemies[0];
+      e.type = 'pirate';
+      e.tier = tier;
+      s.ships[0].x = e.x;
+      s.ships[0].y = e.y;
+      return game.engage(s, e.id, T0).state.combat;
+    };
+    const novice = stats('novice', 0);
+    const elite = stats('elite', 0);
+    const rich = stats('elite', 10 ** 9);
+    assert.equal(novice.reward, cfg.ENEMIES.pirate.iskReward * cfg.ENEMY_TIERS.novice.multiplier);
+    assert.equal(elite.reward, cfg.ENEMIES.pirate.iskReward * cfg.ENEMY_TIERS.elite.multiplier);
+    assert.equal(elite.enemyHullMax, cfg.ENEMIES.pirate.hull * cfg.ENEMY_TIERS.elite.multiplier);
+    assert.equal(elite.enemyDps / novice.enemyDps, cfg.ENEMY_TIERS.elite.multiplier / cfg.ENEMY_TIERS.novice.multiplier);
+    assert.deepEqual(
+      [rich.enemyShieldMax, rich.enemyHullMax, rich.enemyDps, rich.reward],
+      [elite.enemyShieldMax, elite.enemyHullMax, elite.enemyDps, elite.reward]
+    );
   });
 
-  test('view exposes the threat level', () => {
-    assert.equal(game.view(fresh()).threat, 0);
+  test('view exposes each enemy tier and exact numbers and no threat', () => {
+    const v = game.view(fresh());
+    assert.equal(v.threat, undefined);
+    for (const e of v.world.enemies) {
+      const tier = cfg.ENEMY_TIERS[e.tier];
+      assert.ok(tier, `unknown tier ${e.tier}`);
+      assert.equal(e.tierName, tier.name);
+      assert.equal(e.hull, cfg.ENEMIES[e.type].hull * tier.multiplier);
+      assert.equal(e.dps, cfg.ENEMIES[e.type].dps * tier.multiplier);
+    }
+  });
+
+  test('every rat in a system comes from that security level\'s roster', () => {
+    const expected = {
+      sys_0: { types: ['pirate'], tiers: ['novice', 'standard'] },
+      sys_1: { types: ['pirate', 'gang'], tiers: ['novice', 'standard', 'elite'] },
+      sys_2: { types: ['gang', 'faction', 'dread'], tiers: ['novice', 'standard', 'elite'] },
+    };
+    for (let seed = 1; seed <= 15; seed++) {
+      const s = game.createInitialState(T0, seed, 'demo');
+      for (const [id, want] of Object.entries(expected)) {
+        const allowed = new Set(cfg.spawnTable(s.systems[id].security).map((r) => `${r.type}:${r.tier}`));
+        for (const e of s.systems[id].enemies) {
+          assert.ok(allowed.has(`${e.type}:${e.tier}`), `${id} spawned ${e.type}:${e.tier}`);
+          assert.ok(want.types.includes(e.type));
+          assert.ok(want.tiers.includes(e.tier));
+        }
+      }
+    }
+    // Sec 1.0 has only the easiest class; elites start appearing at lower security.
+    assert.ok(cfg.spawnTable(1.0).every((r) => r.type === 'pirate' && r.tier !== 'elite'));
+    assert.ok(cfg.spawnTable(0.5).some((r) => r.tier === 'elite'));
+  });
+
+  test('ambushes are rolled from the destination system roster', () => {
+    for (const id of ['sys_0', 'sys_1', 'sys_2']) {
+      const s = fresh();
+      const allowed = new Set(cfg.spawnTable(s.systems[id].security).map((r) => `${r.type}:${r.tier}`));
+      let n = 0;
+      const rng = () => ((n = (n + 0.137) % 1), n);
+      for (let i = 0; i < 20; i++) {
+        const ambusher = game.rollRat(s.systems[id].security, rng);
+        assert.ok(allowed.has(`${ambusher.type}:${ambusher.tier}`));
+      }
+    }
+  });
+
+  test('enemies.json validation rejects broken data', () => {
+    const good = JSON.parse(JSON.stringify(require('../server/data/enemies.json')));
+    assert.doesNotThrow(() => cfg.loadEnemyData(good));
+    const badTier = JSON.parse(JSON.stringify(good));
+    badTier.types.pirate.spawn[0].tier = 'legendary';
+    assert.throws(() => cfg.loadEnemyData(badTier), /unknown tier/);
+    const badStat = JSON.parse(JSON.stringify(good));
+    delete badStat.types.gang.hull;
+    assert.throws(() => cfg.loadEnemyData(badStat), /invalid hull/);
   });
 
   test('systems expose distinct security that affects combat, markets, and ambush risk', () => {
@@ -1759,17 +1819,36 @@ describe('threat scaling', () => {
     const safe = fresh();
     const safeEnemy = sys(safe).enemies[0];
     safeEnemy.type = 'pirate';
+    safeEnemy.tier = 'standard';
     safe.ships[0].x = safeEnemy.x;
     safe.ships[0].y = safeEnemy.y;
     const safeFight = game.engage(safe, safeEnemy.id, T0).state.combat;
     const risky = fresh();
     const riskyEnemy = risky.systems.sys_2.enemies[0];
     riskyEnemy.type = 'pirate';
+    riskyEnemy.tier = 'standard';
     risky.ships[0].systemId = 'sys_2';
     risky.ships[0].x = riskyEnemy.x;
     risky.ships[0].y = riskyEnemy.y;
     const riskyFight = game.engage(risky, riskyEnemy.id, T0).state.combat;
-    assert.ok(riskyFight.enemyDps > safeFight.enemyDps);
+    // The same ship fights identically everywhere: only the roster changes with security.
+    assert.equal(riskyFight.enemyDps, safeFight.enemyDps);
+  });
+
+  test('a starter Rifter beats every rat that can spawn in Jita', () => {
+    for (const row of cfg.spawnTable(sys(fresh()).security)) {
+      const state = fresh();
+      const enemy = sys(state).enemies[0];
+      enemy.type = row.type;
+      enemy.tier = row.tier;
+      state.ships[0].x = enemy.x;
+      state.ships[0].y = enemy.y;
+      const engaged = game.engage(state, enemy.id, T0);
+      assert.ok(!engaged.error, engaged.error);
+      const result = game.tick(engaged.state, T0 + 100000, null, () => 1);
+      assert.equal(result.combatLog[0].won, true, `starter Rifter should beat ${row.tier} ${row.type}`);
+      assert.equal(result.combat, null);
+    }
   });
 });
 

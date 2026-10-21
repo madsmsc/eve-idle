@@ -76,6 +76,9 @@ export class ShipNode extends Node {
       }
       destination = target;
       if (lists.enemies.some((enemy) => enemy.id === targetId)) this.app.targetEnemyId = targetId;
+      else this.app.targetEnemyId = null;
+    } else {
+      this.app.targetEnemyId = null;
     }
 
     if (!destination || !Number.isFinite(destination.x) || !Number.isFinite(destination.y)) {
@@ -156,6 +159,9 @@ export class ShipNode extends Node {
     const camera = this.app.camera;
     const player = this.app.player;
     if (!player.destination) return;
+    const targetEnemy = this.app.targetEnemyId &&
+      this.app.state.world.enemies.find((enemy) => enemy.id === this.app.targetEnemyId && enemy.alive);
+    if (targetEnemy && dist(targetEnemy.x, targetEnemy.y, player.destination.x, player.destination.y) < 1) return;
     const p = camera.worldToScreen(player.destination.x, player.destination.y);
     const cx = this.app.canvas.width / 2;
     const cy = this.app.canvas.height / 2;

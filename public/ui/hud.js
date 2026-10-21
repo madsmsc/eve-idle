@@ -1,11 +1,15 @@
 'use strict';
 
-// The main HUD: top-left readouts (system, ISK, cargo, threat, faction), the
+// The main HUD: top-left readouts (system, security, faction, minerals), the
 // mission tracker/dialogue, the ship-info line, and the per-frame fast readouts
-// (context, mining indicator, engage/gate buttons, combat banner + combat HUD).
+// (status box + event log, engage/gate buttons, combat banner + combat HUD).
 // DOM only; panels refresh on server sync, while fast readouts update every frame.
 import { Node } from '../core/node.js';
 import { fmt, pct } from '../core/util.js';
+
+const CTX_COLORS = { idle: '#7a89ad', mining: '#35d07f', travel: '#4fd1ff', combat: '#ff5c7a', docked: '#a58bff', warn: '#ffb454' };
+const EVENT_LIFETIME_MS = 14000;
+const EVENT_FADE_AFTER_MS = 8000;
 
 export class HudNode extends Node {
   constructor(app) {
@@ -17,7 +21,6 @@ export class HudNode extends Node {
   // Full panel rebuild, called when a fresh server state arrives.
   refreshPanels() {
     this.renderMission();
-    document.getElementById('isk').textContent = `${fmt(this.app.state.isk)} ISK`;
     const sysNameEl = document.getElementById('system-name');
     if (this.app.state.system) {
       sysNameEl.textContent = this.app.state.system.name;
@@ -37,19 +40,67 @@ export class HudNode extends Node {
     } else {
       factionEl.hidden = true;
     }
+    const securityEl = document.getElementById('security');
+    securityEl.textContent = this.app.state.system ? `Sec ${this.app.state.system.security.toFixed(1)}` : '';
+    this.collectEvents();
     this.renderCargo();
+  }
 
-    const active = this.app.state.activeShip;
-    const info = document.getElementById('ship-info');
-    if (active) {
-      const cargo = `Cargo ${fmt(this.app.state.cargoUsed)}/${fmt(this.app.state.cargoCapacity)}${this.app.state.cargoFull ? ' (FULL)' : ''}`;
-      const drones = this.app.state.drones || { mining: [], combat: [] };
-      const droneTxt = drones.mining.length + drones.combat.length
-        ? ` · 🤖${drones.mining.length}⛏/${drones.combat.length}⚔`
-        : '';
-      info.innerHTML = `<span class="name">${active.name}</span> <span class="meta">⛏${active.mining.toFixed(0)}/s · ⚔${active.combat.toFixed(0)}${droneTxt} · ${cargo}</span>`;
-    } else {
-      info.innerHTML = `<span class="meta">No ship — open the Hangar to buy one</span>`;
+  // Turn new combat results, jumps and a full hold into short event-log lines.
+  collectEvents() {
+    const state = this.app.state;
+    const log = state.combatLog || [];
+    const newest = log.length ? log[0].at : 0;
+    if (this.lastLogAt === undefined) {
+      this.lastLogAt = newest;
+      this.lastSystemId = state.system ? state.system.id : null;
+      this.wasCargoFull = !!state.cargoFull;
+      return;
+    }
+    const fresh = log.filter((e) => e.at > this.lastLogAt).reverse();
+    for (const e of fresh) {
+      if (e.disengaged) this.pushEvent(`Disengaged from ${e.enemy}`, 'warn');
+      else if (e.won) {
+        const loot = e.loot ? ` · loot: ${e.loot.slotType} T${e.loot.tier}` : '';
+        this.pushEvent(`Destroyed ${e.enemy} · +${fmt(e.isk)} ISK${loot}`, 'good');
+      } else this.pushEvent(`${e.ship} lost to ${e.enemy}`, 'bad');
+    }
+    this.lastLogAt = Math.max(this.lastLogAt, newest);
+    const systemId = state.system ? state.system.id : null;
+    if (systemId && this.lastSystemId && systemId !== this.lastSystemId) {
+      this.pushEvent(`Entered ${state.system.name} (sec ${state.system.security.toFixed(1)})`, '');
+    }
+    this.lastSystemId = systemId;
+    if (state.cargoFull && !this.wasCargoFull) this.pushEvent('Cargo hold full', 'warn');
+    this.wasCargoFull = !!state.cargoFull;
+  }
+
+  pushEvent(text, tone) {
+    this.events = this.events || [];
+    this.events.push({ id: (this.eventId = (this.eventId || 0) + 1), text, tone, at: performance.now() });
+    if (this.events.length > 3) this.events.shift();
+  }
+
+  renderEventLog() {
+    const list = document.querySelector('#context .ctx-log');
+    const now = performance.now();
+    const visible = (this.events || []).filter((e) => now - e.at < EVENT_LIFETIME_MS);
+    const key = visible.map((e) => e.id).join(',');
+    if (key !== this.eventKey) {
+      this.eventKey = key;
+      list.innerHTML = '';
+      for (const e of visible) {
+        const li = document.createElement('li');
+        li.className = e.tone;
+        li.textContent = e.text;
+        li.dataset.id = e.id;
+        list.appendChild(li);
+      }
+    }
+    for (const li of list.children) {
+      const e = visible.find((x) => String(x.id) === li.dataset.id);
+      const age = e ? now - e.at : EVENT_LIFETIME_MS;
+      li.style.opacity = age < EVENT_FADE_AFTER_MS ? 1 : Math.max(0, 1 - (age - EVENT_FADE_AFTER_MS) / (EVENT_LIFETIME_MS - EVENT_FADE_AFTER_MS));
     }
   }
 
@@ -61,13 +112,9 @@ export class HudNode extends Node {
 
   refreshFast() {
     const state = this.app.state;
-    document.getElementById('isk').textContent = `${fmt(state.isk)} ISK`;
-    const security = state.system ? state.system.security.toFixed(1) : '—';
-    document.getElementById('threat').textContent = `Threat ${state.threat || 0} · Sec ${security}`;
-    document.getElementById('context').textContent = this.getContext();
+    this.renderContext();
+    this.renderEventLog();
 
-    const ind = document.getElementById('mining-indicator');
-    const a = this.app.player.nearestAsteroid();
     const active = state.activeShip;
     const status = document.getElementById('ship-status');
     status.hidden = !!state.docked || !active;
@@ -86,16 +133,6 @@ export class HudNode extends Node {
       setStatusBar('shield', shield, shieldMax, `${Math.ceil(shield)} / ${Math.ceil(shieldMax)}`);
       setStatusBar('hull', hull, hullMax, `${Math.ceil(hull)} / ${Math.ceil(hullMax)}`);
       setStatusBar('speed', speed, speedMax, `${Math.round(speed)} m/s`);
-    }
-    if (state.combat) {
-      ind.textContent = '⚔ In combat';
-      ind.className = 'mining-indicator';
-    } else if (a && active) {
-      ind.textContent = `⛏ Mining ${this.app.catalog.minerals[a.mineral].name} +${active.mining.toFixed(1)}/s`;
-      ind.className = 'mining-indicator';
-    } else {
-      ind.textContent = 'Idle — fly to an asteroid to mine';
-      ind.className = 'mining-indicator idle';
     }
 
     const btn = document.getElementById('engage');
@@ -134,10 +171,11 @@ export class HudNode extends Node {
       const active = state.activeShip;
       const remain = Math.max(0, Math.ceil(c.remaining));
       const windowLeft = c.enemyRangeDelay > 0 ? Math.max(0, Math.ceil(c.enemyRangeDelay - c.fightTime)) : 0;
+      const tierTxt = e && e.tierName ? ` (${e.tierName})` : '';
       banner.hidden = false;
       banner.textContent = windowLeft > 0
-        ? `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'} — free fire ${windowLeft}s`
-        : `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'} — ${remain}s`;
+        ? `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'}${tierTxt} — free fire ${windowLeft}s`
+        : `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'}${tierTxt} — ${remain}s`;
       chud.hidden = false;
       chud.innerHTML = `
         <div class="chud-actions">
@@ -201,28 +239,57 @@ export class HudNode extends Node {
     }
   }
 
-  // A one-line "where am I / what can I do" prompt for the idle player.
+  // What the pilot is doing right now: a colored state plus a detail line.
   getContext() {
     const state = this.app.state;
     const player = this.app.player;
-    if (state.combat) return '⚔ In combat';
+    const active = state.activeShip;
+    if (state.combat) {
+      const c = state.combat;
+      const e = state.world.enemies.find((x) => x.id === c.enemyId);
+      const def = e ? this.app.catalog.enemies[e.type] : null;
+      const name = def ? def.name : 'target';
+      const tier = e && e.tierName ? ` (${e.tierName})` : '';
+      const hp = Math.ceil(c.enemyShield + c.enemyHull);
+      const hpMax = Math.ceil(c.enemyShieldMax + c.enemyHullMax);
+      return { label: 'Fighting', color: CTX_COLORS.combat, detail: `${name}${tier} · ${fmt(hp)}/${fmt(hpMax)} HP · ⚔${fmt(c.enemyDps)} dps` };
+    }
     const ns = player.nearestStation();
     if (state.docked) {
-      if (state.cargoFull) return `Cargo full at ${state.dockedStation} — sell it (H)`;
-      return `Docked at ${state.dockedStation} — press H to trade`;
+      if (state.cargoFull) return { label: 'Docked', color: CTX_COLORS.docked, detail: `Cargo full at ${state.dockedStation} — sell it (H)` };
+      return { label: 'Docked', color: CTX_COLORS.docked, detail: `Docked at ${state.dockedStation} — press H to trade` };
     }
     if (player.destination) {
       const label = player.poiLabel(player.destination.x, player.destination.y);
-      if (state.cargoFull) return `Cargo full — returning to ${label || 'station'}…`;
-      return 'Traveling to ' + (label || 'your destination') + '…';
+      const d = Math.round(Math.hypot(player.destination.x - player.x, player.destination.y - player.y));
+      if (state.cargoFull) return { label: 'Returning', color: CTX_COLORS.warn, detail: `Cargo full — returning to ${label || 'station'} · ${fmt(d)} m` };
+      return { label: 'Traveling', color: CTX_COLORS.travel, detail: `${label || 'Your destination'} · ${fmt(d)} m` };
     }
-    if (ns && ns.d < 240) return `Approaching ${ns.station.name}…`;
+    if (ns && ns.d < 240) return { label: 'Approaching', color: CTX_COLORS.travel, detail: `${ns.station.name}…` };
     const a = player.nearestAsteroid();
-    if (a) {
+    if (a && active) {
       const belt = state.world.belts.find((b) => b.id === a.beltId);
-      return `Mining ${this.app.catalog.minerals[a.mineral].name}${belt ? ' · ' + belt.name : ''}`;
+      const ore = this.app.catalog.minerals[a.mineral].name;
+      const rate = active.mining.toFixed(1);
+      const hold = `${fmt(state.cargoUsed)}/${fmt(state.cargoCapacity)}`;
+      return { label: 'Mining', color: CTX_COLORS.mining, detail: `${ore}${belt ? ' · ' + belt.name : ''} · +${rate}/s · hold ${hold}` };
     }
-    if (player.nearestEnemyInRange()) return 'Rat nearby — press E to engage';
-    return 'Idle — select a destination to fly there';
+    const target = player.nearestEnemyInRange();
+    if (target) {
+      const def = this.app.catalog.enemies[target.type];
+      const tier = target.tierName ? ` (${target.tierName})` : '';
+      return { label: 'Hostile in range', color: CTX_COLORS.warn, detail: `${def ? def.name : 'Rat'}${tier} — press E to engage` };
+    }
+    return { label: 'Idle', color: CTX_COLORS.idle, detail: 'Select a destination to fly there' };
+  }
+
+  renderContext() {
+    const ctx = this.getContext();
+    const box = document.getElementById('context');
+    box.style.setProperty('--ctx-color', ctx.color);
+    const label = box.querySelector('.ctx-label');
+    const detail = box.querySelector('.ctx-detail');
+    if (label.textContent !== ctx.label) label.textContent = ctx.label;
+    if (detail.textContent !== ctx.detail) detail.textContent = ctx.detail;
   }
 }

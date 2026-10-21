@@ -8,6 +8,7 @@ import { pseudo, dist, mixRgb, rgbStr } from '../core/util.js';
 
 const STAR_TILE = 1500;
 const STAR_COUNT = 170;
+const TIER_COLORS = { novice: '#8fd19e', standard: '#8ec5ff', elite: '#ffcf5c' };
 
 export class StarNode extends Node {
   render(now) {
@@ -246,13 +247,45 @@ export class EnemyNode extends Node {
       this.drawEnemyShip(p.x, p.y, e);
       this.drawEnemyStatus(p.x, p.y, e);
       if (e.id === this.app.targetEnemyId) {
-        const r = (this.enemySize(e.type) + 8) * camera.zoom;
-        ctx.strokeStyle = '#ff5c7a';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
+        this.drawTargetIndicator(p.x, p.y, e, now);
       }
     }
     return super.render(now);
+  }
+
+  drawTargetIndicator(sx, sy, enemy, now) {
+    const ctx = this.app.ctx;
+    const zoom = this.app.camera.zoom;
+    const radius = (this.enemySize(enemy.type) + 8) * zoom;
+    const length = Math.min(radius * 0.55, 14 * zoom);
+    const left = sx - radius;
+    const right = sx + radius;
+    const top = sy - radius;
+    const bottom = sy + radius;
+    const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(left, top + length);
+    ctx.lineTo(left, top);
+    ctx.lineTo(left + length, top);
+    ctx.moveTo(right - length, top);
+    ctx.lineTo(right, top);
+    ctx.lineTo(right, top + length);
+    ctx.moveTo(right, bottom - length);
+    ctx.lineTo(right, bottom);
+    ctx.lineTo(right - length, bottom);
+    ctx.moveTo(left + length, bottom);
+    ctx.lineTo(left, bottom);
+    ctx.lineTo(left, bottom - length);
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = `rgba(255, 92, 122, ${0.2 + pulse * 0.12})`;
+    ctx.lineWidth = 5 * zoom;
+    ctx.stroke();
+    ctx.strokeStyle = '#ff7891';
+    ctx.lineWidth = Math.max(1.5, 1.8 * zoom);
+    ctx.stroke();
+    ctx.restore();
   }
 
   enemySize(type) {
@@ -286,14 +319,22 @@ export class EnemyNode extends Node {
     const combat = this.app.state.combat;
     const liveCombat = combat && combat.enemyId === e.id ? combat : null;
     const enemyDef = this.app.catalog.enemies[e.type];
-    const shieldMax = liveCombat ? liveCombat.enemyShieldMax : (e.shield ?? (enemyDef && enemyDef.shield) ?? 0);
-    const hullMax = liveCombat ? liveCombat.enemyHullMax : (e.hull ?? (enemyDef && enemyDef.hull) ?? 0);
+    const shieldMax = liveCombat
+      ? liveCombat.enemyShieldMax
+      : (e.shield ?? (enemyDef && enemyDef.shield) ?? 0);
+    const hullMax = liveCombat
+      ? liveCombat.enemyHullMax
+      : (e.hull ?? (enemyDef && enemyDef.hull) ?? 0);
     const shield = liveCombat ? liveCombat.enemyShield : shieldMax;
     const hull = liveCombat ? liveCombat.enemyHull : hullMax;
-    const name = e.name || (enemyDef && enemyDef.name) || e.type;
+    const name = (enemyDef && enemyDef.name) || e.type;
     const width = Math.max(42, Math.min(84, 66 * zoom));
-    const top = sy - radius - 24;
+    const top = sy - radius - 36;
     const label = Math.max(9, Math.min(12, 10 * zoom));
+    const small = Math.max(9, Math.min(11, 10 * zoom));
+    const tierName = (e.tierName || e.tier || '').toUpperCase();
+    const tierColor = TIER_COLORS[e.tier] || TIER_COLORS.standard;
+    const stats = `🛡${Math.round(shieldMax)}  🧱${Math.round(hullMax)}  ⚔${Math.round(e.dps || 0)}`;
 
     ctx.save();
     ctx.font = `600 ${label}px sans-serif`;
@@ -306,6 +347,14 @@ export class EnemyNode extends Node {
     ctx.shadowBlur = 0;
     this.drawHealthBar(sx, top + 8, width, shieldMax > 0 ? shield / shieldMax : 0, '#4fd1ff');
     this.drawHealthBar(sx, top + 14, width, hullMax > 0 ? hull / hullMax : 0, '#ff657a');
+    ctx.shadowColor = '#000';
+    ctx.shadowBlur = 3;
+    ctx.font = `700 ${small}px sans-serif`;
+    ctx.fillStyle = tierColor;
+    ctx.fillText(tierName, sx, top + 24);
+    ctx.font = `600 ${small}px sans-serif`;
+    ctx.fillStyle = '#c9d4e6';
+    ctx.fillText(stats, sx, top + 35, 150);
     ctx.restore();
   }
 

@@ -21,7 +21,6 @@ export class CharacterNode extends Node {
     const security = system.security != null ? system.security.toFixed(1) : '—';
     el.innerHTML = `
       <div class="char-stat"><span class="label">ISK</span><span class="value">${fmt(state.isk)}</span></div>
-      <div class="char-stat"><span class="label">Threat</span><span class="value">${state.threat || 0}</span></div>
       <div class="char-stat"><span class="label">Security</span><span class="value">${security}</span></div>
       <div class="char-stat"><span class="label">Skill Points</span><span class="value">${fmt(Math.floor(state.skillPoints || 0))}</span></div>
       <div class="char-stat"><span class="label">Battles Won</span><span class="value">${fmt(stats.combatsWon || 0)}</span></div>

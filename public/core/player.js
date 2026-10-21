@@ -20,6 +20,8 @@ export class Player extends Node {
     this.heading = 0;
     this.destination = null;
     this.suppressAutoRecall = false;
+    this.orbitTargetKey = null;
+    this.orbitAngle = 0;
   }
 
   setDestination(x, y) {
@@ -44,16 +46,88 @@ export class Player extends Node {
     this.y = clamp(this.y, 0, C.worldSize);
   }
 
+  orbitTarget() {
+    const state = this.app.state;
+    const enemyId = (state.combat && state.combat.enemyId) || this.app.targetEnemyId;
+    if (enemyId) {
+      const enemy = state.world.enemies.find((e) => e.id === enemyId && e.alive);
+      const destinationIsEnemy = !this.destination || !!(
+        enemy && dist(enemy.x, enemy.y, this.destination.x, this.destination.y) < this.app.constants.engageRange
+      );
+      if (enemy && (
+        (state.combat && state.combat.enemyId === enemyId) ||
+        (destinationIsEnemy && dist(enemy.x, enemy.y, this.x, this.y) <= this.app.constants.engageRange)
+      )) {
+        return { target: enemy, radius: 150 };
+      }
+    }
+
+    if (!state.combat && !this.destination) {
+      const asteroid = this.nearestAsteroid();
+      if (asteroid) return { target: asteroid, radius: 100 };
+    }
+    return null;
+  }
+
+  moveInOrbit(dt, target, radius) {
+    const distance = dist(target.x, target.y, this.x, this.y);
+    const targetKey = target.id || `${target.x}:${target.y}`;
+    if (this.orbitTargetKey !== targetKey) {
+      this.orbitTargetKey = targetKey;
+      this.orbitAngle = distance > 0 ? Math.atan2(this.y - target.y, this.x - target.x) : this.heading;
+    }
+    this.orbitAngle += dt * 0.18;
+    const desiredX = target.x + Math.cos(this.orbitAngle) * radius;
+    const desiredY = target.y + Math.sin(this.orbitAngle) * radius;
+    const previousX = this.x;
+    const previousY = this.y;
+    const response = 1 - Math.exp(-dt * 4);
+    this.x += (desiredX - this.x) * response;
+    this.y += (desiredY - this.y) * response;
+    this.clampToWorld();
+    if (dt > 0) {
+      this.vx = (this.x - previousX) / dt;
+      this.vy = (this.y - previousY) / dt;
+      if (Math.hypot(this.vx, this.vy) > 4) this.heading = Math.atan2(this.vy, this.vx);
+    }
+  }
+
+  integrateMotion(dt) {
+    const C = this.app.constants;
+    const damp = Math.pow(C.damping, dt * 60);
+    this.vx *= damp;
+    this.vy *= damp;
+    const speed = Math.hypot(this.vx, this.vy);
+    if (speed > C.maxSpeed) {
+      this.vx = (this.vx / speed) * C.maxSpeed;
+      this.vy = (this.vy / speed) * C.maxSpeed;
+    }
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.clampToWorld();
+    if (speed > 4) this.heading = Math.atan2(this.vy, this.vx);
+  }
+
   update(dt) {
     const C = this.app.constants;
     const state = this.app.state;
+    const orbit = this.orbitTarget();
     const inCombat = !!state.combat;
+    if (!orbit) this.orbitTargetKey = null;
     if (inCombat) {
-      this.vx *= 0.9;
-      this.vy *= 0.9;
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
-      this.clampToWorld();
+      if (orbit) this.moveInOrbit(dt, orbit.target, orbit.radius);
+      else {
+        this.vx *= 0.9;
+        this.vy *= 0.9;
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this.clampToWorld();
+      }
+      return;
+    }
+
+    if (orbit) {
+      this.moveInOrbit(dt, orbit.target, orbit.radius);
       return;
     }
 
@@ -71,18 +145,7 @@ export class Player extends Node {
       }
     }
 
-    const damp = Math.pow(C.damping, dt * 60);
-    this.vx *= damp;
-    this.vy *= damp;
-    const sp = Math.hypot(this.vx, this.vy);
-    if (sp > C.maxSpeed) {
-      this.vx = (this.vx / sp) * C.maxSpeed;
-      this.vy = (this.vy / sp) * C.maxSpeed;
-    }
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
-    this.clampToWorld();
-    if (sp > 4) this.heading = Math.atan2(this.vy, this.vx);
+    this.integrateMotion(dt);
   }
 
   // Idle convenience: when the cargo hold is full, automatically fly home to

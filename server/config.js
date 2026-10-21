@@ -46,12 +46,45 @@ const MINERALS = {
 
 // Enemy classes you can fly to and engage. Combat pays ISK; minerals come from
 // mining asteroids.
-const ENEMIES = {
-  pirate:  { key: 'pirate',  name: 'Pirate Frigate',    iskReward: 500,   shield: 40,  hull: 80,   dps: 8 },
-  gang:    { key: 'gang',    name: 'Gang Battleship',   iskReward: 2000,  shield: 120, hull: 250,  dps: 20 },
-  faction: { key: 'faction', name: 'Faction Destroyer', iskReward: 8000,  shield: 300, hull: 500,  dps: 45 },
-  dread:   { key: 'dread',   name: 'Dreadnought',       iskReward: 30000, shield: 800, hull: 1200, dps: 90 },
-};
+// Every number lives in server/data/enemies.json (types, tiers, spawn rules).
+const ENEMY_DATA = require('./data/enemies.json');
+
+function loadEnemyData(data) {
+  const tiers = {};
+  for (const [key, t] of Object.entries(data.tiers || {})) {
+    if (!(t.multiplier > 0)) throw new Error(`enemies.json: tier "${key}" needs a positive multiplier`);
+    tiers[key] = { key, name: t.name || key, multiplier: t.multiplier };
+  }
+  if (!Object.keys(tiers).length) throw new Error('enemies.json: no tiers defined');
+  const types = {};
+  for (const [key, t] of Object.entries(data.types || {})) {
+    for (const f of ['shield', 'hull', 'dps', 'reward']) {
+      if (!(t[f] >= 0)) throw new Error(`enemies.json: type "${key}" has an invalid ${f}`);
+    }
+    const spawn = (t.spawn || []).map((r) => {
+      if (!tiers[r.tier]) throw new Error(`enemies.json: type "${key}" spawns unknown tier "${r.tier}"`);
+      if (!(r.weight > 0)) throw new Error(`enemies.json: type "${key}" spawn rule needs a positive weight`);
+      return { tier: r.tier, minSecurity: r.minSecurity, maxSecurity: r.maxSecurity, weight: r.weight };
+    });
+    types[key] = { key, name: t.name || key, iskReward: t.reward, shield: t.shield, hull: t.hull, dps: t.dps, spawn };
+  }
+  return { tiers, types };
+}
+
+const { tiers: ENEMY_TIERS, types: ENEMIES } = loadEnemyData(ENEMY_DATA);
+
+// The spawn rules (type + tier + weight) allowed at a given system security.
+function spawnTable(security) {
+  const out = [];
+  for (const def of Object.values(ENEMIES)) {
+    for (const r of def.spawn) {
+      if (security >= r.minSecurity - 1e-9 && security <= r.maxSecurity + 1e-9) {
+        out.push({ type: def.key, tier: r.tier, weight: r.weight });
+      }
+    }
+  }
+  return out;
+}
 
 const START_ISK = 10000;
 const START_STORY_ISK = 0;  // the storyline pays its own way via mission rewards
@@ -219,20 +252,15 @@ const SHIP_BLUEPRINTS = (() => {
 // placed near the home station when the mission starts.
 const MISSION_ORDER = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9'];
 
-const MISSION_ENEMIES = {
-  attacker:  { key: 'attacker',   name: 'Attacker Frigate',    iskReward: 200, shield: 40,  hull: 80,  dps: 8 },
-  shortrange: { key: 'shortrange', name: 'Short-Range Frigate', iskReward: 300, shield: 45, hull: 90, dps: 12, rangeDelay: 2 },
-  waveship:  { key: 'waveship',  name: 'Invasion Wave',       iskReward: 0,   shield: 90,  hull: 220, dps: 30 },
-  dronhub:   { key: 'dronhub',   name: 'Rogue Drone Hub',     iskReward: 0,   shield: 70,  hull: 110, dps: 12, rangeDelay: 2 },
-  placidraider: { key: 'placidraider', name: 'Placid Raider', iskReward: 900, shield: 55, hull: 120, dps: 13 },
-};
+// Mission spawns pick a type and tier from enemies.json. `tag` is the objective
+// tag used to track the kill; `rangeDelay` is the seconds the enemy's guns stay silent.
 
 const MISSIONS = {
   m1: {
     id: 'm1', title: 'Under Attack', npc: 'Station A',
     brief: '"We\'re under attack. Please help. Take out this frigate — fly to it and fire your guns."',
     grant: { modules: [{ slot: 'weapon', tier: 1 }], isk: 0 },
-    spawn: [{ type: 'attacker', count: 1 }],
+    spawn: [{ type: 'pirate', tier: 'standard', tag: 'attacker', count: 1 }],
     objective: { type: 'kill', enemyTag: 'attacker', count: 1, label: 'Destroy the attacker frigate' },
     completion: { isk: 500, text: '"Good shooting, pilot. We\'re in your debt."' },
   },
@@ -240,7 +268,7 @@ const MISSIONS = {
     id: 'm2', title: 'Help the Buddies', npc: 'Station A',
     brief: '"Our buddies need help too. Kill three frigates. These frigates carry short-range guns — fit your Range Amplifier to hit them before they can hit you. Stay at range and take them down."',
     grant: { modules: [{ slot: 'range', tier: 1 }], isk: 0 },
-    spawn: [{ type: 'shortrange', count: 3 }],
+    spawn: [{ type: 'pirate', tier: 'standard', tag: 'shortrange', count: 3, rangeDelay: 2 }],
     objective: { type: 'kill', enemyTag: 'shortrange', count: 3, label: 'Destroy short-range frigates' },
     completion: { isk: 1000, text: '"They never knew what hit them. Range is everything out here."' },
   },
@@ -248,7 +276,7 @@ const MISSIONS = {
     id: 'm3', title: 'Last Stand', npc: 'Station A',
     brief: '"It doesn\'t seem like there\'s any way out of this alive. Too many ships are warping in and our warp drive is down. Let\'s go down fighting. After all, a good fight is what it\'s all about."',
     grant: { isk: 0 },
-    spawn: [{ type: 'waveship', count: 5 }],
+    spawn: [{ type: 'faction', tier: 'elite', tag: 'waveship', count: 5 }],
     objective: { type: 'death', label: 'Survive as long as you can' },
     completion: { isk: 0, text: '"They got you... but you fought well."' },
   },
@@ -270,7 +298,7 @@ const MISSIONS = {
     id: 'm6', title: 'Rogue Drones', npc: 'Station A',
     brief: '"We are having some trouble with rogue drones harassing our miners. Go deal with the drone hub — and if you handle it, drone control is yours."',
     grant: { isk: 0 },
-    spawn: [{ type: 'dronhub', count: 1 }],
+    spawn: [{ type: 'dronehub', tier: 'standard', tag: 'dronhub', count: 1, rangeDelay: 2 }],
     objective: { type: 'kill', enemyTag: 'dronhub', count: 1, label: 'Destroy the rogue drone hub' },
     completion: { isk: 800, drones: [{ type: 'mining', tier: 1 }], text: '"The hub is gone. Your new mining drone is in the bay."' },
   },
@@ -300,7 +328,7 @@ const MISSIONS = {
     id: 'm9', title: 'Beyond the Gates', npc: 'Concord Liaison',
     brief: '"Your certification is only the beginning. Travel to Placid and clear two raider ships threatening local miners."',
     systemId: 'sys_1',
-    spawn: [{ type: 'placidraider', count: 2 }],
+    spawn: [{ type: 'pirate', tier: 'elite', tag: 'placidraider', count: 2 }],
     objective: { type: 'kill', enemyTag: 'placidraider', count: 2, label: 'Clear two raiders in Placid' },
     completion: { isk: 3000, text: '"The route is secure. More contracts await across the region."' },
   },
@@ -329,21 +357,16 @@ const MAX_SPEED = 600;          // units/sec (client + server agree on this)
 const MAX_THRUST = 260;         // units/sec^2 (client-side)
 const DAMPING = 0.985;          // per-frame velocity damping (client-side)
 const ARRIVE_RADIUS = 24;       // click-to-move arrival radius
-const STATE_VERSION = 14;
-
-// ---- rat threat scaling (idle/incremental difficulty) ----
-// Rats get tougher as the player earns ISK, but pay more, so combat stays a
-// meaningful part of the loop instead of turning trivial.
-const THREAT_ISK_STEP = 25000;      // ISK earned per threat level
-const THREAT_STAT_GROWTH = 0.10;    // +10% rat shield/hull/dps per threat level
-const THREAT_REWARD_GROWTH = 0.30;  // +30% rat ISK reward per threat level
-const THREAT_MAX = 20;              // cap so the game never becomes unwinnable
+const STATE_VERSION = 15;
 
 module.exports = {
   SHIPS,
   MODULES,
   MINERALS,
   ENEMIES,
+  ENEMY_TIERS,
+  loadEnemyData,
+  spawnTable,
   START_ISK,
   START_STORY_ISK,
   MODES,
@@ -378,7 +401,6 @@ module.exports = {
   BLUEPRINTS,
   SHIP_BLUEPRINTS,
   MISSION_ORDER,
-  MISSION_ENEMIES,
   MISSIONS,
   AGENT_MISSIONS,
   AGENT_MISSION_COOLDOWN_MS,
@@ -398,8 +420,4 @@ module.exports = {
   DAMPING,
   ARRIVE_RADIUS,
   STATE_VERSION,
-  THREAT_ISK_STEP,
-  THREAT_STAT_GROWTH,
-  THREAT_REWARD_GROWTH,
-  THREAT_MAX,
 };
