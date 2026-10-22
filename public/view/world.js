@@ -194,6 +194,32 @@ export class StationNode extends Node {
   }
 }
 
+export class OutpostNode extends Node {
+  render(now) {
+    const ctx = this.app.ctx;
+    const camera = this.app.camera;
+    const zoom = camera.zoom;
+    for (const outpost of this.app.state.world.outposts || []) {
+      const p = camera.worldToScreen(outpost.x, outpost.y);
+      const r = 24 * zoom;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = 'rgba(255, 176, 92, 0.16)';
+      ctx.fillRect(-r, -r, r * 2, r * 2);
+      ctx.strokeStyle = 'rgba(255, 190, 110, 0.85)';
+      ctx.lineWidth = Math.max(1.5, 2 * zoom);
+      ctx.strokeRect(-r, -r, r * 2, r * 2);
+      ctx.restore();
+      ctx.fillStyle = 'rgba(255, 210, 160, 0.9)';
+      ctx.font = `${Math.max(10, 12 * zoom)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(outpost.name, p.x, p.y + r + 18 * zoom);
+    }
+    return super.render(now);
+  }
+}
+
 export class GateNode extends Node {
   render(now) {
     const ctx = this.app.ctx;

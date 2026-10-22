@@ -56,10 +56,12 @@ async function killMissionEnemy(page, tag, expectFreeFire = false) {
 }
 
 test.beforeEach(async ({ page }) => {
-  // Clean slate for every test (regenerates a fresh world), then load the app.
+  // Reset the selected demo save, then reload so each test boots from that clean save.
   await page.request.post('/api/reset');
   await page.goto('/');
-  // The mode menu shows on every load; the suite runs in DEMO mode.
+  await page.getByTestId('mode-demo').click();
+  await page.request.post('/api/reset');
+  await page.reload();
   await page.getByTestId('mode-demo').click();
   // the status box is only filled once the app has booted.
   await expect(page.getByTestId('context-state')).toHaveText(/\S/, { timeout: 15000 });
@@ -127,8 +129,8 @@ test('space status bars persist, docked status is hidden, and shortcuts are labe
   await expect(page.getByTestId('navigate-station')).toHaveAttribute('data-shortcut', 'S');
   await expect(page.getByTestId('navigate-rat')).toHaveAttribute('data-shortcut', 'R');
   await expect(page.getByTestId('engage-btn')).toHaveAttribute('data-shortcut', 'E');
-  await expect(page.getByTestId('character-btn')).toHaveAttribute('data-shortcut', 'C');
-  await expect(page.getByTestId('inventory-btn')).toHaveAttribute('data-shortcut', 'I');
+  await expect(page.getByTestId('menu-pilot')).toHaveAttribute('data-shortcut', 'C');
+  await expect(page.getByTestId('menu-cargo')).toHaveAttribute('data-shortcut', 'I');
 
   await undock(page);
   await expect(page.getByTestId('context-state')).toHaveText(/\S/);
@@ -154,24 +156,86 @@ test('space status bars persist, docked status is hidden, and shortcuts are labe
   await expect(page.getByTestId('auto-pilot')).not.toHaveClass(/on/);
 });
 
-test('cargo, fitting, and loot are accessible from HUD buttons while docked', async ({ page }) => {
-  await expect(page.getByTestId('hangar-tab-cargo')).toHaveCount(0);
-  await expect(page.getByTestId('hangar-tab-fitting')).toHaveCount(0);
-  await expect(page.getByTestId('hangar-tab-loot')).toHaveCount(0);
-  await expect(page.getByTestId('inventory-btn')).toBeVisible();
-  await expect(page.getByTestId('fitting-btn')).toBeVisible();
-  await expect(page.getByTestId('loot-btn')).toBeVisible();
-  await expect(page.getByTestId('storage-btn')).toBeVisible();
+test('flight actions stay visible beside ship status and the left menu persists', async ({ page }) => {
+  await undock(page);
+  await expect(page.getByTestId('navigation-actions')).toBeVisible();
+  for (const testId of ['engage-btn', 'auto-pilot', 'navigate-belt', 'navigate-station', 'navigate-rat']) {
+    await expect(page.getByTestId(testId)).toBeVisible();
+  }
+  const layout = await page.evaluate(() => {
+    const bounds = (selector) => {
+      const { x, y, width, height } = document.querySelector(selector).getBoundingClientRect();
+      return { x, y, width, height };
+    };
+    return {
+      context: bounds('[data-testid="context"]'),
+      status: bounds('[data-testid="ship-status"]'),
+      actions: bounds('[data-testid="flight-actions"]'),
+      menu: bounds('[data-testid="left-menu"]'),
+      system: bounds('.hud-tl'),
+      viewportWidth: window.innerWidth,
+    };
+  });
+  expect(Math.abs(layout.context.x + layout.context.width / 2 - layout.viewportWidth / 2)).toBeLessThanOrEqual(1);
+  expect(layout.context.y).toBeLessThan(30);
+  expect(layout.actions.x).toBeGreaterThanOrEqual(layout.status.x + layout.status.width);
+  expect(layout.actions.width).toBeLessThanOrEqual(252);
+  expect(layout.menu.x).toBeLessThan(layout.actions.x);
+  expect(layout.menu.y).toBeGreaterThan(100);
+  expect(layout.menu.y + layout.menu.height).toBeCloseTo(708, 0);
+  expect(layout.system.x).toBe(14);
 
-  await page.getByTestId('inventory-btn').click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileLayout = await page.evaluate(() => {
+    const bounds = (selector) => {
+      const { x, y, width, height } = document.querySelector(selector).getBoundingClientRect();
+      return { x, y, width, height };
+    };
+    return {
+      status: bounds('[data-testid="ship-status"]'),
+      actions: bounds('[data-testid="flight-actions"]'),
+      menu: bounds('[data-testid="left-menu"]'),
+    };
+  });
+  expect(mobileLayout.actions.x).toBeGreaterThanOrEqual(mobileLayout.status.x + mobileLayout.status.width);
+  expect(mobileLayout.menu.x + mobileLayout.menu.width).toBeLessThan(mobileLayout.status.x);
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  await expect(page.getByTestId('navigate-toggle')).toHaveCount(0);
+  await expect(page.getByTestId('menu-cargo')).toHaveText('Cargo');
+  await expect(page.getByTestId('menu-pilot')).toHaveText('Pilot');
+  await expect(page.getByTestId('menu-achievements')).toHaveText('Achieve');
+  await expect(page.locator('.menu-icon, .menu-copy small')).toHaveCount(0);
+  await expect(page.getByTestId('menu-fleet')).toBeVisible();
+  await expect(page.getByTestId('menu-fleet')).toBeDisabled();
+
+  await expect(page.getByTestId('minimap')).toBeVisible();
+  await page.getByTestId('overview-toggle').click();
+  await expect(page.getByTestId('minimap')).toBeHidden();
+  await expect(page.getByTestId('overview-toggle')).toContainText('Show map');
+  await page.keyboard.press('m');
+  await expect(page.getByTestId('minimap')).toBeVisible();
+});
+
+test('cargo, fitting, storage, and pilot open as separate menu pages', async ({ page }) => {
+  await expect(page.getByTestId('menu-cargo')).toBeVisible();
+  await page.getByTestId('menu-cargo').click();
+  await expect(page.getByTestId('menu-window')).toBeVisible();
   await expect(page.getByTestId('inventory')).toBeVisible();
-  await page.getByTestId('fitting-btn').click();
+  await expect(page.getByTestId('inventory')).toHaveAttribute('data-menu-page', 'cargo');
+  await page.getByTestId('menu-fitting').click();
   await expect(page.getByTestId('fitting-panel')).toBeVisible();
   await expect(page.getByTestId('inventory')).toBeHidden();
-  await page.getByTestId('loot-btn').click();
-  await expect(page.getByTestId('loot-panel')).toBeVisible();
+  await page.getByTestId('menu-cargo').click();
+  await page.getByTestId('cargo-filter-loot').click();
+  await expect(page.getByTestId('cargo-filter-loot')).toHaveClass(/active/);
+  await page.getByTestId('menu-storage').click();
+  await expect(page.getByTestId('storage-panel')).toBeVisible();
   await expect(page.getByTestId('fitting-panel')).toBeHidden();
-  await page.getByTestId('loot-close').click();
+  await page.getByTestId('menu-pilot').click();
+  await expect(page.getByTestId('character-sheet')).toBeVisible();
+  await page.getByTestId('menu-window-close').click();
+  await expect(page.getByTestId('menu-window')).toBeHidden();
 });
 
 test('inventory stacks ore without a slot cap and scrolls when item count grows', async ({ page }) => {
@@ -341,7 +405,7 @@ test('HUD shows the controlling faction and standing', async ({ page }) => {
 
 test('the hangar lists every faction with standing and ambush risk', async ({ page }) => {
   const st = await getState(page);
-  await page.getByTestId('hangar-tab-factions').click();
+  await page.getByTestId('menu-factions').click();
   const factions = page.getByTestId('hangar-factions');
   for (const f of st.factions) {
     await expect(factions).toContainText(f.name);
@@ -349,12 +413,14 @@ test('the hangar lists every faction with standing and ambush risk', async ({ pa
 });
 
 test('mining: fly to an asteroid and cargo grows', async ({ page }) => {
+  await expect(page.getByTestId('cargo')).toHaveCount(0);
   const st = await getState(page);
   const ast = nearest(st.world.asteroids.filter((a) => a.amount > 0), st.activeShip);
   await page.evaluate(({ x, y }) => window.__eve.setDestination(x, y), ast);
 
   // The HUD flips to "Mining" once the ship is within range of the asteroid.
   await expect(page.getByTestId('context-state')).toContainText('Mining', { timeout: 30000 });
+  await expect(page.getByTestId('context-detail')).toContainText(/Cargo \d+\/\d+/);
 
   // And the server actually credits cargo.
   await expect(async () => {
@@ -470,7 +536,7 @@ test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship'
 });
 
 test('fitting: fitting a module updates the active ship and spends ISK', async ({ page }) => {
-  await page.getByTestId('fitting-btn').click();
+  await page.getByTestId('menu-fitting').click();
   await expect(page.getByTestId('fitting-panel')).toBeVisible();
   // The stock rifter has one weapon slot, empty (tier 0) by default.
   await expect(page.getByTestId('fit-weapon-0-t0')).toHaveClass(/active/);
@@ -489,28 +555,22 @@ test('fitting: fitting a module updates the active ship and spends ISK', async (
 });
 
 test('skills: the hangar shows the skill tree and SP', async ({ page }) => {
-  await page.getByTestId('hangar-tab-skills').click();
+  await page.getByTestId('menu-skills').click();
   await expect(page.getByTestId('hangar-skills')).toBeVisible();
   // A fresh account has no skill points, so training is unavailable.
   await expect(page.getByTestId('hangar-sp')).toContainText('0 SP');
   await expect(page.getByTestId('skill-gunnery')).toBeDisabled();
 });
 
-test('station services: the sidebar shows one panel at a time', async ({ page }) => {
-  // Fleet is the default service; cargo, fitting, and loot are separate panes.
-  await expect(page.getByTestId('hangar-tab-fleet')).toHaveClass(/active/);
-  await expect(page.getByTestId('hangar-cargo')).toHaveCount(0);
-  await expect(page.getByTestId('hangar-fitting')).toHaveCount(0);
-  await expect(page.getByTestId('hangar-loot')).toHaveCount(0);
-
-  // Clicking Fleet shows only the fleet panel.
-  await page.getByTestId('hangar-tab-fleet').click();
-  await expect(page.getByTestId('hangar-tab-fleet')).toHaveClass(/active/);
+test('station services open independently from the persistent menu', async ({ page }) => {
+  await expect(page.locator('.menu-card')).toHaveCount(13);
+  await expect(page.getByTestId('menu-fleet')).toBeVisible();
+  await expect(page.getByTestId('menu-fleet')).toBeEnabled();
+  await expect(page.getByTestId('menu-industry')).toBeVisible();
+  await expect(page.getByTestId('menu-industry')).toBeEnabled();
   await expect(page.getByTestId('hangar-fleet')).toBeVisible();
 
-  // Jump straight to Shipyard and buy a ship (click via evaluate since the panel
-  // re-renders on sync).
-  await page.getByTestId('hangar-tab-shipyard').click();
+  await page.getByTestId('menu-shipyard').click();
   await expect(page.getByTestId('hangar-shop')).toBeVisible();
   await page.evaluate(() => document.querySelector('[data-testid="buy-falcon"]').click());
   await expect(async () => {
@@ -539,11 +599,18 @@ test('shows an unaffordable purchase message in the action log', async ({ page }
   expect(s.ships.length).toBe(1);
 });
 
-test('station services replace the world and launching leaves a full ship in space', async ({ page }) => {
-  // Docking replaces the flight HUD with full-screen station services.
+test('station services overlay a blurred world capture and launching returns to space', async ({ page }) => {
   await expect(page.getByTestId('station-view')).toBeVisible();
   await expect(page.getByTestId('station-view-name')).toContainText('Station A');
   await expect(page.getByTestId('hangar')).toBeVisible();
+  const dockBackground = await page.getByTestId('station-view').evaluate((el) => el.style.getPropertyValue('--dock-background'));
+  expect(dockBackground).toMatch(/^url\("data:image\/png;base64,/);
+  const backgroundFilter = await page.getByTestId('station-view').evaluate((el) => getComputedStyle(el, '::before').filter);
+  expect(backgroundFilter).toBe('blur(6px)');
+  const hangarNav = await page.getByTestId('left-menu').boundingBox();
+  const viewport = await page.evaluate(() => ({ height: window.innerHeight, width: window.innerWidth }));
+  expect(hangarNav.x).toBeLessThan(30);
+  expect(Math.abs(hangarNav.y + hangarNav.height - viewport.height)).toBeLessThanOrEqual(20);
   const stationWidth = await page.getByTestId('hangar').evaluate((el) => el.getBoundingClientRect().width);
   const viewportWidth = await page.evaluate(() => window.innerWidth);
   expect(stationWidth).toBe(viewportWidth);
@@ -552,7 +619,7 @@ test('station services replace the world and launching leaves a full ship in spa
   const station = initial.world.stations[0];
   const asteroid = initial.world.asteroids[0];
   await page.evaluate(({ x, y }) => window.__eve.warp(null, { x, y }), asteroid);
-  await expect.poll(async () => (await getState(page)).cargoFull, { timeout: 20000 }).toBe(true);
+  await expect.poll(async () => (await getState(page)).cargoFull, { timeout: 30000 }).toBe(true);
   await page.evaluate((id) => window.__eve.warp(id), station.id);
   await expect.poll(async () => (await getState(page)).docked, { timeout: 5000 }).toBe(true);
 
@@ -580,8 +647,7 @@ test('station services replace the world and launching leaves a full ship in spa
 });
 
 test('the hangar is only available while docked', async ({ page }) => {
-  // Station services are available immediately while docked.
-  await expect(page.getByTestId('inventory-btn')).toBeVisible();
+  await expect(page.getByTestId('menu-fleet')).toBeVisible();
 
   // Fly to open space (far from every station); the hangar closes and can't reopen.
   await page.evaluate(() => window.__eve.setDestination(600, 600));
@@ -609,69 +675,45 @@ test('character sheet shows standings for every faction, in space and docked', a
   await page.keyboard.press('c');
   await expect(page.getByTestId('character-sheet')).toBeVisible();
   await expect(async () => {
-    const drawer = await page.getByTestId('character-sheet').boundingBox();
-    expect(drawer.x).toBe(0);
-    expect(drawer.width).toBeLessThanOrEqual(400);
+    const panel = await page.getByTestId('menu-window').boundingBox();
+    expect(panel.x).toBeGreaterThan(0);
+    expect(panel.width).toBeLessThanOrEqual(400);
   }).toPass({ timeout: 2000 });
   let st = await getState(page);
   for (const f of st.factions) {
     await expect(page.getByTestId(`standing-${f.key}`)).toContainText(f.standing.toFixed(1));
   }
-  await page.getByTestId('character-close').click();
+  await page.getByTestId('menu-window-close').click();
   await expect(page.getByTestId('character-sheet')).toBeHidden();
 
-  // In space: the HUD button opens the same sheet.
-  await page.getByTestId('character-btn').click();
+  await page.getByTestId('menu-pilot').click();
   await expect(page.getByTestId('character-sheet')).toBeVisible();
   st = await getState(page);
   await expect(page.getByTestId('character-pilot')).toContainText('Battles Won');
 });
 
-test('character and inventory panes fold out from the corners and the hangar reflows between them while docked', async ({ page }) => {
-  // The ship spawns docked; open both panes with the shortcuts so they appear
-  // side by side with the station services still visible in the middle.
-  await page.keyboard.press('c');
-  await page.keyboard.press('i');
+test('the same left-side menu remains available docked and in space', async ({ page }) => {
+  await expect(page.getByTestId('hangar')).toBeVisible();
+  const initialMenu = await page.getByTestId('left-menu').boundingBox();
+  expect(initialMenu.x).toBeLessThan(20);
+  await page.getByTestId('menu-skills').click();
+  await expect(page.getByTestId('hangar-skills')).toBeVisible();
+  await expect(page.getByTestId('left-menu')).toBeVisible();
+  await page.getByTestId('menu-pilot').click();
   await expect(page.getByTestId('character-sheet')).toBeVisible();
-  await expect(page.getByTestId('inventory')).toBeVisible();
-
-  const vw = await page.evaluate(() => window.innerWidth);
-  const bounds = (testid) => page.getByTestId(testid).evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    return { left: r.left, right: r.right, top: r.top };
-  });
-
-  // Panes slide in over ~220ms; wait for them to settle at the corners.
-  await expect(async () => {
-    const c = await bounds('character-sheet');
-    const i = await bounds('inventory');
-    expect(Math.abs(c.left)).toBeLessThanOrEqual(1);
-    expect(Math.abs(i.right - vw)).toBeLessThanOrEqual(1);
-  }).toPass({ timeout: 2000 });
-  const char = await bounds('character-sheet');
-  const inv = await bounds('inventory');
-
-  // Panes anchor to the left and right corners, just below the station header.
-  expect(Math.abs(char.left)).toBeLessThanOrEqual(1);
-  expect(Math.abs(inv.right - vw)).toBeLessThanOrEqual(1);
-  expect(char.top).toBeGreaterThan(0);
-
-  // The station services reflow to sit between the two open panes (they animate
-  // into place, so poll until the transition settles).
-  await expect(async () => {
-    const hangar = await bounds('hangar');
-    expect(hangar.left).toBeGreaterThanOrEqual(char.right - 1);
-    expect(hangar.right).toBeLessThanOrEqual(inv.left + 1);
-  }).toPass({ timeout: 2000 });
-
-  // Closing them restores the full-width station services.
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('character-sheet')).toBeHidden();
-  await expect(page.getByTestId('inventory')).toBeHidden();
-  await expect(async () => {
-    const hangarWidth = await page.getByTestId('hangar').evaluate((el) => el.getBoundingClientRect().width);
-    expect(hangarWidth).toBe(vw);
-  }).toPass({ timeout: 2000 });
+  await expect(page.getByTestId('menu-window')).toBeHidden();
+
+  await page.evaluate(() => window.__eve.setDestination(600, 600));
+  await page.waitForFunction(() => window.__eve.state && window.__eve.state.docked === false);
+  await expect(page.getByTestId('left-menu')).toBeVisible();
+  const spaceMenu = await page.getByTestId('left-menu').boundingBox();
+  expect(spaceMenu.x).toBeCloseTo(initialMenu.x, 0);
+  expect(spaceMenu.width).toBeCloseTo(initialMenu.width, 0);
+  await expect(page.getByTestId('menu-fleet')).toBeDisabled();
+  await expect(page.getByTestId('hangar')).toBeHidden();
+  await page.getByTestId('menu-cargo').click();
+  await expect(page.getByTestId('inventory')).toBeVisible();
 });
 
 test('inventory: deposit mined cargo into quantum storage and withdraw it back', async ({ page }) => {
@@ -687,7 +729,7 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   // Dock again and open the inventory.
   await page.evaluate((id) => window.__eve.warp(id), st.world.stations[0].id);
   await page.waitForFunction(() => window.__eve.state && window.__eve.state.docked === true);
-  await page.keyboard.press('i');
+  await page.getByTestId('menu-cargo').click();
   await expect(page.getByTestId('inventory')).toBeVisible();
 
   const mined = await getState(page);
@@ -696,6 +738,7 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   const deposited = mined.minerals[mineral];
 
   // The hold is a grid of squares: select the ore stack, then deposit it all.
+  await expect(page.getByTestId(`inv-cell-${mineral}`)).toBeVisible();
   await page.evaluate((k) => document.querySelector(`[data-testid="inv-cell-${k}"]`).click(), mineral);
   await expect(page.getByTestId('inv-grid')).toBeVisible();
   await page.evaluate((k) => document.querySelector(`[data-testid="inv-deposit-${k}-all"]`).click(), mineral);
@@ -705,8 +748,7 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
     expect(s.minerals[mineral]).toBe(0);
   }).toPass({ timeout: 5000 });
 
-  // Quantum storage lives in its own pane (the row only appears once it
-  // re-renders after the deposit sync, so wait for the button first).
+  // Quantum storage is a separate menu page.
   await page.keyboard.press('q');
   await expect(page.getByTestId('storage-panel')).toBeVisible();
   await expect(page.getByTestId('inventory')).toBeHidden();
@@ -735,14 +777,14 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   }).toPass({ timeout: 5000 });
 });
 
-test('fitting has its own pane with ship stats, and the inventory is a grid of squares', async ({ page }) => {
+test('fitting and cargo tabs retain ship stats and the item grid', async ({ page }) => {
   await page.keyboard.press('i');
   await expect(page.getByTestId('inventory')).toBeVisible();
   const cells = await page.getByTestId('inv-grid').locator('.inv-cell').count();
   expect(cells).toBeGreaterThanOrEqual(24);
   await expect(page.getByTestId('inv-fitting')).toBeHidden();
 
-  // Only one right-hand pane is open at a time.
+  // Fitting and cargo are separate menu pages.
   await page.keyboard.press('f');
   await expect(page.getByTestId('fitting-panel')).toBeVisible();
   await expect(page.getByTestId('inventory')).toBeHidden();
@@ -788,9 +830,8 @@ test('drone bay: buy a mining drone and it boosts the active ship', async ({ pag
 });
 
 test('industry: the hangar lists module blueprints craftable from ore', async ({ page }) => {
-  await page.getByTestId('hangar-tab-industry').click();
+  await page.getByTestId('menu-industry').click();
   await expect(page.getByTestId('hangar')).toBeVisible();
-  await page.getByTestId('hangar-tab-industry').click();
   await expect(page.getByTestId('hangar-industry')).toBeVisible();
   // A weapon blueprint with a mineral recipe is listed (not craftable: no ore).
   await expect(page.getByTestId('craft-weapon-t1')).toBeVisible();
@@ -899,7 +940,7 @@ test('storyline: pilot training from rookie to certification (m1â€“m8) unlo
     megacyte: w.megacyte + sh.megacyte,
   });
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
-  await page.getByTestId('hangar-tab-industry').click();
+  await page.getByTestId('menu-industry').click();
   await expect(page.getByTestId('hangar-industry')).toBeVisible();
   await page.getByTestId('craft-weapon-t1').click();
   await page.getByTestId('craft-shield-t2').click();

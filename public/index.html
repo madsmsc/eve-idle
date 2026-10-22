@@ -25,10 +25,10 @@
       <div id="system-name" class="system-name" data-testid="system-name"></div>
       <div id="security" class="hud-line security" data-testid="security"></div>
       <div id="faction" class="hud-line faction" data-testid="faction"></div>
-      <div id="cargo" class="cargo" data-testid="cargo"></div>
     </div>
 
     <div class="hud-tr">
+      <button id="overview-toggle" class="hud-btn overview-toggle" data-shortcut="M" data-testid="overview-toggle" aria-controls="minimap" aria-expanded="true">Hide map</button>
       <canvas id="minimap" width="180" height="180" role="button" tabindex="0" aria-label="System overview map. Select a destination to fly there." title="System overview — select a destination" data-testid="minimap"></canvas>
     </div>
 
@@ -55,25 +55,44 @@
       </div>
     </div>
 
+    <div id="flight-actions" class="flight-actions" data-testid="flight-actions">
+      <div id="navigation-actions" class="navigation-actions" data-testid="navigation-actions" role="group" aria-label="Flight actions">
+        <button id="engage" class="hud-btn flight-control" data-shortcut="E" data-testid="engage-btn" disabled>Engage</button>
+        <button id="gate-jump" class="hud-btn gate-btn flight-control" data-testid="gate-jump" hidden>⇄ Jump</button>
+        <button id="auto-pilot" class="hud-btn auto-btn" data-shortcut="A" data-testid="auto-pilot">▶ Auto</button>
+        <button id="navigate-belt" class="hud-btn navigate-btn" data-shortcut="B" data-testid="navigate-belt" title="Fly to the nearest asteroid belt">⌖ Belt</button>
+        <button id="navigate-station" class="hud-btn navigate-btn" data-shortcut="S" data-testid="navigate-station" title="Fly to the nearest station">⌖ Station</button>
+        <button id="navigate-rat" class="hud-btn navigate-btn" data-shortcut="R" data-testid="navigate-rat" title="Fly to the nearest hostile">⌖ Rat</button>
+      </div>
+    </div>
     <div id="combat-banner" class="combat-banner" data-testid="combat-banner" hidden></div>
     <div id="combat-hud" class="combat-hud" data-testid="combat-hud" hidden></div>
   </div>
 
-  <div class="hud-br">
-    <div class="navigation-panel" data-testid="navigation-panel">
-      <button id="auto-pilot" class="hud-btn auto-btn" data-shortcut="A" data-testid="auto-pilot">▶ Auto</button>
-      <button id="navigate-belt" class="hud-btn navigate-btn" data-shortcut="B" data-testid="navigate-belt" title="Fly to the nearest asteroid belt">⌖ Belt</button>
-      <button id="navigate-station" class="hud-btn navigate-btn" data-shortcut="S" data-testid="navigate-station" title="Fly to the nearest station">⌖ Station</button>
-      <button id="navigate-rat" class="hud-btn navigate-btn" data-shortcut="R" data-testid="navigate-rat" title="Fly to the nearest hostile">⌖ Rat</button>
-      <button id="gate-jump" class="hud-btn gate-btn" data-testid="gate-jump" hidden>⇄ Jump</button>
-      <button id="engage" class="hud-btn" data-shortcut="E" data-testid="engage-btn" disabled>Engage</button>
-      <button id="character-btn" class="hud-btn" data-shortcut="C" data-testid="character-btn">Char</button>
-      <button id="inventory-btn" class="hud-btn panel-access-btn" data-shortcut="I" data-testid="inventory-btn">Cargo</button>
-      <button id="fitting-btn" class="hud-btn panel-access-btn" data-shortcut="F" data-testid="fitting-btn">Fitting</button>
-      <button id="loot-btn" class="hud-btn panel-access-btn" data-shortcut="L" data-testid="loot-btn">Loot</button>
-      <button id="storage-btn" class="hud-btn panel-access-btn" data-shortcut="Q" data-testid="storage-btn">Storage</button>
+  <nav id="left-menu" class="left-menu" data-testid="left-menu" aria-label="Game menus">
+    <div class="left-menu-group">
+      <h2>Ship</h2>
+      <button class="menu-card" data-menu="cargo" data-shortcut="I" data-testid="menu-cargo">Cargo</button>
+      <button class="menu-card" data-menu="fitting" data-shortcut="F" data-testid="menu-fitting">Fitting</button>
+      <button class="menu-card" data-menu="storage" data-shortcut="Q" data-testid="menu-storage">Storage</button>
+      <button class="menu-card" data-menu="fleet" data-station-menu data-testid="menu-fleet" disabled>Fleet</button>
+      <button class="menu-card" data-menu="shipyard" data-station-menu data-testid="menu-shipyard" disabled>Shipyard</button>
     </div>
-  </div>
+    <div class="left-menu-group">
+      <h2>Pilot</h2>
+      <button class="menu-card" data-menu="pilot" data-shortcut="C" data-testid="menu-pilot">Pilot</button>
+      <button class="menu-card" data-menu="skills" data-station-menu data-testid="menu-skills" disabled>Skills</button>
+      <button class="menu-card" data-menu="achievements" data-station-menu data-testid="menu-achievements" disabled>Achieve</button>
+      <button class="menu-card" data-menu="factions" data-station-menu data-testid="menu-factions" disabled>Factions</button>
+    </div>
+    <div class="left-menu-group">
+      <h2>Services</h2>
+      <button class="menu-card" data-menu="missions" data-station-menu data-testid="menu-missions" disabled>Missions</button>
+      <button class="menu-card" data-menu="drones" data-station-menu data-testid="menu-drones" disabled>Drone Bay</button>
+      <button class="menu-card" data-menu="industry" data-station-menu data-testid="menu-industry" disabled>Industry</button>
+      <button class="menu-card" data-menu="killboard" data-station-menu data-testid="menu-killboard" disabled>Killboard</button>
+    </div>
+  </nav>
 
   <!-- Death screen: shown when the active ship is destroyed -->
   <div id="death-screen" class="death-screen" data-testid="death-screen" hidden>
@@ -112,7 +131,7 @@
     </div>
   </div>
 
-  <!-- Docking replaces the world and flight HUD with the station services UI. -->
+  <!-- Docking overlays station services on a blurred capture of the space scene. -->
   <div id="station-view" class="station-view" data-testid="station-view" hidden>
     <header class="station-header">
       <div id="station-view-name" class="station-view-name" data-testid="station-view-name"></div>
@@ -123,23 +142,12 @@
     </header>
   </div>
 
-  <!-- Station services replace the old right-side Hangar overlay while docked. -->
+  <!-- Station services stay over the rendered space backdrop while docked. -->
   <div id="hangar" class="hangar" data-testid="hangar" hidden>
     <div class="hangar-header">
       <h2>Station Services</h2>
     </div>
     <div class="hangar-layout">
-      <nav class="hangar-nav" data-testid="hangar-nav" aria-label="Station services">
-        <button class="hangar-nav-btn active" data-panel="fleet" data-testid="hangar-tab-fleet">Fleet</button>
-        <button class="hangar-nav-btn" data-panel="skills" data-testid="hangar-tab-skills">Skills</button>
-        <button class="hangar-nav-btn" data-panel="achievements" data-testid="hangar-tab-achievements">Achievements</button>
-        <button class="hangar-nav-btn" data-panel="missions" data-testid="hangar-tab-missions">Agent Missions</button>
-        <button class="hangar-nav-btn" data-panel="factions" data-testid="hangar-tab-factions">Factions</button>
-        <button class="hangar-nav-btn" data-panel="drones" data-testid="hangar-tab-drones">Drone Bay</button>
-        <button class="hangar-nav-btn" data-panel="industry" data-testid="hangar-tab-industry">Industry</button>
-        <button class="hangar-nav-btn" data-panel="shipyard" data-testid="hangar-tab-shipyard">Shipyard</button>
-        <button class="hangar-nav-btn" data-panel="killboard" data-testid="hangar-tab-killboard">Killboard</button>
-      </nav>
       <div class="hangar-body">
         <section data-panel="fleet" class="active">
           <h3>Fleet</h3>
@@ -181,51 +189,31 @@
     </div>
   </div>
 
-  <!-- Character sheet: pilot standings with every faction. Openable in space or
-       docked (C or the Char button) — the HUD only shows the active system's
-       faction, this shows the whole picture. -->
-  <div id="character-sheet" class="panel panel--left" data-testid="character-sheet" hidden>
+  <!-- Each left-menu entry opens its own un-tabbed workspace. -->
+  <div id="menu-window" class="panel panel--left menu-window" data-testid="menu-window" hidden>
     <div class="panel-header">
-      <h2>Character</h2>
-      <button id="character-close" class="hud-btn" data-testid="character-close">Close</button>
+      <h2 id="menu-window-title">Cargo</h2>
+      <button id="menu-window-close" class="hud-btn" data-testid="menu-window-close">Close</button>
     </div>
-    <div class="panel-body">
-      <div id="character-pilot" class="character-pilot" data-testid="character-pilot"></div>
-      <h3>Faction Standing</h3>
-      <div id="character-factions" class="character-factions" data-testid="character-factions"></div>
-    </div>
-  </div>
-
-  <!-- Right-side panes (one open at a time): the cargo grid (Inventory), the
-       active ship's Fitting and the shared Quantum Storage. -->
-  <div id="inventory" class="panel panel--right" data-testid="inventory" hidden>
-    <div class="panel-header">
-      <h2>Inventory</h2>
-      <button id="inventory-close" class="hud-btn" data-testid="inventory-close">Close</button>
-    </div>
-    <div class="panel-body">
-      <section>
+    <div class="panel-body menu-page-body">
+      <section id="inventory" class="menu-page active" data-menu-page="cargo" data-testid="inventory">
         <h3>Cargo <span class="sub" id="inv-cargo-usage"></span></h3>
+        <div class="cargo-filters" role="group" aria-label="Cargo item filter">
+          <button class="mini active" data-cargo-filter="all" data-testid="cargo-filter-all">All</button>
+          <button class="mini" data-cargo-filter="ore" data-testid="cargo-filter-ore">Ore</button>
+          <button class="mini" data-cargo-filter="loot" data-testid="cargo-filter-loot">Modules</button>
+        </div>
         <div class="inv-toolbar">
           <button class="mini" data-action="sell-all" data-testid="inv-sell-all" disabled>Sell all</button>
         </div>
         <div id="inv-grid" class="inv-grid" data-testid="inv-grid"></div>
         <div id="inv-detail" class="inv-detail" data-testid="inv-detail"></div>
       </section>
-    </div>
-  </div>
 
-  <div id="fitting-panel" class="panel panel--right" data-testid="fitting-panel" hidden>
-    <div class="panel-header">
-      <h2>Fitting <span class="sub" id="inv-ship-name"></span></h2>
-      <button id="fitting-close" class="hud-btn" data-testid="fitting-close">Close</button>
-    </div>
-    <div class="panel-body">
-      <section>
+      <section id="fitting-panel" class="menu-page" data-menu-page="fitting" data-testid="fitting-panel" hidden>
+        <h3>Fitting <span class="sub" id="inv-ship-name"></span></h3>
         <h3>Ship stats</h3>
         <div id="fit-stats" class="fit-stats" data-testid="inv-ship-stats"></div>
-      </section>
-      <section>
         <h3>Equipped modules</h3>
         <div class="fitting-presets">
           <input id="fitting-preset-name" maxlength="24" placeholder="Preset name" aria-label="Fitting preset name" />
@@ -236,31 +224,18 @@
         </div>
         <div id="inv-fitting" class="inv-list" data-testid="inv-fitting"></div>
       </section>
-    </div>
-  </div>
 
-  <div id="loot-panel" class="panel panel--right" data-testid="loot-panel" hidden>
-    <div class="panel-header">
-      <h2>Loot</h2>
-      <button id="loot-close" class="hud-btn" data-testid="loot-close">Close</button>
-    </div>
-    <div class="panel-body">
-      <section>
-        <h3>Looted modules <span class="sub">equip while docked</span></h3>
-        <div id="inv-loot-list" class="inv-list" data-testid="inv-loot-list"></div>
-      </section>
-    </div>
-  </div>
-
-  <div id="storage-panel" class="panel panel--right" data-testid="storage-panel" hidden>
-    <div class="panel-header">
-      <h2>Quantum Storage</h2>
-      <button id="storage-close" class="hud-btn" data-testid="storage-close">Close</button>
-    </div>
-    <div class="panel-body">
-      <section>
+      <section id="storage-panel" class="menu-page" data-menu-page="storage" data-testid="storage-panel" hidden>
+        <h3>Quantum Storage</h3>
         <h3>Shared by all stations</h3>
         <div id="inv-storage" class="inv-list" data-testid="inv-storage"></div>
+      </section>
+
+      <section id="character-sheet" class="menu-page" data-menu-page="pilot" data-testid="character-sheet" hidden>
+        <h3>Pilot</h3>
+        <div id="character-pilot" class="character-pilot" data-testid="character-pilot"></div>
+        <h3>Faction Standing</h3>
+        <div id="character-factions" class="character-factions" data-testid="character-factions"></div>
       </section>
     </div>
   </div>

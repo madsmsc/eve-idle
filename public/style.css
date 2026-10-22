@@ -10,8 +10,7 @@
   --good: #35d07f;
   --bad: #ff5c7a;
   --gold: #ffcf5c;
-  --char-w: min(400px, 90vw);
-  --inv-w: min(380px, 90vw);
+  --menu-rail-width: 92px;
   font-size: 14px;
 }
 
@@ -39,7 +38,7 @@ html, body {
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
 #hud .hud-btn, #hud button { pointer-events: auto; }
 
-.hud-tl { position: absolute; top: 14px; left: 16px; }
+.hud-tl { position: absolute; top: 14px; left: 14px; }
 .system-name {
   font-size: 0.8rem;
   font-weight: 700;
@@ -49,7 +48,6 @@ html, body {
   text-shadow: 0 0 10px rgba(124, 92, 255, 0.5);
   margin-bottom: 2px;
 }
-.cargo { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; max-width: 320px; }
 .hud-line {
   margin-top: 2px;
   font-size: 0.8rem;
@@ -73,7 +71,7 @@ html, body {
 .chip .dot { width: 9px; height: 9px; border-radius: 50%; }
 .chip .amt { font-variant-numeric: tabular-nums; color: var(--text); }
 
-.hud-tr { position: absolute; top: 14px; right: 16px; }
+.hud-tr { position: absolute; top: 14px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 #minimap {
   background: rgba(6, 10, 20, 0.6);
   border: 1px solid var(--border);
@@ -82,10 +80,19 @@ html, body {
   cursor: crosshair;
   pointer-events: auto;
 }
+#minimap[hidden] { display: none; }
+.overview-toggle { padding: 5px 9px; font-size: 0.72rem; }
 
-.hud-bl { position: absolute; bottom: 16px; left: 16px; }
+.hud-bl {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(320px, calc(100vw - 32px));
+}
+.hud-bl.combat-active { top: 142px; }
 .context {
-  margin-bottom: 6px;
+  margin: 0;
   font-size: 0.85rem;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -93,7 +100,7 @@ html, body {
   border-radius: 8px;
   padding: 6px 10px;
   backdrop-filter: blur(4px);
-  width: 320px;
+  width: 100%;
   box-sizing: border-box;
   max-width: calc(100vw - 32px);
 }
@@ -105,23 +112,39 @@ html, body {
 .ctx-log li { font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; transition: opacity 0.4s; }
 .ctx-log li.good { color: var(--good); }
 .ctx-log li.bad { color: var(--bad); }
-.hud-br { position: absolute; bottom: 16px; right: 16px; display: flex; z-index: 21; }
-.navigation-panel { display: flex; flex-direction: column; gap: 6px; }
-.navigation-panel .hud-btn { min-width: 108px; text-align: left; }
-.navigation-panel .hud-btn[data-shortcut] { position: relative; margin-left: 25px; }
-.navigation-panel .hud-btn[data-shortcut]::before {
+.flight-actions {
+  position: absolute;
+  left: calc(50% + 132px);
+  bottom: 16px;
+  z-index: 21;
+  width: min(252px, calc(50vw - 290px));
+}
+.navigation-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 0;
+}
+.navigation-actions .hud-btn {
+  min-width: 0;
+  padding: 5px 6px;
+  text-align: left;
+  font-size: 0.68rem;
+}
+.navigation-actions .hud-btn[data-shortcut] { position: relative; margin-left: 18px; }
+.navigation-actions .hud-btn[data-shortcut]::before {
   content: attr(data-shortcut);
   position: absolute;
   top: 50%;
-  left: -25px;
+  left: -18px;
   transform: translateY(-50%);
-  width: 19px;
-  padding: 3px 0;
+  width: 14px;
+  padding: 2px 0;
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--muted);
   background: var(--panel);
-  font-size: 0.7rem;
+  font-size: 0.62rem;
   line-height: 1;
   text-align: center;
 }
@@ -279,12 +302,29 @@ html, body {
   z-index: 10;
   display: flex;
   flex-direction: column;
+  isolation: isolate;
   background:
     radial-gradient(ellipse at 50% 0%, rgba(31, 56, 91, 0.55), transparent 55%),
     linear-gradient(180deg, #0b1220, #060a12);
 }
+.station-view::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: -8px;
+  pointer-events: none;
+  background-image:
+    linear-gradient(180deg, rgba(4, 6, 12, 0.5), rgba(4, 6, 12, 0.72)),
+    var(--dock-background, none);
+  background-size: cover;
+  background-position: center;
+  filter: blur(6px);
+  transform: scale(1.03);
+}
 .station-view[hidden] { display: none; }
 .station-header {
+  position: relative;
+  z-index: 1;
   min-height: 76px;
   display: flex;
   align-items: center;
@@ -304,6 +344,50 @@ html, body {
 .station-header-actions { display: flex; align-items: center; gap: 14px; }
 .station-view-sub { color: var(--muted); font-size: 0.85rem; }
 
+/* Persistent menu rail shared by space flight and station services. */
+.left-menu {
+  position: fixed;
+  z-index: 26;
+  top: auto;
+  bottom: 12px;
+  left: 10px;
+  width: var(--menu-rail-width);
+  max-height: calc(100vh - 94px);
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(5, 9, 17, 0.88);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+.left-menu-group + .left-menu-group { margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--border); }
+.left-menu-group h2 {
+  margin: 0 0 3px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.65rem;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.menu-card {
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.menu-card:hover { border-color: var(--border); background: rgba(255,255,255,0.05); }
+.menu-card.active { border-color: var(--accent); background: rgba(79, 209, 255, 0.1); }
+.menu-card:disabled { color: var(--muted); opacity: 0.45; cursor: not-allowed; }
+.menu-card:disabled:hover { border-color: transparent; background: transparent; }
+
 /* ---------- Station services ---------- */
 .hangar {
   position: fixed;
@@ -315,7 +399,7 @@ html, body {
   z-index: 11;
   display: flex;
   flex-direction: column;
-  transition: left 0.22s ease, right 0.22s ease;
+  transition: opacity 0.15s ease;
 }
 .hangar[hidden] { display: none; }
 .hangar-header {
@@ -332,39 +416,10 @@ html, body {
   display: flex;
   flex-direction: row;
 }
-.hangar-nav {
-  flex-shrink: 0;
-  width: 172px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 14px 12px 24px;
-  border-right: 1px solid var(--border);
-  background: rgba(5, 9, 17, 0.55);
-}
-.hangar-nav-btn {
-  text-align: left;
-  padding: 8px 12px;
-  font-size: 0.82rem;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-}
-.hangar-nav-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
-.hangar-nav-btn.active {
-  color: var(--accent);
-  background: rgba(79, 209, 255, 0.1);
-  border-color: var(--border);
-  font-weight: 600;
-}
 .hangar-body {
   flex: 1;
   min-width: 0;
-  padding: 18px 24px 32px;
+  padding: 18px 24px 32px calc(var(--menu-rail-width) + 30px);
   overflow-y: auto;
   display: grid;
   grid-template-columns: minmax(0, 760px);
@@ -394,51 +449,46 @@ html, body {
 }
 
 @media (max-width: 600px) {
-  .ship-status { bottom: 12px; width: min(240px, calc(100vw - 168px)); gap: 6px; padding: 7px; }
+  :root { --menu-rail-width: 92px; }
+  .hud-tl { left: 8px; }
+  .ship-status { bottom: 12px; left: calc(var(--menu-rail-width) + 8px); transform: none; width: min(132px, calc(43vw - 8px)); gap: 6px; padding: 7px; }
   .status-heading { display: block; font-size: 0.64rem; }
+  .flight-actions { left: calc(var(--menu-rail-width) + 146px); right: 8px; bottom: 12px; width: auto; }
+  .navigation-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
+  .navigation-actions .hud-btn { padding: 6px 7px; font-size: 0.7rem; }
+  .navigation-actions .hud-btn[data-shortcut] { margin-left: 0; }
+  .navigation-actions .hud-btn[data-shortcut]::before { display: none; }
+  .hud-bl.combat-active { top: 162px; }
+  #minimap { width: 140px; height: 140px; }
   .station-header { min-height: 68px; padding: 10px 14px; }
   .station-header-actions { gap: 8px; }
   .station-view-sub { display: none; }
   .hangar { inset-block-start: 68px; height: calc(100% - 68px); }
   .hangar-header { padding-inline: 14px; }
-  .hangar-layout { flex-direction: column; }
-  .hangar-nav {
-    width: 100%;
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 8px 10px;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-  .hangar-nav-btn { white-space: nowrap; }
-  .hangar-body { padding: 12px 14px 24px; grid-template-columns: 1fr; }
+  .hangar-body { padding: 12px 14px 24px calc(var(--menu-rail-width) + 12px); grid-template-columns: 1fr; }
+  .left-menu { bottom: 8px; left: 5px; width: calc(var(--menu-rail-width) - 8px); max-height: calc(100vh - 76px); padding: 4px; }
+  .left-menu-group h2 { padding-inline: 3px; font-size: 0.55rem; }
+  .menu-card { min-height: 26px; padding: 2px 3px; font-size: 0.64rem; }
+  .menu-window { top: 68px; left: calc(var(--menu-rail-width) + 2px); width: calc(100vw - var(--menu-rail-width) - 10px); height: calc(100% - 68px); }
 }
 
-/* While docked the character and inventory panes fold out from the corners
-   (just below the station header) and the station services reflow to fit
-   between them, so every pane stays visible at the same time. */
+@media (min-width: 601px) and (max-width: 900px) {
+  .ship-status { left: calc(var(--menu-rail-width) + 12px); transform: none; width: min(200px, calc(30vw - 30px)); }
+  .flight-actions {
+    left: calc(var(--menu-rail-width) + 224px);
+    width: min(252px, calc(100vw - var(--menu-rail-width) - 248px));
+  }
+  .navigation-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .navigation-actions .hud-btn[data-shortcut] { margin-left: 0; }
+  .navigation-actions .hud-btn[data-shortcut]::before { display: none; }
+}
+
+/* Menu pages animate beside the persistent launcher rail. */
 @keyframes slide-in-left {
   from { transform: translateX(-100%); }
   to { transform: translateX(0); }
 }
-@keyframes slide-in-right {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
-body.docked .panel {
-  top: 76px;
-  height: calc(100% - 76px);
-}
-@media (max-width: 600px) {
-  body.docked .panel {
-    top: 68px;
-    height: calc(100% - 68px);
-  }
-}
-body.docked.char-open .hangar { left: var(--char-w); }
-body.docked.inv-open .hangar { right: var(--inv-w); }
-body.docked .navigation-panel > button:not(.panel-access-btn) { display: none; }
+body.docked .flight-actions { display: none; }
 
 .hangar-cargo, .hangar-fleet, .hangar-shop, .hangar-fitting, .hangar-skills, .hangar-factions, .hangar-drones, .hangar-loot, .hangar-industry { display: flex; flex-direction: column; gap: 6px; }
 .skill-cat { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-top: 4px; }
@@ -475,11 +525,8 @@ body.docked .navigation-panel > button:not(.panel-access-btn) { display: none; }
 .fit-btn { min-width: 26px; }
 .fit-btn.active { background: rgba(79, 209, 255, 0.25); border-color: var(--accent); color: #fff; }
 
-/* ---------- Shared overlay panels ----------
-   A panel is a fixed full-height side sheet with a header and a scrollable
-   body. `.panel--left` folds from the left corner, `.panel--right` from the
-   right; while docked they tuck below the station header. A new UI overlay is
-   just `class="panel panel--left|right"` with a `.panel-header` + `.panel-body`. */
+/* ---------- Menu workspace ----------
+   The selected menu content opens beside the persistent launcher rail. */
 .panel {
   position: fixed;
   top: 0;
@@ -492,18 +539,25 @@ body.docked .navigation-panel > button:not(.panel-access-btn) { display: none; }
 .panel[hidden] { display: none; }
 .panel--left {
   left: 0;
-  width: var(--char-w);
+  width: min(400px, 90vw);
   border-right: 1px solid var(--border);
   box-shadow: 12px 0 40px rgba(0, 0, 0, 0.5);
   animation: slide-in-left 0.22s ease-out;
 }
-.panel--right {
-  right: 0;
-  width: var(--inv-w);
-  border-left: 1px solid var(--border);
-  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
-  animation: slide-in-right 0.22s ease-out;
+.menu-window {
+  top: 82px;
+  left: calc(var(--menu-rail-width) + 20px);
+  width: min(400px, calc(100vw - var(--menu-rail-width) - 32px));
+  height: calc(100% - 94px);
+  z-index: 24;
 }
+.menu-window .panel-header { background: rgba(5, 9, 17, 0.95); }
+.menu-page-body { padding: 12px 14px; }
+.menu-page { margin: 0; }
+.menu-page[hidden] { display: none; }
+.menu-page > h3 + h3 { margin-top: 16px; }
+.cargo-filters { display: flex; gap: 5px; margin-bottom: 8px; }
+.cargo-filters .mini.active { border-color: var(--accent); color: var(--accent); }
 .panel-header {
   flex-shrink: 0;
   display: flex;

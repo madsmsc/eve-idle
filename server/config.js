@@ -343,12 +343,11 @@ const AGENT_MISSION_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 // ---- spatial world ----
 const WORLD_SIZE = 8000;        // world is WORLD_SIZE x WORLD_SIZE units
-const ASTEROID_FIELDS = 12;     // number of asteroid belts (clusters)
-const ASTEROIDS_PER_FIELD = [3, 6]; // min..max asteroids per belt
+const ASTEROID_FIELDS = 2;      // number of asteroid belts (clusters)
+const ASTEROIDS_PER_FIELD = [18, 24]; // min..max asteroids per belt
 const ASTEROID_AMOUNT = [400, 1200]; // min..max units per asteroid
-const ENEMY_COUNT = 16;         // number of roaming rats
+const MINING_RATE_MULTIPLIER = 0.5;
 const PLANET_COUNT = 3;         // landmark planets
-const STATION_COUNT = 2;        // home station + trading post
 const MINING_RANGE = 160;       // must be this close to an asteroid to mine it
 const ENGAGE_RANGE = 240;       // must be this close to an enemy to engage it
 const DOCK_RANGE = 260;         // must be this close to a station to dock/trade
@@ -408,9 +407,8 @@ module.exports = {
   ASTEROID_FIELDS,
   ASTEROIDS_PER_FIELD,
   ASTEROID_AMOUNT,
-  ENEMY_COUNT,
+  MINING_RATE_MULTIPLIER,
   PLANET_COUNT,
-  STATION_COUNT,
   MINING_RANGE,
   ENGAGE_RANGE,
   DOCK_RANGE,

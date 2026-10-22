@@ -71,6 +71,8 @@ describe('HTTP API', () => {
     assert.ok(s.world);
     assert.ok(s.world.asteroids.length > 0);
     assert.ok(s.world.enemies.length > 0);
+    assert.equal(s.world.belts.length, 2);
+    assert.equal(s.world.outposts.length, 2);
     assert.ok(s.activeShip);
     assert.ok(Number.isFinite(s.activeShip.x));
   });

@@ -24,16 +24,12 @@ export class Input {
       if (k === 'l') app.toggleLoot();
       if (k === 'q') app.toggleStorage();
       if (k === 'a') app.toggleAutoPilot();
+      if (k === 'm') app.toggleOverview();
       if (k === 'b') app.navigateToNearest('belt');
       if (k === 's') app.navigateToNearest('station');
       if (k === 'r') app.navigateToNearest('rat');
       if (k === 'escape') {
-        app.toggleHangar(false);
-        app.toggleCharacter(false);
-        app.toggleInventory(false);
-        app.toggleFitting(false);
-        app.toggleLoot(false);
-        app.toggleStorage(false);
+        app.closeMenu();
       }
     });
 
@@ -63,6 +59,7 @@ export class Input {
       const w = app.state.world;
       const pois = [];
       for (const st of w.stations) pois.push({ id: st.id, x: st.x, y: st.y, r: 70 });
+      for (const outpost of w.outposts || []) pois.push({ id: outpost.id, x: outpost.x, y: outpost.y, r: 55 });
       for (const b of w.belts) pois.push({ id: b.id, x: b.x, y: b.y, r: 300 });
       for (const pl of w.planets) pois.push({ id: pl.id, x: pl.x, y: pl.y, r: pl.size + 50 });
       for (const m of w.moons) pois.push({ id: m.id, x: m.x, y: m.y, r: m.size + 30 });
@@ -106,16 +103,12 @@ export class Input {
     }, { passive: false });
 
     document.getElementById('engage').addEventListener('click', () => app.doEngage());
-    document.getElementById('character-btn').addEventListener('click', () => app.toggleCharacter());
-    document.getElementById('character-close').addEventListener('click', () => app.toggleCharacter(false));
-    document.getElementById('inventory-btn').addEventListener('click', () => app.toggleInventory());
-    document.getElementById('inventory-close').addEventListener('click', () => app.toggleInventory(false));
-    document.getElementById('fitting-btn').addEventListener('click', () => app.toggleFitting());
-    document.getElementById('fitting-close').addEventListener('click', () => app.toggleFitting(false));
-    document.getElementById('loot-btn').addEventListener('click', () => app.toggleLoot());
-    document.getElementById('loot-close').addEventListener('click', () => app.toggleLoot(false));
-    document.getElementById('storage-btn').addEventListener('click', () => app.toggleStorage());
-    document.getElementById('storage-close').addEventListener('click', () => app.toggleStorage(false));
+    document.getElementById('overview-toggle').addEventListener('click', () => app.toggleOverview());
+    document.getElementById('menu-window-close').addEventListener('click', () => app.closeMenu());
+    document.getElementById('left-menu').addEventListener('click', (ev) => {
+      const button = ev.target.closest('.menu-card');
+      if (button) app.openMenu(button.dataset.menu);
+    });
     document.getElementById('death-dismiss').addEventListener('click', () => app.overlays.hideDeath());
     document.getElementById('navigate-belt').addEventListener('click', () => app.navigateToNearest('belt'));
     document.getElementById('navigate-station').addEventListener('click', () => app.navigateToNearest('station'));
@@ -161,16 +154,14 @@ export class Input {
     };
     document.getElementById('hangar').addEventListener('click', onHangarAction);
     document.getElementById('fitting-panel').addEventListener('click', onHangarAction);
-    document.getElementById('loot-panel').addEventListener('click', onHangarAction);
-
-    // station services sidebar: switch the visible panel
-    document.getElementById('hangar').addEventListener('click', (ev) => {
-      const btn = ev.target.closest('.hangar-nav-btn');
-      if (btn) app.ui.hangar.showService(btn.dataset.panel);
-    });
 
     // inventory grid selection + equip, and quantum-storage transfers
     const onInventoryClick = (ev) => {
+      const filter = ev.target.closest('[data-cargo-filter]');
+      if (filter) {
+        app.ui.inventory.setFilter(filter.dataset.cargoFilter);
+        return;
+      }
       const cell = ev.target.closest('[data-cell]');
       if (cell) {
         app.ui.inventory.select(cell.dataset.cell);

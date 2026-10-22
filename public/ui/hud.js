@@ -1,6 +1,6 @@
 'use strict';
 
-// The main HUD: top-left readouts (system, security, faction, minerals), the
+// The main HUD: top-left readouts (system, security, faction), the
 // mission tracker/dialogue, the ship-info line, and the per-frame fast readouts
 // (status box + event log, engage/gate buttons, combat banner + combat HUD).
 // DOM only; panels refresh on server sync, while fast readouts update every frame.
@@ -43,7 +43,6 @@ export class HudNode extends Node {
     const securityEl = document.getElementById('security');
     securityEl.textContent = this.app.state.system ? `Sec ${this.app.state.system.security.toFixed(1)}` : '';
     this.collectEvents();
-    this.renderCargo();
   }
 
   // Turn new combat results, jumps and a full hold into short event-log lines.
@@ -112,6 +111,7 @@ export class HudNode extends Node {
 
   refreshFast() {
     const state = this.app.state;
+    document.querySelector('.hud-bl').classList.toggle('combat-active', !!state.combat);
     this.renderContext();
     this.renderEventLog();
 
@@ -194,20 +194,6 @@ export class HudNode extends Node {
     }
   }
 
-  renderCargo() {
-    const el = document.getElementById('cargo');
-    el.innerHTML = '';
-    for (const key of Object.keys(this.app.catalog.minerals)) {
-      const def = this.app.catalog.minerals[key];
-      const amt = this.app.state.minerals[key];
-      if (amt < 0.5) continue;
-      const chip = document.createElement('span');
-      chip.className = 'chip';
-      chip.innerHTML = `<span class="dot" style="background:${def.color}"></span>${def.name} <span class="amt">${fmt(amt)}</span>`;
-      el.appendChild(chip);
-    }
-  }
-
   renderMission() {
     const tracker = document.getElementById('mission-tracker');
     const dlg = document.getElementById('mission-dialogue');
@@ -259,21 +245,25 @@ export class HudNode extends Node {
       if (state.cargoFull) return { label: 'Docked', color: CTX_COLORS.docked, detail: `Cargo full at ${state.dockedStation} — sell it (H)` };
       return { label: 'Docked', color: CTX_COLORS.docked, detail: `Docked at ${state.dockedStation} — press H to trade` };
     }
-    if (player.destination) {
+    if (player.destination && state.cargoFull) {
       const label = player.poiLabel(player.destination.x, player.destination.y);
       const d = Math.round(Math.hypot(player.destination.x - player.x, player.destination.y - player.y));
-      if (state.cargoFull) return { label: 'Returning', color: CTX_COLORS.warn, detail: `Cargo full — returning to ${label || 'station'} · ${fmt(d)} m` };
-      return { label: 'Traveling', color: CTX_COLORS.travel, detail: `${label || 'Your destination'} · ${fmt(d)} m` };
+      return { label: 'Returning', color: CTX_COLORS.warn, detail: `Cargo full — returning to ${label || 'station'} · ${fmt(d)} m` };
     }
-    if (ns && ns.d < 240) return { label: 'Approaching', color: CTX_COLORS.travel, detail: `${ns.station.name}…` };
     const a = player.nearestAsteroid();
-    if (a && active) {
+    if (a && active && !state.cargoFull) {
       const belt = state.world.belts.find((b) => b.id === a.beltId);
       const ore = this.app.catalog.minerals[a.mineral].name;
       const rate = active.mining.toFixed(1);
-      const hold = `${fmt(state.cargoUsed)}/${fmt(state.cargoCapacity)}`;
-      return { label: 'Mining', color: CTX_COLORS.mining, detail: `${ore}${belt ? ' · ' + belt.name : ''} · +${rate}/s · hold ${hold}` };
+      const cargo = `${fmt(state.cargoUsed)}/${fmt(state.cargoCapacity)}`;
+      return { label: 'Mining', color: CTX_COLORS.mining, detail: `${ore}${belt ? ' · ' + belt.name : ''} · +${rate}/s · Cargo ${cargo}` };
     }
+    if (player.destination) {
+      const label = player.poiLabel(player.destination.x, player.destination.y);
+      const d = Math.round(Math.hypot(player.destination.x - player.x, player.destination.y - player.y));
+      return { label: 'Traveling', color: CTX_COLORS.travel, detail: `${label || 'Your destination'} · ${fmt(d)} m` };
+    }
+    if (ns && ns.d < 240) return { label: 'Approaching', color: CTX_COLORS.travel, detail: `${ns.station.name}…` };
     const target = player.nearestEnemyInRange();
     if (target) {
       const def = this.app.catalog.enemies[target.type];

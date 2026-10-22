@@ -31,6 +31,9 @@ and a full cargo hold recalls it to a station to sell.
 - Each system has its own security level, faction, and market prices. Faction
   standing affects prices and gate ambush risk. Drones add mining or combat
   support. Modules and ships can be crafted from ore while docked.
+- Systems have two asteroid belts with larger rock fields, two outposts with
+  clustered pirate groups, and navigational sites spaced apart. The HUD shows
+  cargo used versus capacity while mining; base mining yield is halved.
 - Auto repeats the mining loop: mine, recall when full, sell, and return to a
   belt. Tutorial hints introduce DEMO play; an offline report summarizes gains
   after a break.
@@ -121,3 +124,16 @@ public/
   main.js     Browser entry point
 tests/        Unit, API, client, and Playwright E2E tests
 ```
+
+## TODOs
+
+### actions (parallel)
+
+
+
+### questions
+
+how do i test performance, visualize it, and identify opportunities for optimization? i assume the best approach is to try to find the most expensive things being run often.
+
+can you suggest a way to break down the javascript classes even further, making as much as possible extend node, and putting its logic in update and rendering in render methods, so they don't need to be called explicitly. also dont just have a flat scene graph, but structure the hierarchy of parent/child nodes so it is reasonably wide and deep. ideally there should be as few calls between nodes as possible - i know that is naiive to think we can get there, but it's just to explain the goal of really leaning into the scene graph concept and putting as much as possible into private methods called by update/render methods.
+

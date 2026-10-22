@@ -49,6 +49,8 @@ export class MinimapNode extends Node {
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#78c8ff';
     for (const st of world.stations) ctx.fillRect(st.x * scale - 2, st.y * scale - 2, 4, 4);
+    ctx.fillStyle = '#ffb45c';
+    for (const outpost of world.outposts || []) ctx.fillRect(outpost.x * scale - 2, outpost.y * scale - 2, 4, 4);
     ctx.fillStyle = '#7c5cff';
     for (const g of world.gates || []) {
       ctx.save();

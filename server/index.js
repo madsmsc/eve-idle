@@ -82,11 +82,12 @@ function serveStatic(req, res, pathname) {
 // Saves are stored per mode in a single container file: { demo, story }. Each
 // mode keeps its own progress, so switching modes never clobbers the other.
 function normalizeStore(loaded) {
+  const migrate = (state) => game.isValidState(state) ? game.migrateWorldLayout(state) : null;
   if (loaded && typeof loaded === 'object' && (loaded.demo || loaded.story || loaded.__slots)) {
-    return { demo: loaded.demo || null, story: loaded.story || null };
+    return { demo: migrate(loaded.demo), story: migrate(loaded.story) };
   }
   // Legacy single-state save: treat as the demo slot (STATE_VERSION-gated).
-  return { demo: game.isValidState(loaded) ? loaded : null, story: null };
+  return { demo: migrate(loaded), story: null };
 }
 
 function createApp({ dataFile } = {}) {

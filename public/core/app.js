@@ -9,7 +9,7 @@ import { Camera } from './camera.js';
 import { Player } from './player.js';
 import { hexToRgb, dist } from './util.js';
 import { Input } from './input.js';
-import { WorldNode, StarNode, BeltNode, PlanetNode, MoonNode, AsteroidNode, StationNode, GateNode, EnemyNode } from '../view/world.js';
+import { WorldNode, StarNode, BeltNode, PlanetNode, MoonNode, AsteroidNode, StationNode, OutpostNode, GateNode, EnemyNode } from '../view/world.js';
 import { ShipNode } from '../view/ship.js';
 import { CombatNode } from '../view/combat.js';
 import { EffectsNode } from '../view/effects.js';
@@ -31,15 +31,14 @@ export class App {
     this.targetEnemyId = null;
     this.combatFx = { enemyId: null, enemyX: 0, enemyY: 0, battleStartPerf: 0, explosions: [] };
     this.hangarOpen = false;
-    this.characterOpen = false;
-    this.inventoryOpen = false;
-    this.fittingOpen = false;
-    this.lootOpen = false;
-    this.storageOpen = false;
+    this.menuPageOpen = false;
+    this.activeMenu = 'cargo';
+    this.overviewVisible = true;
     this.autoPilot = false;
     this.lastAutoTick = 0;
     this.warpFx = 0;
     this.gateFx = 0;
+    this.dockBackground = null;
     this.warpPending = false;
     this.deathTimer = null;
     this.lastFrame = 0;
@@ -58,6 +57,7 @@ export class App {
       .add(new MoonNode())
       .add(new AsteroidNode())
       .add(new StationNode())
+      .add(new OutpostNode())
       .add(new GateNode())
       .add(new EnemyNode())
       .add(this.ship)
@@ -121,11 +121,13 @@ export class App {
 
   finishBoot() {
     this.applySystemColor();
+    this.player.dockTargetId = this.state.dockTargetId || null;
     const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
     if (active) this.player.snap(active.x, active.y);
     this.input = new Input(this);
     this.input.wire();
     this.ui.refreshPanels();
+    if (this.state.docked) this.captureDockBackground();
     this.syncDockedView();
     this.showFirstTimeTutorial();
     this.lastFrame = performance.now();
@@ -195,6 +197,7 @@ export class App {
   beginDocking(newState) {
     const station = newState.world.stations.find((s) => s.name === newState.dockedStation);
     if (!station) return;
+    this.captureDockBackground();
     this.docking = { station, dockedStation: newState.dockedStation, elapsed: 0, fading: false, fadeStart: 0 };
     newState.docked = false;
     newState.dockedStation = null;
@@ -219,21 +222,67 @@ export class App {
     this.setDockFade(false);
   }
 
-  // Docked stations replace the world with a station view and make the hangar
-  // available; leaving the station hides it and closes the hangar.
+  captureDockBackground() {
+    const canvas = document.createElement('canvas');
+    canvas.width = this.canvas.width;
+    canvas.height = this.canvas.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Unable to create a canvas for the station background');
+
+    const previousCanvas = this.canvas;
+    const previousContext = this.ctx;
+    const previousChildren = this.world.children;
+    this.canvas = canvas;
+    this.ctx = context;
+    this.world.children = previousChildren.filter((child) => child !== this.ship);
+    try {
+      this.world.render(performance.now());
+      this.dockBackground = canvas.toDataURL();
+    } finally {
+      this.canvas = previousCanvas;
+      this.ctx = previousContext;
+      this.world.children = previousChildren;
+    }
+  }
+
+  // Docked stations overlay services on a ship-free capture of the world.
   syncDockedView() {
     const docked = this.state && this.state.docked;
-    const wasOpen = this.hangarOpen;
+    const wasDocked = document.body.classList.contains('docked');
+    if (docked && !wasDocked) {
+      this.menuPageOpen = false;
+      this.activeMenu = 'fleet';
+      document.getElementById('menu-window').hidden = true;
+      document.body.classList.remove('menu-window-open');
+    } else if (!docked && wasDocked) {
+      this.menuPageOpen = false;
+      this.activeMenu = 'cargo';
+      document.getElementById('menu-window').hidden = true;
+      document.body.classList.remove('menu-window-open');
+    }
     document.body.classList.toggle('docked', !!docked);
     const view = document.getElementById('station-view');
     if (view) view.hidden = !docked;
+    if (docked && view && this.dockBackground) {
+      view.style.setProperty('--dock-background', `url("${this.dockBackground}")`);
+    }
     if (docked && this.state.dockedStation) {
       const nameEl = document.getElementById('station-view-name');
       if (nameEl) nameEl.textContent = this.state.dockedStation;
     }
-    this.hangarOpen = !!docked;
-    document.getElementById('hangar').hidden = !docked;
-    if (docked && !wasOpen) this.ui.hangar.refresh();
+    this.hangarOpen = !!docked && ['fleet', 'shipyard', 'skills', 'achievements', 'factions', 'missions', 'drones', 'industry', 'killboard'].includes(this.activeMenu);
+    document.getElementById('hangar').hidden = !this.hangarOpen;
+    if (this.hangarOpen && (!wasDocked || this.activeMenu !== this.lastHangarTab)) this.ui.hangar.refresh();
+    if (this.hangarOpen) this.ui.hangar.showService(this.activeMenu);
+    this.lastHangarTab = this.activeMenu;
+    document.querySelectorAll('.menu-card').forEach((button) => {
+      const selected = this.activeMenu === button.dataset.menu && (this.menuPageOpen || this.hangarOpen);
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-current', selected ? 'page' : 'false');
+      if (button.hasAttribute('data-station-menu')) {
+        button.disabled = !docked;
+      }
+    });
   }
 
   // Undock into nearby space without steering the ship back to the station.
@@ -331,69 +380,99 @@ export class App {
   }
 
   toggleHangar(force) {
+    if (force === false) {
+      this.closeMenu();
+      return;
+    }
     if (this.state && this.state.docked) {
-      this.hangarOpen = true;
-      document.getElementById('hangar').hidden = false;
-      this.ui.hangar.refresh();
-      return;
-    }
-    const wantOpen = force !== undefined ? force : !this.hangarOpen;
-    if (wantOpen) {
+      this.openMenu('fleet', true);
+    } else {
       this.toast('Dock at a station to use the hangar', true);
+    }
+  }
+
+  openMenu(name, force) {
+    const shipMenus = ['cargo', 'fitting', 'storage', 'pilot'];
+    const stationMenus = ['fleet', 'shipyard', 'skills', 'achievements', 'factions', 'missions', 'drones', 'industry', 'killboard'];
+    if (!shipMenus.includes(name) && !stationMenus.includes(name)) throw new Error(`Unknown menu: ${name}`);
+    if (stationMenus.includes(name) && !(this.state && this.state.docked)) {
+      this.toast('Dock at a station to use this service', true);
       return;
     }
-    this.hangarOpen = wantOpen;
+
+    const opening = force !== undefined ? !!force : (!this.menuPageOpen && !this.hangarOpen || this.activeMenu !== name);
+    if (!opening) {
+      this.closeMenu();
+      return;
+    }
+    this.activeMenu = name;
+    this.menuPageOpen = shipMenus.includes(name);
+    this.hangarOpen = stationMenus.includes(name);
+    document.body.classList.toggle('menu-window-open', this.menuPageOpen);
+    document.getElementById('menu-window').hidden = !this.menuPageOpen;
     document.getElementById('hangar').hidden = !this.hangarOpen;
-    if (this.hangarOpen) this.ui.hangar.refresh();
+    const page = document.querySelector(`.menu-page[data-menu-page="${name}"]`);
+    document.querySelectorAll('.menu-page').forEach((item) => {
+      const selected = item === page;
+      item.classList.toggle('active', selected);
+      item.hidden = !selected;
+    });
+    const button = document.querySelector(`.menu-card[data-menu="${name}"]`);
+    document.getElementById('menu-window-title').textContent = button.querySelector('strong').textContent;
+    document.querySelectorAll('.menu-card').forEach((item) => {
+      const selected = item.dataset.menu === name;
+      item.classList.toggle('active', selected);
+      item.setAttribute('aria-current', selected ? 'page' : 'false');
+    });
+    if (this.menuPageOpen) this.ui.refreshMenuPage();
+    if (this.hangarOpen) {
+      this.ui.hangar.showService(name);
+      this.ui.hangar.refresh();
+    }
   }
 
-  // Generic corner-panel open/close. Tracks the open flag, reflects it on <body>
-  // (so CSS can reflow the docked hangar) and re-renders the panel when shown.
-  setPanel(flagKey, elementId, bodyClass, refresh, force) {
-    this[flagKey] = force !== undefined ? force : !this[flagKey];
-    document.body.classList.toggle(bodyClass, this[flagKey]);
-    document.getElementById(elementId).hidden = !this[flagKey];
-    if (this[flagKey]) refresh();
+  closeMenu() {
+    this.menuPageOpen = false;
+    this.hangarOpen = false;
+    this.activeMenu = 'cargo';
+    document.body.classList.remove('menu-window-open');
+    document.getElementById('menu-window').hidden = true;
+    document.getElementById('hangar').hidden = true;
+    document.querySelectorAll('.menu-card').forEach((item) => {
+      item.classList.remove('active');
+      item.setAttribute('aria-current', 'false');
+    });
   }
 
-  // Character sheet (standings) is available in space and docked.
+  toggleOverview(force) {
+    this.overviewVisible = force !== undefined ? !!force : !this.overviewVisible;
+    const map = document.getElementById('minimap');
+    const button = document.getElementById('overview-toggle');
+    map.hidden = !this.overviewVisible;
+    button.textContent = this.overviewVisible ? 'Hide map' : 'Show map';
+    button.setAttribute('aria-expanded', String(this.overviewVisible));
+  }
+
   toggleCharacter(force) {
-    this.setPanel('characterOpen', 'character-sheet', 'char-open', () => this.ui.character.refresh(), force);
+    this.openMenu('pilot', force);
   }
 
-  // Inventory (cargo grid), Fitting and Quantum Storage share the right edge, so
-  // opening one closes the others. Storage transfers still require docking.
   toggleInventory(force) {
-    this.toggleRightPanel('inventoryOpen', 'inventory', force);
+    this.ui.inventory.setFilter('all');
+    this.openMenu('cargo', force);
   }
 
   toggleFitting(force) {
-    this.toggleRightPanel('fittingOpen', 'fitting-panel', force);
+    this.openMenu('fitting', force);
   }
 
   toggleLoot(force) {
-    this.toggleRightPanel('lootOpen', 'loot-panel', force);
+    this.ui.inventory.setFilter('loot');
+    this.openMenu('cargo', force === undefined ? true : force);
   }
 
   toggleStorage(force) {
-    this.toggleRightPanel('storageOpen', 'storage-panel', force);
-  }
-
-  toggleRightPanel(flagKey, elementId, force) {
-    const open = force !== undefined ? force : !this[flagKey];
-    const all = [
-      ['inventoryOpen', 'inventory'],
-      ['fittingOpen', 'fitting-panel'],
-      ['lootOpen', 'loot-panel'],
-      ['storageOpen', 'storage-panel'],
-    ];
-    for (const [key, id] of all) {
-      if (key !== flagKey && this[key]) {
-        this[key] = false;
-        document.getElementById(id).hidden = true;
-      }
-    }
-    this.setPanel(flagKey, elementId, 'inv-open', () => this.ui.inventory.refresh(), open);
+    this.openMenu('storage', force);
   }
 
   // ---- autopilot ----

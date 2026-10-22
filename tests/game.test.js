@@ -46,16 +46,36 @@ describe('world generation', () => {
       assert.ok(sys.star);
       assert.ok(sys.planets.length >= 1);
       assert.ok(sys.stations.length >= 1);
-      assert.ok(sys.belts.length > 0);
+      assert.equal(sys.outposts.length, 2);
+      assert.equal(sys.belts.length, 2);
       assert.ok(sys.asteroids.length > 0);
       assert.ok(sys.enemies.length > 0);
       const beltIds = new Set(sys.belts.map((b) => b.id));
+      for (const belt of sys.belts) {
+        assert.ok(sys.asteroids.filter((a) => a.beltId === belt.id).length >= cfg.ASTEROIDS_PER_FIELD[0]);
+      }
+      for (const outpost of sys.outposts) {
+        const outpostRats = sys.enemies.filter((enemy) => enemy.outpostId === outpost.id);
+        assert.ok(outpostRats.length >= 3 && outpostRats.length <= 5);
+        for (const enemy of outpostRats) {
+          assert.ok(Math.hypot(enemy.x - outpost.x, enemy.y - outpost.y) <= 440);
+        }
+      }
       for (const a of sys.asteroids) {
         assert.ok(a.x >= 0 && a.x <= cfg.WORLD_SIZE);
         assert.ok(a.y >= 0 && a.y <= cfg.WORLD_SIZE);
         assert.ok(a.amount > 0);
         assert.ok(cfg.MINERALS[a.mineral]);
         assert.ok(beltIds.has(a.beltId));
+      }
+      const sites = [...sys.stations, ...sys.outposts, ...sys.belts, ...sys.gates];
+      for (let i = 0; i < sites.length; i++) {
+        for (let j = i + 1; j < sites.length; j++) {
+          assert.ok(
+            Math.hypot(sites[i].x - sites[j].x, sites[i].y - sites[j].y) >= 1000,
+            `${sites[i].id} and ${sites[j].id} are too close`,
+          );
+        }
       }
     }
   });
@@ -106,6 +126,38 @@ describe('world generation', () => {
     }
   });
 
+  test('generated rats stay clustered around the two outposts', () => {
+    for (let seed = 1; seed <= 15; seed++) {
+      const state = fresh(seed);
+      for (const system of Object.values(state.systems)) {
+        assert.equal(system.outposts.length, 2);
+        assert.equal(system.belts.length, 2);
+        for (const rat of system.enemies) {
+          const outpost = system.outposts.find((site) => site.id === rat.outpostId);
+          assert.ok(outpost, `${rat.id} is assigned to an outpost`);
+          assert.ok(Math.hypot(rat.x - outpost.x, rat.y - outpost.y) <= 440);
+        }
+      }
+    }
+  });
+
+  test('stations, outposts, belts, and gates are spaced across each system', () => {
+    for (let seed = 1; seed <= 15; seed++) {
+      const state = fresh(seed);
+      for (const system of Object.values(state.systems)) {
+        const sites = [...system.stations, ...system.outposts, ...system.belts, ...system.gates];
+        for (let i = 0; i < sites.length; i++) {
+          for (let j = i + 1; j < sites.length; j++) {
+            assert.ok(
+              Math.hypot(sites[i].x - sites[j].x, sites[i].y - sites[j].y) >= 1000,
+              `${system.name}: ${sites[i].id} and ${sites[j].id} are too close`,
+            );
+          }
+        }
+      }
+    }
+  });
+
   test('is deterministic for a given seed', () => {
     const a = fresh(1234);
     const b = fresh(1234);
@@ -116,6 +168,31 @@ describe('world generation', () => {
     const a = fresh(1);
     const b = fresh(2);
     assert.notDeepEqual(a.systems, b.systems);
+  });
+
+  test('migrates saved systems to the new layout without resetting pilot progress', () => {
+    const state = game.createInitialState(T0, 42, 'story');
+    const originalIsk = state.isk;
+    state.ships[0].cargo.iron = 17;
+    for (const system of Object.values(state.systems)) {
+      delete system.outposts;
+      system.belts.pop();
+      for (const enemy of system.enemies) delete enemy.outpostId;
+    }
+
+    game.migrateWorldLayout(state);
+
+    assert.equal(state.isk, originalIsk);
+    assert.equal(state.ships[0].cargo.iron, 17);
+    assert.equal(state.mission.active, 'm1');
+    for (const [id, system] of Object.entries(state.systems)) {
+      assert.equal(system.outposts.length, 2);
+      assert.equal(system.belts.length, 2);
+      if (id === 'sys_0') assert.ok(system.enemies.some((enemy) => enemy.missionTag === 'attacker'));
+    }
+    const station = state.systems[state.ships[0].systemId].stations.find((item) => item.id === state.ships[0].dockedStationId);
+    assert.equal(state.ships[0].x, station.x);
+    assert.equal(state.ships[0].y, station.y);
   });
 });
 
@@ -194,15 +271,16 @@ describe('modes', () => {
 });
 
 describe('missions', () => {
-  test('a story save starts m1 with its target spawned near the station', () => {
+  test('a story save starts m1 with its target spawned near an outpost', () => {
     const s = game.createInitialState(T0, 42, 'story');
     assert.equal(s.mission.active, 'm1');
     assert.equal(s.ships[0].fitting.weapon[0], 1, 'm1 grants a Weapon I');
-    const home = sys(s).stations[0];
+    const outpost = sys(s).outposts[0];
     const attacker = sys(s).enemies.find((e) => e.missionTag === 'attacker');
     assert.ok(attacker, 'attacker spawned');
     assert.ok(attacker.alive);
-    assert.ok(Math.hypot(attacker.x - home.x, attacker.y - home.y) < 1000, 'attacker near the station');
+    assert.equal(attacker.outpostId, outpost.id);
+    assert.ok(Math.hypot(attacker.x - outpost.x, attacker.y - outpost.y) < 1000, 'attacker near an outpost');
   });
 
   test('certification unlocks a post-course Placid mission', () => {
@@ -979,9 +1057,10 @@ describe('fitting slots', () => {
   test('a mining module raises the mining rate', () => {
     const s = fresh();
     const before = game.shipMining(s.ships[0]);
+    assert.equal(before, cfg.SHIPS.rifter.mining * cfg.MINING_RATE_MULTIPLIER);
     const s2 = game.fitModule(s, shipId(s), 'mining', 0, 3).state;
     const after = game.shipMining(s2.ships[0]);
-    assert.ok(Math.abs((after - before) - cfg.MODULES.mining.tiers[2].bonus) < 1e-6);
+    assert.ok(Math.abs((after - before) - cfg.MODULES.mining.tiers[2].bonus * cfg.MINING_RATE_MULTIPLIER) < 1e-6);
   });
 
   test('a cargo module raises the cargo capacity', () => {
@@ -1514,7 +1593,7 @@ describe('drones', () => {
     const v = game.view(s);
     assert.equal(v.miningTargetId, a.id);
     const base = game.shipMining(s.ships[0]);
-    assert.ok(Math.abs(v.miningRate - (base + cfg.DRONES.mining.tiers[1].bonus)) < 1e-6);
+    assert.ok(Math.abs(v.miningRate - (base + cfg.DRONES.mining.tiers[1].bonus * cfg.MINING_RATE_MULTIPLIER)) < 1e-6);
   });
 
   test('a combat drone raises the ship DPS in a fight', () => {

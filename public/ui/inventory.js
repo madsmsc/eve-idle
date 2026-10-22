@@ -1,9 +1,7 @@
 'use strict';
 
-// The right-hand panes: Inventory (a classic square-grid cargo hold holding ore
-// stacks and looted modules), Fitting (ship stats + equipped modules) and
-// Quantum Storage (shared by every station, docked to access). DOM only; panes
-// are rebuilt when they open or when state changes while one is open.
+// Cargo, fitting, and shared Quantum Storage menu content.
+// DOM is rebuilt when a menu page opens or state changes while one is active.
 import { Node } from '../core/node.js';
 import { fmt } from '../core/util.js';
 
@@ -15,6 +13,7 @@ export class InventoryNode extends Node {
   constructor(app) {
     super(app);
     this.selected = null; // 'ore:<mineral>' | 'loot:<id>'
+    this.filter = 'all';
     this.statsTimer = 0;
   }
 
@@ -22,13 +21,12 @@ export class InventoryNode extends Node {
     this.renderFitting();
     this.renderCargo();
     this.renderStorage();
-    this.renderLoot();
     return this;
   }
 
   update(dt) {
     this.statsTimer -= dt;
-    if (this.statsTimer <= 0 && this.app.fittingOpen && this.app.state) {
+    if (this.statsTimer <= 0 && this.app.menuPageOpen && this.app.activeMenu === 'fitting' && this.app.state) {
       this.statsTimer = 0.25;
       this.renderStats();
     }
@@ -37,6 +35,15 @@ export class InventoryNode extends Node {
 
   select(key) {
     this.selected = this.selected === key ? null : key;
+    this.renderCargo();
+  }
+
+  setFilter(filter) {
+    if (!['all', 'ore', 'loot'].includes(filter)) throw new Error(`Unknown cargo filter: ${filter}`);
+    this.filter = filter;
+    document.querySelectorAll('[data-cargo-filter]').forEach((button) => {
+      button.classList.toggle('active', button.dataset.cargoFilter === filter);
+    });
     this.renderCargo();
   }
 
@@ -115,12 +122,16 @@ export class InventoryNode extends Node {
   buildCells() {
     const { state, catalog } = this.app;
     const cells = [];
-    for (const key of Object.keys(catalog.minerals)) {
-      const amt = Math.floor(state.minerals[key] || 0);
-      if (amt > 0) cells.push({ kind: 'ore', key, select: `ore:${key}`, count: amt });
+    if (this.filter !== 'loot') {
+      for (const key of Object.keys(catalog.minerals)) {
+        const amt = Math.floor(state.minerals[key] || 0);
+        if (amt > 0) cells.push({ kind: 'ore', key, select: `ore:${key}`, count: amt });
+      }
     }
-    for (const l of state.loot || []) {
-      cells.push({ kind: 'loot', key: l.id, select: `loot:${l.id}`, loot: l });
+    if (this.filter !== 'ore') {
+      for (const l of state.loot || []) {
+        cells.push({ kind: 'loot', key: l.id, select: `loot:${l.id}`, loot: l });
+      }
     }
     const total = Math.max(MIN_CELLS, cells.length);
     return { cells, total: Math.ceil(total / COLUMNS) * COLUMNS };
@@ -214,28 +225,6 @@ export class InventoryNode extends Node {
       </span>`;
     el.appendChild(row);
     if (!docked) note('Dock at a station to equip this module.');
-  }
-
-  renderLoot() {
-    const el = document.getElementById('inv-loot-list');
-    el.innerHTML = '';
-    const loot = this.app.state.loot || [];
-    if (!loot.length) {
-      el.innerHTML = '<div class="row"><span class="sub">Destroy rats to loot modules.</span></div>';
-      return;
-    }
-    for (const item of loot) {
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = `
-        <span class="label">${item.name} <span class="sub">Tier ${ROMAN[item.tier] || item.tier}</span></span>
-        <span class="actions">
-          <button class="mini" data-action="equip-loot" data-loot="${item.id}" data-testid="equip-loot-${item.id}" ${this.app.state.docked ? '' : 'disabled'}>Equip</button>
-          <button class="mini" data-action="sell-loot" data-loot="${item.id}" data-testid="sell-loot-${item.id}" ${this.app.state.docked ? '' : 'disabled'}>Sell</button>
-          <button class="mini" data-action="refine-loot" data-loot="${item.id}" data-testid="refine-loot-${item.id}" ${this.app.state.docked ? '' : 'disabled'}>Refine</button>
-        </span>`;
-      el.appendChild(row);
-    }
   }
 
   renderStorage() {

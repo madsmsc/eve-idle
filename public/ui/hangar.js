@@ -14,12 +14,9 @@ export class HangarNode extends Node {
     this.renderCombatLog();
     return this;
   }
-  // Switch the visible station service (sidebar navigation).
+  // Display one station service selected from the persistent menu rail.
   showService(name) {
     const hangar = document.getElementById('hangar');
-    hangar.querySelectorAll('.hangar-nav-btn').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.panel === name);
-    });
     hangar.querySelectorAll('.hangar-body section[data-panel]').forEach((section) => {
       section.classList.toggle('active', section.dataset.panel === name);
     });

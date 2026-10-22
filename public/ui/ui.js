@@ -24,7 +24,11 @@ export class UINode extends Node {
   refreshPanels() {
     this.hud.refreshPanels();
     if (this.app.hangarOpen) this.hangar.refresh();
-    if (this.app.characterOpen) this.character.refresh();
-    if (this.app.inventoryOpen || this.app.fittingOpen || this.app.lootOpen || this.app.storageOpen) this.inventory.refresh();
+    if (this.app.menuPageOpen) this.refreshMenuPage();
+  }
+
+  refreshMenuPage() {
+    this.inventory.refresh();
+    if (this.app.activeMenu === 'pilot') this.character.refresh();
   }
 }

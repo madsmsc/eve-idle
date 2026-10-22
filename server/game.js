@@ -56,9 +56,8 @@ const {
   ASTEROID_FIELDS,
   ASTEROIDS_PER_FIELD,
   ASTEROID_AMOUNT,
-  ENEMY_COUNT,
+  MINING_RATE_MULTIPLIER,
   PLANET_COUNT,
-  STATION_COUNT,
   MINING_RANGE,
   ENGAGE_RANGE,
   DOCK_RANGE,
@@ -130,7 +129,8 @@ function clone(s) {
 // fitted module, multiplied by trained skills. There is no level/upgrade system:
 // ships are what they are, and modules (or better ships) are how you get stronger.
 function shipMining(ship, mults, drone = 0) {
-  return (SHIPS[ship.type].mining + moduleBonus(ship, 'mining') + drone) * (mults ? mults.mining : 1);
+  return (SHIPS[ship.type].mining + moduleBonus(ship, 'mining') + drone) *
+    (mults ? mults.mining : 1) * MINING_RATE_MULTIPLIER;
 }
 function shipCombat(ship) {
   return SHIPS[ship.type].combat;
@@ -594,9 +594,9 @@ function mulberry32(seed) {
 // `color` is a persistent, unique tint for the system's background so each
 // system is memorable by its hue (the "green system", the "purple system").
 const SYSTEM_DEFS = [
-  { id: 'sys_0', name: 'Jita',   color: '#ff9f45', security: 1.0, stationCount: 2, beltCount: 12, enemyCount: 10 },
-  { id: 'sys_1', name: 'Placid', color: '#3fd6a0', security: 0.5, stationCount: 2, beltCount: 16, enemyCount: 6 },
-  { id: 'sys_2', name: 'Domain', color: '#a970ff', security: 0.1, stationCount: 1, beltCount: 8,  enemyCount: 20 },
+  { id: 'sys_0', name: 'Jita',   color: '#ff9f45', security: 1.0, stationCount: 2 },
+  { id: 'sys_1', name: 'Placid', color: '#3fd6a0', security: 0.5, stationCount: 2 },
+  { id: 'sys_2', name: 'Domain', color: '#a970ff', security: 0.1, stationCount: 1 },
 ];
 const GATE_LINKS = [
   [0, 1],
@@ -635,6 +635,7 @@ function generateWorld(seed, profile) {
   const planets = [];
   const moons = [];
   const stations = [];
+  const outposts = [];
   const belts = [];
   const asteroids = [];
   const enemies = [];
@@ -643,21 +644,36 @@ function generateWorld(seed, profile) {
   // The star anchors the system at the centre.
   const star = { id: 'star_1', x: cx, y: cy, size: 130 + rng() * 60, name: 'Sol' };
 
-  // First station just off the star (where ships spawn in this system).
+  // Reserve fixed gate locations and the home station before placing sites.
   const home = { id: 'stn_1', x: cx + 520, y: cy, name: 'Station A' };
   stations.push(home);
+  const placedSites = [
+    home,
+    gateSlot(0),
+    gateSlot(1),
+  ];
+  const placeSite = () => {
+    for (let tries = 0; tries < 500; tries++) {
+      const x = 600 + rng() * (size - 1200);
+      const y = 600 + rng() * (size - 1200);
+      if (placedSites.every((site) => dist(x, y, site.x, site.y) >= 1000)) {
+        const site = { x, y };
+        placedSites.push(site);
+        return site;
+      }
+    }
+    throw new Error(`Could not place a spaced site in ${profile.name}`);
+  };
 
-  // Any additional stations, kept far from the first.
+  // Additional stations are kept apart from all other navigational sites.
   for (let i = 1; i < profile.stationCount; i++) {
-    let x;
-    let y;
-    let tries = 0;
-    do {
-      x = 900 + rng() * (size - 1800);
-      y = 900 + rng() * (size - 1800);
-      tries++;
-    } while (dist(x, y, home.x, home.y) < 2600 && tries < 40);
-    stations.push({ id: `stn_${i + 1}`, x, y, name: `Station ${String.fromCharCode(66 + i)}` });
+    const site = placeSite();
+    stations.push({ id: `stn_${i + 1}`, ...site, name: `Station ${String.fromCharCode(66 + i)}` });
+  }
+
+  for (let i = 0; i < 2; i++) {
+    const site = placeSite();
+    outposts.push({ id: `outpost_${i + 1}`, ...site, name: `Outpost ${String.fromCharCode(65 + i)}` });
   }
 
   // Landmark planets, kept away from the star.
@@ -698,15 +714,8 @@ function generateWorld(seed, profile) {
   }
 
   // Asteroid belts: named clusters of mineable rocks.
-  for (let f = 0; f < profile.beltCount; f++) {
-    let fx;
-    let fy;
-    let tries = 0;
-    do {
-      fx = 500 + rng() * (size - 1000);
-      fy = 500 + rng() * (size - 1000);
-      tries++;
-    } while (dist(fx, fy, cx, cy) < 900 && tries < 25);
+  for (let f = 0; f < ASTEROID_FIELDS; f++) {
+    const { x: fx, y: fy } = placeSite();
     const fieldMineral = mineralKeys[Math.floor(rng() * mineralKeys.length)];
     belts.push({
       id: `belt_${f + 1}`,
@@ -744,12 +753,23 @@ function generateWorld(seed, profile) {
     }
   }
 
-  // Rats roam the system.
-  for (let i = 0; i < profile.enemyCount; i++) {
-    const x = 400 + rng() * (size - 800);
-    const y = 400 + rng() * (size - 800);
-    const { type, tier } = rollRat(profile.security, rng);
-    enemies.push({ id: `en_${i + 1}`, x, y, type, tier, alive: true, seed: Math.floor(rng() * 1e9) });
+  for (const outpost of outposts) {
+    const count = 3 + Math.floor(rng() * 3);
+    for (let i = 0; i < count; i++) {
+      const ang = rng() * Math.PI * 2;
+      const rad = 180 + rng() * 260;
+      const { type, tier } = rollRat(profile.security, rng);
+      enemies.push({
+        id: `en_${enemies.length + 1}`,
+        x: clamp(outpost.x + Math.cos(ang) * rad, 60, size - 60),
+        y: clamp(outpost.y + Math.sin(ang) * rad, 60, size - 60),
+        type,
+        tier,
+        outpostId: outpost.id,
+        alive: true,
+        seed: Math.floor(rng() * 1e9),
+      });
+    }
   }
 
   return {
@@ -763,6 +783,7 @@ function generateWorld(seed, profile) {
     planets,
     moons,
     stations,
+    outposts,
     belts,
     asteroids,
     enemies,
@@ -810,6 +831,77 @@ function generateSystems(seed) {
     });
   }
   return systems;
+}
+
+function migrateWorldLayout(state) {
+  if (!isValidState(state)) return state;
+  const systems = Object.values(state.systems);
+  const currentLayout = systems.every((sys) =>
+    sys.outposts && sys.outposts.length === 2 &&
+    sys.belts && sys.belts.length === 2 &&
+    sys.enemies.filter((enemy) => !enemy.missionTag).every((enemy) => enemy.outpostId)
+  );
+  if (currentLayout) return state;
+
+  const homeSystem = state.systems.sys_0;
+  const seed = homeSystem && Number.isInteger(homeSystem.seed)
+    ? (homeSystem.seed - hashStr('sys_0')) >>> 0
+    : 1;
+  const regenerated = generateSystems(seed);
+  for (const def of SYSTEM_DEFS) {
+    const oldSystem = state.systems[def.id];
+    const nextSystem = regenerated[def.id];
+    if (!oldSystem) continue;
+
+    const oldEnemies = new Map((oldSystem.enemies || []).map((enemy) => [enemy.id, enemy]));
+    for (const enemy of nextSystem.enemies) {
+      if (oldEnemies.has(enemy.id)) enemy.alive = oldEnemies.get(enemy.id).alive;
+    }
+    const outpost = nextSystem.outposts[0];
+    for (const [index, enemy] of (oldSystem.enemies || []).filter((item) => item.missionTag).entries()) {
+      const angle = (index / Math.max(1, oldSystem.enemies.length)) * Math.PI * 2;
+      enemy.x = clamp(outpost.x + Math.cos(angle) * 500, 60, nextSystem.width - 60);
+      enemy.y = clamp(outpost.y + Math.sin(angle) * 500, 60, nextSystem.height - 60);
+      enemy.outpostId = outpost.id;
+      nextSystem.enemies.push(enemy);
+    }
+    const combatShip = state.combat && state.ships.find((ship) => ship.id === state.combat.shipId);
+    if (combatShip && combatShip.systemId === def.id) {
+      const target = (oldSystem.enemies || []).find((enemy) => enemy.id === state.combat.enemyId);
+      if (target && !nextSystem.enemies.some((enemy) => enemy.id === target.id)) {
+        target.x = clamp(outpost.x + 500, 60, nextSystem.width - 60);
+        target.y = outpost.y;
+        target.outpostId = outpost.id;
+        nextSystem.enemies.push(target);
+      }
+    }
+
+    const depleted = {};
+    for (const asteroid of oldSystem.asteroids || []) {
+      const lost = Math.max(0, (asteroid.maxAmount || asteroid.amount) - asteroid.amount);
+      depleted[asteroid.mineral] = (depleted[asteroid.mineral] || 0) + lost;
+    }
+    for (const asteroid of nextSystem.asteroids) {
+      const remainingDepletion = depleted[asteroid.mineral] || 0;
+      const lost = Math.min(asteroid.amount, remainingDepletion);
+      asteroid.amount -= lost;
+      depleted[asteroid.mineral] -= lost;
+    }
+
+    Object.assign(oldSystem, nextSystem, {
+      security: oldSystem.security,
+      prices: oldSystem.prices || nextSystem.prices,
+    });
+  }
+  for (const ship of state.ships) {
+    if (!ship.dockedStationId) continue;
+    const station = state.systems[ship.systemId].stations.find((item) => item.id === ship.dockedStationId);
+    if (station) {
+      ship.x = station.x;
+      ship.y = station.y;
+    }
+  }
+  return state;
 }
 
 function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1, mode = 'demo') {
@@ -1403,6 +1495,7 @@ function findPoi(sys, id) {
   const inList = (list) => (list || []).find((p) => p.id === id) || null;
   return (
     inList(sys.stations) ||
+    inList(sys.outposts) ||
     inList(sys.belts) ||
     inList(sys.enemies) ||
     inList(sys.planets) ||
@@ -1642,13 +1735,14 @@ function missionStartNeeded(state) {
   return !m || (!m.active && (!m.completed || m.completed.length === 0));
 }
 
-// Place a mission's scripted targets near the home station (combat missions).
+// Place scripted targets near an outpost so hostile activity remains clustered.
 function spawnMissionEnemies(state, def) {
   if (!def || !def.spawn) return;
   const ship = state.ships.find((sh) => sh.id === state.activeShipId);
   const sys = state.systems && state.systems[def.systemId || (ship && ship.systemId)];
   if (!sys) return;
-  const home = sys.stations[0];
+  const outpost = (sys.outposts || [])[0];
+  const site = outpost || sys.stations[0];
   for (const sp of def.spawn) {
     const eDef = ENEMIES[sp.type];
     if (!eDef) continue;
@@ -1660,8 +1754,9 @@ function spawnMissionEnemies(state, def) {
         type: eDef.key,
         tier: sp.tier || 'standard',
         missionTag: sp.tag || sp.type,
-        x: clamp(home.x + Math.cos(ang) * rad, 60, sys.width - 60),
-        y: clamp(home.y + Math.sin(ang) * rad, 60, sys.height - 60),
+        x: clamp(site.x + Math.cos(ang) * rad, 60, sys.width - 60),
+        y: clamp(site.y + Math.sin(ang) * rad, 60, sys.height - 60),
+        outpostId: outpost && outpost.id,
         rangeDelay: sp.rangeDelay || 0,
         alive: true,
       });
@@ -1877,6 +1972,7 @@ function view(state) {
           planets: sys.planets,
           moons: sys.moons,
           stations: sys.stations,
+          outposts: sys.outposts || [],
           belts: sys.belts,
           asteroids: sys.asteroids,
           enemies: sys.enemies.map((enemy) => {
@@ -1941,6 +2037,7 @@ module.exports = {
   SHIP_BLUEPRINTS,
   createInitialState,
   isValidState,
+  migrateWorldLayout,
   evaluateMission,
   missionView,
   missionAction,
