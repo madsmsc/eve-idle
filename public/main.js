@@ -24,6 +24,10 @@ window.__eve = {
     if (app.autoPilot !== !!on) app.toggleAutoPilot();
   },
   getShip: () => ({ x: app.player.x, y: app.player.y }),
+  perf: {
+    reset: () => app.resetPerfMetrics(),
+    snapshot: () => app.getPerfSnapshot(),
+  },
   get state() {
     return app.state;
   },

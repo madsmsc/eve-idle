@@ -43,6 +43,14 @@ export class App {
     this.deathTimer = null;
     this.lastFrame = 0;
     this.lastSync = 0;
+    this.perfMetrics = typeof window !== 'undefined' && window.__EVE_PERF__ ? {
+      frameIntervals: [],
+      camera: [],
+      update: [],
+      render: [],
+      frame: [],
+      lastFrame: null,
+    } : null;
 
     this.player = new Player(this);
     this.camera = new Camera(this);
@@ -449,7 +457,9 @@ export class App {
     const map = document.getElementById('minimap');
     const button = document.getElementById('overview-toggle');
     map.hidden = !this.overviewVisible;
-    button.textContent = this.overviewVisible ? 'Hide map' : 'Show map';
+    button.textContent = this.overviewVisible ? 'X' : 'V';
+    button.setAttribute('aria-label', this.overviewVisible ? 'Hide minimap' : 'Show minimap');
+    button.title = this.overviewVisible ? 'Hide minimap' : 'Show minimap';
     button.setAttribute('aria-expanded', String(this.overviewVisible));
   }
 
@@ -528,16 +538,48 @@ export class App {
   frame(now) {
     const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
+    const perf = this.perfMetrics;
+    const frameStart = perf ? performance.now() : 0;
+    if (perf) {
+      if (perf.lastFrame !== null) perf.frameIntervals.push(now - perf.lastFrame);
+      perf.lastFrame = now;
+    }
     this.camera.update(dt);
+    const cameraEnd = perf ? performance.now() : 0;
     if (this.state) {
       this.player.maybeAutoRecall();
-      this.root.update(dt).render(now);
+      this.root.update(dt);
+      const updateEnd = perf ? performance.now() : 0;
+      this.root.render(now);
+      if (perf) {
+        const renderEnd = performance.now();
+        perf.camera.push(cameraEnd - frameStart);
+        perf.update.push(updateEnd - cameraEnd);
+        perf.render.push(renderEnd - updateEnd);
+      }
       this.updateAutoPilot(now);
       if (now - this.lastSync > SYNC_MS && !this.warpPending && !this.undocking) {
         this.lastSync = now;
         this.sync();
       }
     }
+    if (perf) perf.frame.push(performance.now() - frameStart);
     requestAnimationFrame(this.frame);
+  }
+
+  resetPerfMetrics() {
+    if (!this.perfMetrics) return;
+    this.perfMetrics.frameIntervals.length = 0;
+    this.perfMetrics.camera.length = 0;
+    this.perfMetrics.update.length = 0;
+    this.perfMetrics.render.length = 0;
+    this.perfMetrics.frame.length = 0;
+    this.perfMetrics.lastFrame = null;
+  }
+
+  getPerfSnapshot() {
+    if (!this.perfMetrics) return null;
+    const { lastFrame, ...samples } = this.perfMetrics;
+    return Object.fromEntries(Object.entries(samples).map(([key, values]) => [key, values.slice()]));
   }
 }

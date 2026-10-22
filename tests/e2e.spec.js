@@ -210,11 +210,18 @@ test('flight actions stay visible beside ship status and the left menu persists'
   await expect(page.getByTestId('menu-fleet')).toBeDisabled();
 
   await expect(page.getByTestId('minimap')).toBeVisible();
+  const minimapBounds = await page.getByTestId('minimap').boundingBox();
+  const toggleBounds = await page.getByTestId('overview-toggle').boundingBox();
+  expect(toggleBounds.x + toggleBounds.width).toBeCloseTo(minimapBounds.x + minimapBounds.width - 4, 0);
+  expect(toggleBounds.y).toBeCloseTo(minimapBounds.y + 4, 0);
+  await expect(page.getByTestId('overview-toggle')).toHaveText('X');
   await page.getByTestId('overview-toggle').click();
   await expect(page.getByTestId('minimap')).toBeHidden();
-  await expect(page.getByTestId('overview-toggle')).toContainText('Show map');
+  await expect(page.getByTestId('overview-toggle')).toHaveText('V');
+  await expect(page.getByTestId('overview-toggle')).toHaveAttribute('aria-label', 'Show minimap');
   await page.keyboard.press('m');
   await expect(page.getByTestId('minimap')).toBeVisible();
+  await expect(page.getByTestId('overview-toggle')).toHaveText('X');
 });
 
 test('cargo, fitting, storage, and pilot open as separate menu pages', async ({ page }) => {

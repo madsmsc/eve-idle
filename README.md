@@ -55,6 +55,26 @@ npm install
 npm start
 ```
 
+## Performance benchmark
+
+Run `npm run perf` to benchmark the browser renderer and server using an isolated,
+temporary save. The report compares scene update/render timings with the
+minimap visible and hidden, and measures game view/tick plus HTTP state/tick
+latency. It prints optimization leads when measurements cross the report
+thresholds; use the numbers to decide what to profile next rather than treating
+the suggestions as automatic fixes.
+
+```bash
+npm run perf
+npm run perf -- --duration 12
+npm run perf -- --json
+```
+
+The duration is 6 seconds per frontend scenario by default and can be set from
+3 to 60 seconds. Close other CPU-intensive applications for more comparable
+runs. Results depend on the machine and browser and should be compared across
+repeated runs on the same setup.
+
 Open http://localhost:3000. Set `PORT` and `DATA_FILE` environment variables to
 override the port and save location.
 
@@ -133,7 +153,4 @@ tests/        Unit, API, client, and Playwright E2E tests
 
 ### questions
 
-how do i test performance, visualize it, and identify opportunities for optimization? i assume the best approach is to try to find the most expensive things being run often.
-
 can you suggest a way to break down the javascript classes even further, making as much as possible extend node, and putting its logic in update and rendering in render methods, so they don't need to be called explicitly. also dont just have a flat scene graph, but structure the hierarchy of parent/child nodes so it is reasonably wide and deep. ideally there should be as few calls between nodes as possible - i know that is naiive to think we can get there, but it's just to explain the goal of really leaning into the scene graph concept and putting as much as possible into private methods called by update/render methods.
-

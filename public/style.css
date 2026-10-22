@@ -71,7 +71,7 @@ html, body {
 .chip .dot { width: 9px; height: 9px; border-radius: 50%; }
 .chip .amt { font-variant-numeric: tabular-nums; color: var(--text); }
 
-.hud-tr { position: absolute; top: 14px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.hud-tr { position: absolute; top: 14px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; }
 #minimap {
   background: rgba(6, 10, 20, 0.6);
   border: 1px solid var(--border);
@@ -81,7 +81,19 @@ html, body {
   pointer-events: auto;
 }
 #minimap[hidden] { display: none; }
-.overview-toggle { padding: 5px 9px; font-size: 0.72rem; }
+.overview-toggle {
+  position: absolute;
+  z-index: 1;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  line-height: 1;
+  text-align: center;
+}
 
 .hud-bl {
   position: absolute;
