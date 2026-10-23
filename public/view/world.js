@@ -41,6 +41,7 @@ export class BeltNode extends Node {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
     const zoom = camera.zoom;
+    const asteroids = this.app.state.world.asteroids;
     for (const b of this.app.state.world.belts) {
       const p = camera.worldToScreen(b.x, b.y);
       const r = 300 * zoom;
@@ -51,10 +52,27 @@ export class BeltNode extends Node {
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
+      let remaining = 0;
+      let total = 0;
+      for (const a of asteroids) {
+        if (a.beltId !== b.id) continue;
+        remaining += a.amount;
+        total += a.maxAmount || a.amount;
+      }
+      const frac = total > 0 ? remaining / total : 0;
+      if (frac > 0) {
+        ctx.strokeStyle = frac > 0.5 ? 'rgba(100, 220, 140, 0.5)' : frac > 0.2 ? 'rgba(220, 200, 80, 0.5)' : 'rgba(220, 100, 80, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
       ctx.fillStyle = 'rgba(150, 175, 220, 0.7)';
       ctx.font = `${Math.max(9, 11 * zoom)}px sans-serif`;
       ctx.textAlign = 'center';
-      ctx.fillText(b.name, p.x, p.y - r - 6);
+      const pct = Math.round(frac * 100);
+      ctx.fillText(`${b.name} ${pct}%`, p.x, p.y - r - 6);
     }
     return super.render(now);
   }

@@ -176,8 +176,38 @@ export class App {
       }
     }
     this.world.effects.combat.onServerState(prevShipPos);
+    this.#logAutoEvents(prevActive, prevSystem);
     this.ui.refreshPanels();
     this.syncDockedView();
+  }
+
+  #logAutoEvents(prevActiveId, prevSystemId) {
+    if (!this.autoPilot || !this.state || !this._prevAutoState) return;
+    const prev = this._prevAutoState;
+    const cur = this.state;
+    const events = [];
+    const prevCargo = Object.values(prev.minerals || {}).reduce((s, v) => s + v, 0);
+    const curCargo = Object.values(cur.minerals || {}).reduce((s, v) => s + v, 0);
+    if (curCargo > prevCargo) events.push(`mined ${Math.round(curCargo - prevCargo)} ore`);
+    if (cur.isk > prev.isk) events.push(`earned ${Math.round(cur.isk - prev.isk)} cr`);
+    if (cur.combat === null && prev.combat !== null) {
+      events.push(prev.combat.won ? 'rat killed' : 'combat lost');
+    }
+    const prevOreBelts = new Set(Object.keys(prev.world.asteroids.reduce((m, a) => { if (a.amount > 0) m[a.beltId] = 1; return m; }, {})));
+    const curOreBelts = new Set(Object.keys(cur.world.asteroids.reduce((m, a) => { if (a.amount > 0) m[a.beltId] = 1; return m; }, {})));
+    for (const bid of prevOreBelts) {
+      if (!curOreBelts.has(bid)) {
+        const belt = cur.world.belts.find((b) => b.id === bid);
+        events.push(`belt ${belt ? belt.name : bid} completed`);
+      }
+    }
+    if (prevSystemId && prevSystemId !== cur.system.id) events.push(`warp to ${cur.system.name}`);
+    for (const msg of events) {
+      this.autoLog = this.autoLog || [];
+      this.autoLog.unshift({ t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), msg });
+      if (this.autoLog.length > 20) this.autoLog.pop();
+    }
+    this._prevAutoState = { minerals: { ...cur.minerals }, isk: cur.isk, combat: cur.combat, world: { asteroids: cur.world.asteroids, belts: cur.world.belts }, system: cur.system };
   }
 
   // Docked stations overlay services on a ship-free capture of the world.
@@ -305,12 +335,53 @@ export class App {
   // ---- autopilot ----
 
   toggleAutoPilot() {
-    this.autoPilot = !this.autoPilot;
+    const modes = [null, 'mine', 'mine_hunt', 'hunt'];
+    const labels = { null: '▶ Auto', mine: '⛏ Mine', mine_hunt: '⛏⚔ Mine+Hunt', hunt: '⚔ Hunt' };
+    const cur = this.autoPilotMode || null;
+    const idx = modes.indexOf(cur);
+    const next = modes[(idx + 1) % modes.length];
+    this.autoPilot = next !== null;
+    this.autoPilotMode = next;
     const btn = document.getElementById('auto-pilot');
-    btn.textContent = this.autoPilot ? '■ Stop' : '▶ Auto';
+    btn.textContent = labels[next];
     btn.classList.toggle('on', this.autoPilot);
-    this.toast(this.autoPilot ? 'Auto-pilot ON — belt → mine → sell → repeat' : 'Auto-pilot OFF');
-    if (this.autoPilot) this.lastAutoTick = 0;
+    if (this.autoPilot) {
+      this.lastAutoTick = 0;
+      this.autoLog = [];
+      this._prevAutoState = { minerals: { ...this.state.minerals }, isk: this.state.isk, combat: this.state.combat, world: { asteroids: this.state.world.asteroids, belts: this.state.world.belts }, system: this.state.system };
+      const w = this.state.world;
+      const prices = w.prices || {};
+      const oreBelts = new Set(w.asteroids.filter((a) => a.amount > 0).map((a) => a.beltId));
+      const beltCount = oreBelts.size;
+      let totalOre = 0;
+      let totalValue = 0;
+      for (const a of w.asteroids) {
+        if (a.amount <= 0) continue;
+        totalOre += a.amount;
+        totalValue += a.amount * (prices[a.mineral] || 0);
+      }
+      const ship = this.state.activeShip;
+      const playerHP = ship ? (ship.shield + ship.hull) : 0;
+      const safeRats = w.enemies.filter((e) => e.alive && (e.shield + e.hull) < playerHP * 0.5).length;
+      const parts = [];
+      if (next !== 'hunt') parts.push(`${beltCount} belt(s) [${Math.round(totalOre)} ore ~${Math.round(totalValue)} cr]`);
+      if (next !== 'mine') parts.push(`${safeRats} safe rat(s)`);
+      this.toast(`Auto [${next.replace('_', '+')}]: ${parts.join(', ') || 'nothing to do'}`);
+    } else {
+      this.toast('Auto-pilot OFF');
+    }
+    document.getElementById('auto-log').hidden = !this.autoPilot;
+  }
+
+  toggleAutoLog() {
+    const panel = document.getElementById('auto-log-panel');
+    const list = document.getElementById('auto-log-list');
+    if (!panel.hidden) {
+      panel.hidden = true;
+      return;
+    }
+    list.innerHTML = (this.autoLog || []).map((e) => `<li><span class="log-time">${e.t}</span> ${e.msg}</li>`).join('') || '<li>No activity yet.</li>';
+    panel.hidden = false;
   }
 
   // ---- loop ----

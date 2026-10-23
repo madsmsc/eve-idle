@@ -8,10 +8,23 @@ export class OverlaysNode extends Node {
   showOfflineReport(report) {
     const el = document.getElementById('offline-report');
     const summary = document.getElementById('offline-report-summary');
+    const detail = document.getElementById('offline-report-detail');
     const hours = Math.floor(report.elapsedSeconds / 3600);
     const minutes = Math.floor((report.elapsedSeconds % 3600) / 60);
     const duration = hours ? `${hours}h ${minutes}m` : `${minutes}m`;
-    summary.textContent = `${duration}${report.capped ? ' (offline gains capped)' : ''}: mined ${fmt(report.mined)} ore, earned ${fmt(report.isk)} ISK, won ${fmt(report.kills)} battles, and gained ${fmt(report.skillPoints)} SP.`;
+    summary.textContent = `Away for ${duration}${report.capped ? ' (gains capped)' : ''}`;
+    const lines = [];
+    if (report.mined > 0) lines.push(`Ore mined: ${fmt(report.mined)}`);
+    if (report.oreByType) {
+      const parts = Object.entries(report.oreByType).map(([k, v]) => `${k} ${fmt(v)}`);
+      if (parts.length) lines.push(`  ${parts.join(', ')}`);
+    }
+    if (report.isk > 0) lines.push(`Credits earned: ${fmt(report.isk)} cr`);
+    if (report.kills > 0) lines.push(`Rats killed: ${fmt(report.kills)}`);
+    if (report.beltsCompleted > 0) lines.push(`Belts completed: ${fmt(report.beltsCompleted)}`);
+    if (report.distance > 0) lines.push(`Distance traveled: ${fmt(report.distance)} u`);
+    if (report.skillPoints > 0) lines.push(`Skill points: ${fmt(report.skillPoints)} SP`);
+    detail.innerHTML = lines.length ? `<ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>` : '<p>Nothing happened while you were away.</p>';
     el.hidden = false;
     document.getElementById('offline-report-close').addEventListener('click', () => { el.hidden = true; }, { once: true });
   }

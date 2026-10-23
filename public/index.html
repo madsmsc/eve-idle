@@ -60,6 +60,7 @@
         <button id="engage" class="hud-btn flight-control" data-shortcut="E" data-testid="engage-btn" disabled>Engage</button>
         <button id="gate-jump" class="hud-btn gate-btn flight-control" data-testid="gate-jump" hidden>⇄ Jump</button>
         <button id="auto-pilot" class="hud-btn auto-btn" data-shortcut="A" data-testid="auto-pilot">▶ Auto</button>
+        <button id="auto-log" class="hud-btn auto-btn" data-testid="auto-log" title="Auto-pilot activity log" hidden>☰ Log</button>
         <button id="navigate-belt" class="hud-btn navigate-btn" data-shortcut="B" data-testid="navigate-belt" title="Fly to the nearest asteroid belt">⌖ Belt</button>
         <button id="navigate-station" class="hud-btn navigate-btn" data-shortcut="S" data-testid="navigate-station" title="Fly to the nearest station">⌖ Station</button>
         <button id="navigate-rat" class="hud-btn navigate-btn" data-shortcut="R" data-testid="navigate-rat" title="Fly to the nearest hostile">⌖ Rat</button>
@@ -67,6 +68,10 @@
     </div>
     <div id="combat-banner" class="combat-banner" data-testid="combat-banner" hidden></div>
     <div id="combat-hud" class="combat-hud" data-testid="combat-hud" hidden></div>
+    <div id="auto-log-panel" class="auto-log-panel" data-testid="auto-log-panel" hidden>
+      <h3>Auto-pilot log</h3>
+      <ul id="auto-log-list"></ul>
+    </div>
   </div>
 
   <nav id="left-menu" class="left-menu" data-testid="left-menu" aria-label="Game menus">
@@ -127,6 +132,7 @@
     <div class="offline-report-card">
       <h2>While you were away</h2>
       <p id="offline-report-summary"></p>
+      <div id="offline-report-detail"></div>
       <button id="offline-report-close" class="hud-btn" data-testid="offline-report-close">Continue</button>
     </div>
   </div>

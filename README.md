@@ -154,3 +154,5 @@ more interesting geometric shapes for the in-space elements.
 ### questions
 
 how much else could reasonbly be moved from the front-end to the back-end? i would prefer if the front-end was as thin as possible. all values and calculations should be fetched from the server.
+
+what are the 5 biggest files (most lines)? i would like to make sure files are mostly classes and split down reasonbly, so they aren't too big and have too much responsibility. also make sure methods are generally small and well-named. many smaller well-named methods is better then few complex ones. please try to follow "clean code" principles.

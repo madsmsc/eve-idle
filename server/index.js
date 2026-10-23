@@ -360,13 +360,22 @@ function createApp({ dataFile } = {}) {
             const before = saved.stats || {};
             const seconds = Math.min(actualSeconds, cfg.MAX_OFFLINE_SECONDS);
             const caughtUp = game.tick(saved, Date.now(), null);
+            const after = caughtUp.stats || {};
+            const oreByType = {};
+            for (const [k, v] of Object.entries(after.oreMinedByType || {})) {
+              const delta = v - ((before.oreMinedByType || {})[k] || 0);
+              if (delta > 0) oreByType[k] = delta;
+            }
             offlineReport = {
               elapsedSeconds: seconds,
               capped: actualSeconds > cfg.MAX_OFFLINE_SECONDS,
-              mined: Math.max(0, (caughtUp.stats.totalMineralsMined || 0) - (before.totalMineralsMined || 0)),
-              isk: Math.max(0, (caughtUp.stats.totalIskEarned || 0) - (before.totalIskEarned || 0)),
-              kills: Math.max(0, (caughtUp.stats.combatsWon || 0) - (before.combatsWon || 0)),
-              skillPoints: Math.max(0, (caughtUp.stats.totalSpEarned || 0) - (before.totalSpEarned || 0)),
+              mined: Math.max(0, (after.totalMineralsMined || 0) - (before.totalMineralsMined || 0)),
+              isk: Math.max(0, (after.totalIskEarned || 0) - (before.totalIskEarned || 0)),
+              kills: Math.max(0, (after.combatsWon || 0) - (before.combatsWon || 0)),
+              skillPoints: Math.max(0, (after.totalSpEarned || 0) - (before.totalSpEarned || 0)),
+              distance: Math.max(0, (after.distanceTraveled || 0) - (before.distanceTraveled || 0)),
+              beltsCompleted: Math.max(0, (after.beltsCompleted || 0) - (before.beltsCompleted || 0)),
+              oreByType,
             };
             saves[payload.mode] = caughtUp;
           }

@@ -249,12 +249,13 @@ export class Player extends Node {
 
   nearestAsteroid() {
     const state = this.app.state;
+    const range = state.miningRange || this.app.constants.miningRange;
     let best = null;
     let bd = Infinity;
     for (const a of state.world.asteroids) {
       if (a.amount <= 0) continue;
       const d = dist(a.x, a.y, this.x, this.y);
-      if (d <= this.app.constants.miningRange && d < bd) {
+      if (d <= range && d < bd) {
         bd = d;
         best = a;
       }
@@ -338,6 +339,62 @@ export class Player extends Node {
     return best;
   }
 
+  // Nearest alive enemy whose total HP is less than 50% of the player's total HP.
+  nearestSafeRat() {
+    const state = this.app.state;
+    const ship = state.activeShip;
+    if (!ship) return null;
+    const playerHP = (ship.shield || 0) + (ship.hull || 0);
+    if (playerHP <= 0) return null;
+    const threshold = playerHP * 0.5;
+    let best = null;
+    let bd = Infinity;
+    for (const e of state.world.enemies) {
+      if (!e.alive) continue;
+      const eHP = (e.shield || 0) + (e.hull || 0);
+      if (eHP >= threshold) continue;
+      const d = dist(e.x, e.y, this.x, this.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  // True when no belt has ore AND no safe rat remains.
+  systemDepleted() {
+    const w = this.app.state.world;
+    const hasOre = w.asteroids.some((a) => a.amount > 0);
+    if (hasOre) return false;
+    return !this.nearestSafeRat();
+  }
+
+  // Best belt to mine: highest (total ore value / distance) score.
+  bestBeltTarget() {
+    const w = this.app.state.world;
+    const prices = w.prices;
+    const beltValue = new Map();
+    for (const a of w.asteroids) {
+      if (a.amount <= 0) continue;
+      const v = a.amount * (prices[a.mineral] || 0);
+      beltValue.set(a.beltId, (beltValue.get(a.beltId) || 0) + v);
+    }
+    let best = null;
+    let bestScore = 0;
+    for (const b of w.belts) {
+      const val = beltValue.get(b.id);
+      if (!val || val <= 0) continue;
+      const d = Math.max(1, dist(b.x, b.y, this.x, this.y));
+      const score = val / d;
+      if (score > bestScore) {
+        bestScore = score;
+        best = b;
+      }
+    }
+    return best;
+  }
+
   // Name the POI nearest to a world point (used to label travel destinations).
   poiLabel(x, y) {
     const w = this.app.state.world;
@@ -376,28 +433,59 @@ class AutoPilotNode extends Node {
     if (!app.autoPilot || !state || !state.activeShip || now - app.lastAutoTick < 800) return;
     app.lastAutoTick = now;
     if (state.combat) return;
+    const mode = app.autoPilotMode || 'mine_hunt';
+    const canMine = mode === 'mine' || mode === 'mine_hunt';
+    const canHunt = mode === 'hunt' || mode === 'mine_hunt';
     if (state.docked) {
       if (state.cargoUsed > 0) {
         app.doAction('sell-all', {});
       } else {
-        const belt = app.player.nearestPoiOf('belt');
-        if (belt) {
+        let target = null;
+        if (canMine) target = app.player.bestBeltTarget();
+        if (!target && canHunt) target = app.player.nearestSafeRat();
+        if (target) {
           app.launch({ keepAutoPilot: true }).then((launched) => {
             if (launched && app.autoPilot) {
-              const point = app.player.beltApproachPoint(belt);
+              const point = target.beltId !== undefined ? app.player.beltApproachPoint(target) : target;
               app.player.setDestination(point.x, point.y);
             }
           });
+        } else {
+          app.toggleAutoPilot();
+          app.toast('Nothing to do — autopilot stopped');
         }
       }
       return;
     }
     if (state.cargoFull) return;
     if (!app.player.nearestAsteroid()) {
-      const belt = app.player.nearestPoiOf('belt');
-      if (belt) {
-        const point = app.player.beltApproachPoint(belt);
-        app.player.setDestination(point.x, point.y);
+      if (canHunt) {
+        const rat = app.player.nearestSafeRat();
+        if (rat) {
+          const d = dist(rat.x, rat.y, app.player.x, app.player.y);
+          if (d <= app.constants.engageRange) {
+            app.targetEnemyId = rat.id;
+            app.doEngage();
+          } else {
+            app.targetEnemyId = rat.id;
+            app.player.setDestination(rat.x, rat.y);
+          }
+          return;
+        }
+      }
+      if (canMine) {
+        const belt = app.player.bestBeltTarget();
+        if (belt) {
+          const point = app.player.beltApproachPoint(belt);
+          app.player.setDestination(point.x, point.y);
+          return;
+        }
+      }
+      if (app.player.systemDepleted()) {
+        const st = app.player.nearestPoiOf('station');
+        if (st) {
+          app.player.setDestination(st.x, st.y, st.id);
+        }
       }
     }
   }

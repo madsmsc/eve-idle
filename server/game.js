@@ -132,6 +132,9 @@ function shipMining(ship, mults, drone = 0) {
   return (SHIPS[ship.type].mining + moduleBonus(ship, 'mining') + drone) *
     (mults ? mults.mining : 1) * MINING_RATE_MULTIPLIER;
 }
+function miningRange(ship) {
+  return MINING_RANGE + moduleBonus(ship, 'mining');
+}
 function shipCombat(ship) {
   return SHIPS[ship.type].combat;
 }
@@ -951,6 +954,9 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
       shipsCrafted: 0,
       missionsCompleted: 0,
       agentMissionsCompleted: 0,
+      distanceTraveled: 0,
+      beltsCompleted: 0,
+      oreMinedByType: {},
     },
   };
   if (mode === 'story') startMission(st, 'm1');
@@ -978,12 +984,13 @@ function activeSystem(state) {
 function nearestAsteroidInRange(state, ship) {
   const sys = activeSystem(state);
   if (!sys) return null;
+  const range = miningRange(ship);
   let best = null;
   let bd = Infinity;
   for (const a of sys.asteroids) {
     if (a.amount <= 0) continue;
     const d = dist(a.x, a.y, ship.x, ship.y);
-    if (d <= MINING_RANGE && d < bd) {
+    if (d <= range && d < bd) {
       bd = d;
       best = a;
     }
@@ -999,14 +1006,21 @@ function mineActive(s, active, seconds) {
   const room = shipCargo(active, mults) - cargoUsed(s);
   if (room <= 0) return;
   const budget = Math.min(shipMining(active, mults, droneBonus(s, 'mining')) * seconds, room);
+  const range = miningRange(active);
   const inRange = [];
   for (const a of sys.asteroids) {
     if (a.amount <= 0) continue;
     const d = dist(a.x, a.y, active.x, active.y);
-    if (d <= MINING_RANGE) inRange.push({ a, d });
+    if (d <= range) inRange.push({ a, d });
   }
   if (!inRange.length) return;
-  inRange.sort((p, q) => p.d - q.d);
+  const prices = sys.prices || {};
+  inRange.sort((p, q) => {
+    const pv = prices[p.a.mineral] || 0;
+    const qv = prices[q.a.mineral] || 0;
+    if (qv !== pv) return qv - pv;
+    return p.d - q.d;
+  });
   let left = budget;
   for (const { a } of inRange) {
     if (left <= 0) break;
@@ -1015,6 +1029,8 @@ function mineActive(s, active, seconds) {
     left -= take;
     active.cargo[a.mineral] += take;
     s.stats.totalMineralsMined += take;
+    s.stats.oreMinedByType = s.stats.oreMinedByType || {};
+    s.stats.oreMinedByType[a.mineral] = (s.stats.oreMinedByType[a.mineral] || 0) + take;
   }
 }
 
@@ -1043,8 +1059,10 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
       nx = clamp(active.x + dx * scale, 0, sys.width);
       ny = clamp(active.y + dy * scale, 0, sys.height);
     }
+    const movedDist = Math.hypot(nx - active.x, ny - active.y);
     active.x = nx;
     active.y = ny;
+    s.stats.distanceTraveled = (s.stats.distanceTraveled || 0) + movedDist;
     const targetStation = sys.stations.find((st) => st.id === pos.dockTargetId);
     active.dockTargetId = targetStation ? targetStation.id : null;
     active.dockedStationId = targetStation && dist(active.x, active.y, targetStation.x, targetStation.y) <= DOCK_RANGE
@@ -1054,7 +1072,14 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
 
   if (active && !shipInCombat(s, active.id) && seconds > 0) {
     const beforeMined = s.stats.totalMineralsMined || 0;
+    const beforeOreBelts = sys ? new Set(sys.asteroids.filter((a) => a.amount > 0).map((a) => a.beltId)) : new Set();
     mineActive(s, active, seconds);
+    if (sys) {
+      const afterOreBelts = new Set(sys.asteroids.filter((a) => a.amount > 0).map((a) => a.beltId));
+      for (const bid of beforeOreBelts) {
+        if (!afterOreBelts.has(bid)) s.stats.beltsCompleted = (s.stats.beltsCompleted || 0) + 1;
+      }
+    }
     advanceAgentMission(s, 'mine', (s.stats.totalMineralsMined || 0) - beforeMined);
     if (s.mode === 'story' && s.mission && s.mission.active) {
       const mdef = MISSIONS[s.mission.active];
@@ -2009,6 +2034,7 @@ function view(state) {
   v.cargoCapacity = cargoCapacity(state);
   v.cargoFull = v.cargoCapacity > 0 && v.cargoUsed >= v.cargoCapacity;
   v.miningPaused = active ? shipInCombat(state, active.id) : true;
+  v.miningRange = active ? miningRange(active) : MINING_RANGE;
   v.miningRate = 0;
   v.miningTargetId = null;
   if (active && !v.miningPaused) {

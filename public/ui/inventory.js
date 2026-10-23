@@ -115,6 +115,21 @@ export class InventoryNode extends Node {
         el.appendChild(row);
       }
     }
+    const drones = state.drones || { mining: [], combat: [] };
+    for (const droneType of Object.keys(catalog.drones || {})) {
+      const def = catalog.drones[droneType];
+      const owned = drones[droneType] || [];
+      if (!owned.length) continue;
+      for (let i = 0; i < owned.length; i++) {
+        const tier = owned[i];
+        const tierName = def.tiers[tier - 1] ? `Tier ${ROMAN[tier] || tier}` : `Tier ${tier}`;
+        const bonus = def.tiers[tier - 1] ? def.tiers[tier - 1].bonus : 0;
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `<span class="label">${def.name} <span class="sub">${tierName} (+${bonus})</span></span><span class="actions"><span class="sub">drone</span></span>`;
+        el.appendChild(row);
+      }
+    }
   }
 
   // Ore stacks first (one square per mineral), then looted modules, then

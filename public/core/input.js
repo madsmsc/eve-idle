@@ -115,6 +115,7 @@ export class Input {
     document.getElementById('navigate-rat').addEventListener('click', () => app.navigateToNearest('rat'));
     document.getElementById('gate-jump').addEventListener('click', () => app.doGateJump());
     document.getElementById('auto-pilot').addEventListener('click', () => app.toggleAutoPilot());
+    document.getElementById('auto-log').addEventListener('click', () => app.toggleAutoLog());
     document.getElementById('mission-continue').addEventListener('click', async () => {
       await app.doAction('mission', { action: 'continue' });
       document.getElementById('mission-dialogue').hidden = true;
