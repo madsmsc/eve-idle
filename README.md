@@ -149,8 +149,8 @@ tests/        Unit, API, client, and Playwright E2E tests
 
 ### actions (parallel)
 
-abc
+more interesting geometric shapes for the in-space elements.
 
 ### questions
 
-edf
+how much else could reasonbly be moved from the front-end to the back-end? i would prefer if the front-end was as thin as possible. all values and calculations should be fetched from the server.
