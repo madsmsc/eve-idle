@@ -7,11 +7,60 @@ import { Node } from '../core/node.js';
 import { pseudo } from '../core/util.js';
 
 export class CombatNode extends Node {
+  constructor(app) {
+    super(app);
+    this.fx = { enemyId: null, enemyX: 0, enemyY: 0, battleStartPerf: 0, explosions: [] };
+  }
+
+  onServerState(previousShipPosition) {
+    const state = this.app.state;
+    const combat = state.combat;
+    if (combat) {
+      if (this.fx.enemyId !== combat.enemyId) {
+        this.fx.enemyId = combat.enemyId;
+        this.fx.battleStartPerf = performance.now();
+      }
+      const enemy = state.world.enemies.find((item) => item.id === combat.enemyId);
+      if (enemy) {
+        this.fx.enemyX = enemy.x;
+        this.fx.enemyY = enemy.y;
+      }
+    } else if (this.fx.enemyId !== null) {
+      const result = state.combatLog[0];
+      if (result) {
+        if (result.won) {
+          this.fx.explosions.push({
+            x: this.fx.enemyX,
+            y: this.fx.enemyY,
+            at: performance.now(),
+            kind: 'enemy',
+          });
+        } else if (result.shipLost) {
+          this.fx.explosions.push({
+            x: previousShipPosition.x,
+            y: previousShipPosition.y,
+            at: performance.now(),
+            kind: 'ship',
+          });
+          this.app.camera.addShake(2);
+          this.app.overlays.showDeath(result);
+        }
+      }
+      this.fx.enemyId = null;
+      this.fx.battleStartPerf = 0;
+    }
+  }
+
+  update(dt) {
+    const now = performance.now();
+    this.fx.explosions = this.fx.explosions.filter((explosion) => now - explosion.at < 1100);
+    return super.update(dt);
+  }
+
   render(now) {
     const ctx = this.app.ctx;
     const state = this.app.state;
-    const fx = this.app.combatFx;
-    fx.explosions = fx.explosions.filter((ex) => now - ex.at < 1100);
+    const fx = this.fx;
     for (const ex of fx.explosions) this.drawExplosion(ex, now);
 
     const c = state.combat;

@@ -10,10 +10,11 @@
 // children added via `add`) and is stable even though `app.state` is swapped
 // out on every server sync. Subclasses override update/render, do their own
 // work, then call super to recurse into their children (drawn on top).
-export class  Node {
+export class Node {
   constructor(app) {
     this.app = app;
     this.children = [];
+    this.visible = true;
   }
 
   add(child) {
@@ -28,7 +29,10 @@ export class  Node {
   }
 
   render(now) {
-    for (const child of this.children) child.render(now);
+    if (!this.visible) return this;
+    for (const child of this.children) {
+      if (child.visible) child.render(now);
+    }
     return this;
   }
 }

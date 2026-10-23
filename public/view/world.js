@@ -5,6 +5,10 @@
 // order = draw order) and recurses into its children.
 import { Node } from '../core/node.js';
 import { pseudo, dist, mixRgb, rgbStr } from '../core/util.js';
+import { Player } from '../core/player.js';
+import { ShipNode } from './ship.js';
+import { CombatNode } from './combat.js';
+import { EffectsNode } from './effects.js';
 
 const STAR_TILE = 1500;
 const STAR_COUNT = 170;
@@ -397,26 +401,47 @@ export class EnemyNode extends Node {
   }
 }
 
-export class WorldNode extends Node {
+class BackgroundNode extends Node {
+  render(now) {
+    const ctx = this.app.ctx;
+    const base = mixRgb({ r: 4, g: 6, b: 12 }, this.app.systemColor, 0.12);
+    ctx.fillStyle = rgbStr(base);
+    ctx.fillRect(0, 0, this.app.canvas.width, this.app.canvas.height);
+    for (const blob of [
+      { fx: 0.22, fy: 0.28, r: 0.55 },
+      { fx: 0.8, fy: 0.5, r: 0.65 },
+      { fx: 0.5, fy: 0.85, r: 0.5 },
+    ]) {
+      const cx = blob.fx * this.app.canvas.width;
+      const cy = blob.fy * this.app.canvas.height;
+      const radius = blob.r * Math.max(this.app.canvas.width, this.app.canvas.height);
+      const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+      gradient.addColorStop(0, rgbStr(this.app.systemColor, 0.11));
+      gradient.addColorStop(1, rgbStr(this.app.systemColor, 0));
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, this.app.canvas.width, this.app.canvas.height);
+    }
+    return super.render(now);
+  }
+}
+
+class StarfieldNode extends Node {
   constructor(app) {
     super(app);
     this.stars = [];
+    this.generate();
   }
 
-  // The starfield tiles across the view, parallax-scrolled behind the world.
-  genStars() {
-    this.stars = [];
-    for (let i = 0; i < STAR_COUNT; i++) {
-      this.stars.push({
-        x: Math.random() * STAR_TILE,
-        y: Math.random() * STAR_TILE,
-        size: 0.5 + Math.random() * 1.6,
-        bright: 0.25 + Math.random() * 0.6,
-      });
-    }
+  generate() {
+    this.stars = Array.from({ length: STAR_COUNT }, () => ({
+      x: Math.random() * STAR_TILE,
+      y: Math.random() * STAR_TILE,
+      size: 0.5 + Math.random() * 1.6,
+      bright: 0.25 + Math.random() * 0.6,
+    }));
   }
 
-  drawStars() {
+  render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
     const player = this.app.player;
@@ -425,47 +450,28 @@ export class WorldNode extends Node {
     const offY = (((player.y * parallax) % STAR_TILE + STAR_TILE) % STAR_TILE) - camera.shakeY;
     const cols = Math.ceil(this.app.canvas.width / STAR_TILE) + 1;
     const rows = Math.ceil(this.app.canvas.height / STAR_TILE) + 1;
-    const starCol = rgbStr(mixRgb({ r: 207, g: 224, b: 255 }, this.app.systemColor, 0.5));
+    const starColor = rgbStr(mixRgb({ r: 207, g: 224, b: 255 }, this.app.systemColor, 0.5));
     for (let tx = -1; tx < cols; tx++) {
       for (let ty = -1; ty < rows; ty++) {
         const baseX = tx * STAR_TILE - offX;
         const baseY = ty * STAR_TILE - offY;
-        for (const s of this.stars) {
-          const sx = baseX + s.x;
-          const sy = baseY + s.y;
+        for (const star of this.stars) {
+          const sx = baseX + star.x;
+          const sy = baseY + star.y;
           if (sx < -2 || sy < -2 || sx > this.app.canvas.width + 2 || sy > this.app.canvas.height + 2) continue;
-          ctx.globalAlpha = s.bright;
-          ctx.fillStyle = starCol;
-          ctx.fillRect(sx, sy, s.size, s.size);
+          ctx.globalAlpha = star.bright;
+          ctx.fillStyle = starColor;
+          ctx.fillRect(sx, sy, star.size, star.size);
         }
       }
     }
     ctx.globalAlpha = 1;
+    return super.render(now);
   }
+}
 
-  renderBackground() {
-    const ctx = this.app.ctx;
-    const base = mixRgb({ r: 4, g: 6, b: 12 }, this.app.systemColor, 0.12);
-    ctx.fillStyle = rgbStr(base);
-    ctx.fillRect(0, 0, this.app.canvas.width, this.app.canvas.height);
-    const blobs = [
-      { fx: 0.22, fy: 0.28, r: 0.55 },
-      { fx: 0.8, fy: 0.5, r: 0.65 },
-      { fx: 0.5, fy: 0.85, r: 0.5 },
-    ];
-    for (const b of blobs) {
-      const cx = b.fx * this.app.canvas.width;
-      const cy = b.fy * this.app.canvas.height;
-      const rad = b.r * Math.max(this.app.canvas.width, this.app.canvas.height);
-      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
-      g.addColorStop(0, rgbStr(this.app.systemColor, 0.11));
-      g.addColorStop(1, rgbStr(this.app.systemColor, 0));
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, this.app.canvas.width, this.app.canvas.height);
-    }
-  }
-
-  drawGrid() {
+class GridNode extends Node {
+  render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
     const view = camera.getViewBounds();
@@ -478,37 +484,138 @@ export class WorldNode extends Node {
     const endY = Math.ceil(view.maxY / step) * step;
     ctx.beginPath();
     for (let gx = startX; gx <= endX; gx += step) {
-      const p = camera.worldToScreen(gx, 0);
-      ctx.moveTo(p.x, 0);
-      ctx.lineTo(p.x, this.app.canvas.height);
+      const point = camera.worldToScreen(gx, 0);
+      ctx.moveTo(point.x, 0);
+      ctx.lineTo(point.x, this.app.canvas.height);
     }
     for (let gy = startY; gy <= endY; gy += step) {
-      const p = camera.worldToScreen(0, gy);
-      ctx.moveTo(0, p.y);
-      ctx.lineTo(this.app.canvas.width, p.y);
+      const point = camera.worldToScreen(0, gy);
+      ctx.moveTo(0, point.y);
+      ctx.lineTo(this.app.canvas.width, point.y);
     }
     ctx.stroke();
+    return super.render(now);
   }
+}
 
-  drawWorldBounds() {
+class BoundsNode extends Node {
+  render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
-    const tl = camera.worldToScreen(0, 0);
-    const br = camera.worldToScreen(this.app.constants.worldSize, this.app.constants.worldSize);
+    const topLeft = camera.worldToScreen(0, 0);
+    const bottomRight = camera.worldToScreen(this.app.constants.worldSize, this.app.constants.worldSize);
     ctx.lineWidth = 2;
     ctx.strokeStyle = 'rgba(255, 92, 122, 0.35)';
-    ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-  }
-
-  update(dt) {
-    return super.update(dt);
-  }
-
-  render(now) {
-    this.renderBackground();
-    this.drawStars();
-    this.drawGrid();
-    this.drawWorldBounds();
+    ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
     return super.render(now);
+  }
+}
+
+class BackdropNode extends Node {
+  constructor(app) {
+    super(app);
+    this.add(new BackgroundNode());
+    this.starfield = this.add(new StarfieldNode());
+    this.add(new GridNode());
+    this.add(new BoundsNode());
+  }
+
+  generateStars() {
+    this.starfield.generate();
+  }
+}
+
+class SystemNode extends Node {
+  constructor(app) {
+    super(app);
+    this.add(new StarNode())
+      .add(new BeltGroupNode(app))
+      .add(new CelestialGroupNode(app))
+      .add(new ResourceGroupNode(app))
+      .add(new InfrastructureGroupNode(app));
+  }
+}
+
+class BeltGroupNode extends Node {
+  constructor(app) {
+    super(app);
+    this.add(new BeltNode());
+  }
+}
+
+class CelestialGroupNode extends Node {
+  constructor(app) {
+    super(app);
+    this.add(new PlanetNode()).add(new MoonNode());
+  }
+}
+
+class ResourceGroupNode extends Node {
+  constructor(app) {
+    super(app);
+    this.add(new AsteroidNode());
+  }
+}
+
+class InfrastructureGroupNode extends Node {
+  constructor(app) {
+    super(app);
+    this.add(new StationNode()).add(new OutpostNode()).add(new GateNode());
+  }
+}
+
+class ActorsNode extends Node {
+  constructor(app) {
+    super(app);
+    this.add(new EnemyNode());
+    this.player = this.add(new Player(app));
+    this.ship = this.player.add(new ShipNode(app));
+  }
+}
+
+class WorldEffectsNode extends Node {
+  constructor(app) {
+    super(app);
+    this.combat = this.add(new CombatNode());
+    this.add(new EffectsNode());
+  }
+}
+
+export class WorldNode extends Node {
+  constructor(app) {
+    super(app);
+    this.backdrop = this.add(new BackdropNode(app));
+    this.system = this.add(new SystemNode(app));
+    this.actors = this.add(new ActorsNode(app));
+    this.effects = this.add(new WorldEffectsNode(app));
+    this.player = this.actors.player;
+    this.ship = this.actors.ship;
+  }
+
+  genStars() {
+    this.backdrop.generateStars();
+  }
+
+  captureDockBackground(excludedNode) {
+    const canvas = document.createElement('canvas');
+    canvas.width = this.app.canvas.width;
+    canvas.height = this.app.canvas.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Unable to create a canvas for the station background');
+
+    const previousCanvas = this.app.canvas;
+    const previousContext = this.app.ctx;
+    const previousVisibility = excludedNode ? excludedNode.visible : true;
+    this.app.canvas = canvas;
+    this.app.ctx = context;
+    if (excludedNode) excludedNode.visible = false;
+    try {
+      this.render(performance.now());
+      return canvas.toDataURL();
+    } finally {
+      this.app.canvas = previousCanvas;
+      this.app.ctx = previousContext;
+      if (excludedNode) excludedNode.visible = previousVisibility;
+    }
   }
 }

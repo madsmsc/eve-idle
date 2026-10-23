@@ -149,8 +149,8 @@ tests/        Unit, API, client, and Playwright E2E tests
 
 ### actions (parallel)
 
-
+abc
 
 ### questions
 
-can you suggest a way to break down the javascript classes even further, making as much as possible extend node, and putting its logic in update and rendering in render methods, so they don't need to be called explicitly. also dont just have a flat scene graph, but structure the hierarchy of parent/child nodes so it is reasonably wide and deep. ideally there should be as few calls between nodes as possible - i know that is naiive to think we can get there, but it's just to explain the goal of really leaning into the scene graph concept and putting as much as possible into private methods called by update/render methods.
+edf

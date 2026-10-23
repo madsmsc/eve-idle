@@ -72,6 +72,30 @@ describe('Node', () => {
     p.render(1);
     assert.deepEqual(drawn, ['parent', 'child']);
   });
+
+  test('an invisible node skips rendering its subtree but keeps updating it', async () => {
+    const { Node } = await import('../public/core/node.js');
+    const events = [];
+    class Tracker extends Node {
+      update(dt) {
+        events.push(`update:${dt}`);
+        return super.update(dt);
+      }
+      render(now) {
+        events.push(`render:${now}`);
+        return super.render(now);
+      }
+    }
+    const root = new Node();
+    const hidden = root.add(new Tracker());
+    hidden.visible = false;
+    hidden.add(new Tracker());
+
+    root.update(0.25);
+    root.render(10);
+
+    assert.deepEqual(events, ['update:0.25', 'update:0.25']);
+  });
 });
 
 describe('App scene tree', () => {
@@ -87,6 +111,9 @@ describe('App scene tree', () => {
     assert.equal(app.root.children[0], app.world);
     assert.equal(app.root.children[1], app.ui);
     assert.deepEqual(rendered, ['world', 'ui']);
+    assert.deepEqual(app.world.children, [app.world.backdrop, app.world.system, app.world.actors, app.world.effects]);
+    assert.ok(app.player.children.includes(app.player.docking));
+    assert.ok(app.player.children.includes(app.ship));
 
     const assertAppPropagation = (node) => {
       for (const child of node.children) {

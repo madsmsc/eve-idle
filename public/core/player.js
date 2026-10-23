@@ -22,6 +22,8 @@ export class Player extends Node {
     this.suppressAutoRecall = false;
     this.orbitTargetKey = null;
     this.orbitAngle = 0;
+    this.docking = this.add(new DockingNode(app));
+    this.add(new AutoPilotNode(app));
   }
 
   setDestination(x, y, dockTargetId = null) {
@@ -152,33 +154,6 @@ export class Player extends Node {
 
   // Docking cutscene: glide slowly into the station centre, fading to black
   // over the last stretch; the app swaps in the hangar once it is black.
-  updateDocking(dt) {
-    const dock = this.app.docking;
-    const st = dock.station;
-    const dx = st.x - this.x;
-    const dy = st.y - this.y;
-    const d = Math.hypot(dx, dy);
-    dock.elapsed += dt;
-    const speed = d > 1 ? Math.max(70, Math.min(170, d * 0.8)) : 0;
-    const step = Math.min(d, speed * dt);
-    if (d > 1) {
-      this.vx = (dx / d) * speed;
-      this.vy = (dy / d) * speed;
-      this.x += (dx / d) * step;
-      this.y += (dy / d) * step;
-      this.heading = Math.atan2(dy, dx);
-    } else {
-      this.vx = 0;
-      this.vy = 0;
-    }
-    if (!dock.fading && (d < 70 || dock.elapsed > 3.5)) {
-      dock.fading = true;
-      dock.fadeStart = dock.elapsed;
-      this.app.setDockFade(true);
-    }
-    if (dock.fading && dock.elapsed - dock.fadeStart >= 1) this.app.finishDocking();
-  }
-
   updateDrift(dt) {
     const dr = this.drift;
     dr.t += dt;
@@ -192,10 +167,13 @@ export class Player extends Node {
   }
 
   update(dt) {
-    if (this.app.docking) {
-      this.updateDocking(dt);
-      return;
-    }
+    if (this.app.state) this.maybeAutoRecall();
+    this.#updateMotion(dt);
+    return super.update(dt);
+  }
+
+  #updateMotion(dt) {
+    if (this.app.docking) return;
     if (this.undock) {
       this.updateUndock(dt);
       return;
@@ -383,5 +361,113 @@ export class Player extends Node {
       }
     }
     return best && bd < 160 ? best.name : null;
+  }
+}
+
+class AutoPilotNode extends Node {
+  update(dt) {
+    this.#run(performance.now());
+    return super.update(dt);
+  }
+
+  #run(now) {
+    const app = this.app;
+    const state = app.state;
+    if (!app.autoPilot || !state || !state.activeShip || now - app.lastAutoTick < 800) return;
+    app.lastAutoTick = now;
+    if (state.combat) return;
+    if (state.docked) {
+      if (state.cargoUsed > 0) {
+        app.doAction('sell-all', {});
+      } else {
+        const belt = app.player.nearestPoiOf('belt');
+        if (belt) {
+          app.launch({ keepAutoPilot: true }).then((launched) => {
+            if (launched && app.autoPilot) {
+              const point = app.player.beltApproachPoint(belt);
+              app.player.setDestination(point.x, point.y);
+            }
+          });
+        }
+      }
+      return;
+    }
+    if (state.cargoFull) return;
+    if (!app.player.nearestAsteroid()) {
+      const belt = app.player.nearestPoiOf('belt');
+      if (belt) {
+        const point = app.player.beltApproachPoint(belt);
+        app.player.setDestination(point.x, point.y);
+      }
+    }
+  }
+}
+
+class DockingNode extends Node {
+  begin(newState) {
+    const station = newState.world.stations.find((item) => item.name === newState.dockedStation);
+    if (!station) return false;
+    this.app.dockBackground = this.app.world.captureDockBackground(this.app.ship);
+    this.app.docking = {
+      station,
+      dockedStation: newState.dockedStation,
+      elapsed: 0,
+      fading: false,
+      fadeStart: 0,
+    };
+    newState.docked = false;
+    newState.dockedStation = null;
+    return true;
+  }
+
+  setFade(on) {
+    const element = document.getElementById('dock-fade');
+    element.classList.toggle('on', on);
+    element.classList.toggle('out', !on);
+  }
+
+  update(dt) {
+    const dock = this.app.docking;
+    if (dock) this.#updateTransition(dt, dock);
+    return super.update(dt);
+  }
+
+  #updateTransition(dt, dock) {
+    const player = this.app.player;
+    const station = dock.station;
+    const dx = station.x - player.x;
+    const dy = station.y - player.y;
+    const distance = Math.hypot(dx, dy);
+    dock.elapsed += dt;
+    const speed = distance > 1 ? Math.max(70, Math.min(170, distance * 0.8)) : 0;
+    const step = Math.min(distance, speed * dt);
+    if (distance > 1) {
+      player.vx = (dx / distance) * speed;
+      player.vy = (dy / distance) * speed;
+      player.x += (dx / distance) * step;
+      player.y += (dy / distance) * step;
+      player.heading = Math.atan2(dy, dx);
+    } else {
+      player.vx = 0;
+      player.vy = 0;
+    }
+    if (!dock.fading && (distance < 70 || dock.elapsed > 3.5)) {
+      dock.fading = true;
+      dock.fadeStart = dock.elapsed;
+      this.setFade(true);
+    }
+    if (dock.fading && dock.elapsed - dock.fadeStart >= 1) this.#finish(dock);
+  }
+
+  #finish(dock) {
+    this.app.docking = null;
+    this.app.player.snap(dock.station.x, dock.station.y);
+    if (this.app.state) {
+      this.app.state.docked = true;
+      this.app.state.dockedStation = dock.dockedStation;
+      this.app.ui.refreshPanels();
+      this.app.syncDockedView();
+    }
+    this.setFade(false);
   }
 }
