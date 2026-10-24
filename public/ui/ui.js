@@ -6,7 +6,6 @@ import { Node } from '../core/node.js';
 import { MinimapNode } from './minimap.js';
 import { HudNode } from './hud.js';
 import { HangarNode } from './hangar.js';
-import { CharacterNode } from './character.js';
 import { InventoryNode } from './inventory.js';
 import { OverlaysNode } from './overlays.js';
 
@@ -16,7 +15,6 @@ class MenuGroupNode extends Node {
   constructor(app) {
     super(app);
     this.hangar = this.add(new HangarNode());
-    this.character = this.add(new CharacterNode());
     this.inventory = this.add(new InventoryNode());
   }
 }
@@ -36,13 +34,16 @@ export class UINode extends Node {
     this.menus = this.add(new MenuGroupNode(app));
     this.screen = this.add(new HudGroupNode(app));
     this.hangar = this.menus.hangar;
-    this.character = this.menus.character;
     this.inventory = this.menus.inventory;
     this.hud = this.screen.hud;
     this.overlays = this.screen.overlays;
   }
 
   refreshPanels() {
+    if (this.app.uiInteractionActive) {
+      this.app.uiRefreshPending = true;
+      return;
+    }
     this.hud.refreshPanels();
     if (this.app.hangarOpen) this.hangar.refresh();
     if (this.app.menuPageOpen) this.refreshMenuPage();
@@ -50,11 +51,14 @@ export class UINode extends Node {
 
   refreshMenuPage() {
     this.inventory.refresh();
-    if (this.app.activeMenu === 'pilot') this.character.refresh();
   }
 
   syncDockedView() {
     const app = this.app;
+    if (app.uiInteractionActive) {
+      app.uiRefreshPending = true;
+      return;
+    }
     const docked = app.state && app.state.docked;
     const wasDocked = document.body.classList.contains('docked');
     if (docked && !wasDocked) {
@@ -62,8 +66,6 @@ export class UINode extends Node {
       app.activeMenu = 'cargo';
       document.getElementById('menu-window').hidden = false;
       document.body.classList.add('menu-window-open');
-      document.getElementById('menu-window-title').textContent =
-        document.querySelector('.menu-card[data-menu="cargo"]').textContent.trim();
       document.querySelectorAll('.menu-page').forEach((page) => {
         const selected = page.dataset.menuPage === 'cargo';
         page.classList.toggle('active', selected);
@@ -101,7 +103,7 @@ export class UINode extends Node {
 
   openMenu(name, force) {
     const app = this.app;
-    const shipMenus = ['cargo', 'fitting', 'pilot'];
+    const shipMenus = ['cargo'];
     const stationMenus = STATION_MENUS;
     if (!shipMenus.includes(name) && !stationMenus.includes(name)) throw new Error(`Unknown menu: ${name}`);
     if (stationMenus.includes(name) && !(app.state && app.state.docked)) {
@@ -126,8 +128,6 @@ export class UINode extends Node {
       item.classList.toggle('active', selected);
       item.hidden = !selected;
     });
-    const button = document.querySelector(`.menu-card[data-menu="${name}"]`);
-    document.getElementById('menu-window-title').textContent = button.textContent.trim();
     document.querySelectorAll('.menu-card').forEach((item) => {
       const selected = item.dataset.menu === name;
       item.classList.toggle('active', selected);

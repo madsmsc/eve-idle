@@ -16,27 +16,6 @@ function recipeText(recipe, catalog) {
   return Object.entries(recipe).map(([key, amount]) => `${fmt(amount)} ${itemName(catalog, key)}`).join(' + ');
 }
 
-function recipeProgressText(recipe, state, catalog) {
-  return Object.entries(recipe).map(([key, amount]) =>
-    `${fmt(materialCount(state, key))}/${fmt(amount)} ${itemName(catalog, key)}`
-  ).join(' · ');
-}
-
-function materialCount(state, key) {
-  return ((state.materials && state.materials[key]) || 0) +
-    ((state.storage && state.storage.items && state.storage.items[key]) || 0);
-}
-
-function canPay(state, recipe) {
-  return Object.entries(recipe).every(([key, amount]) => materialCount(state, key) >= amount);
-}
-
-function ownsBlueprint(state, kind, type, tier = null) {
-  return (state.blueprints || []).some((item) =>
-    item.kind === kind && item.type === type && (kind !== 'module' || item.tier === Number(tier))
-  );
-}
-
 export class HangarNode extends Node {
   refresh() {
     this.renderHangar();
@@ -89,15 +68,13 @@ export class HangarNode extends Node {
       head.textContent = cat;
       skills.appendChild(head);
       for (const def of categories[cat]) {
-        const lvl = (state.skills && state.skills[def.key]) || 0;
-        const maxed = lvl >= def.maxLevel;
-        const cost = maxed ? 0 : Math.round(def.baseCost * Math.pow(def.costGrowth, lvl));
-        const affordable = !maxed && (state.skillPoints || 0) >= cost;
+        const training = state.skillTraining[def.key];
+        const lvl = training.level;
         const row = document.createElement('div');
         row.className = 'row';
         row.innerHTML = `
           <span class="label">${def.name} <span class="sub">Lv${lvl}/${def.maxLevel} · +${Math.round(def.effect.pctPerLevel * 100)}% ${def.effect.stat}/lv</span></span>
-          <span class="actions"><button class="mini" data-action="train-skill" data-skill="${def.key}" data-testid="skill-${def.key}" ${maxed || !affordable ? 'disabled' : ''}>${maxed ? 'Max' : `Train ${fmt(cost)} SP`}</button></span>`;
+          <span class="actions"><button class="mini" data-action="train-skill" data-skill="${def.key}" data-testid="skill-${def.key}" ${training.maxed || !training.canTrain ? 'disabled' : ''}>${training.maxed ? 'Max' : `Train ${fmt(training.cost)} SP`}</button></span>`;
         skills.appendChild(row);
       }
     }
@@ -121,16 +98,14 @@ export class HangarNode extends Node {
       row.innerHTML = `<span class="label">${agent.active.name} <span class="sub">${agent.active.objective} · ${fmt(agent.active.progress)}/${fmt(agent.active.target)} · reward ${recipeText(agent.active.rewardItems || {}, catalog)}</span></span><span class="actions"><button class="mini danger" data-action="cancel-agent-mission">Cancel</button></span>`;
       agentPanel.appendChild(row);
     } else if (agent.available) {
-      const offers = this.app.catalog.agentMissions;
-      const offer = offers[Math.floor(Date.now() / 86400000) % offers.length];
+      const offer = agent.offer;
       const row = document.createElement('div');
       row.className = 'row';
       row.innerHTML = `<span class="label">${offer.name} <span class="sub">${offer.objective} · reward ${recipeText(offer.rewardItems || {}, catalog)}</span></span><span class="actions"><button class="mini" data-action="accept-agent-mission" data-testid="accept-agent-mission">Accept</button></span>`;
       agentPanel.appendChild(row);
       cooldown.textContent = 'available';
     } else {
-      const remaining = Math.max(0, agent.availableAt - Date.now());
-      cooldown.textContent = `${Math.ceil(remaining / 3600000)}h`;
+      cooldown.textContent = `${Math.ceil(agent.remainingMs / 3600000)}h`;
       const note = document.createElement('div');
       note.className = 'row';
       note.textContent = agent.completed ? `${agent.completed} complete — next contract in ${cooldown.textContent}.` : `Next contract in ${cooldown.textContent}.`;
@@ -150,13 +125,15 @@ export class HangarNode extends Node {
       for (const tier of Object.keys(catalog.blueprints[slotType])) {
         const bp = catalog.blueprints[slotType][tier];
         const recipe = recipeText(bp.recipe, catalog);
-        const have = canPay(state, bp.recipe);
-        const hasBlueprint = ownsBlueprint(state, 'module', slotType, bp.tier);
+        const readiness = state.actionAvailability.craftModules[`${slotType}:${tier}`];
+        const requirements = Object.entries(bp.recipe).map(([key, amount]) =>
+          `${fmt(readiness.materialCounts[key])}/${fmt(amount)} ${itemName(catalog, key)}`
+        ).join(' · ');
         const row = document.createElement('div');
         row.className = 'row';
         row.innerHTML = `
-          <span class="label">${bp.name} <span class="sub">${recipe} · ${hasBlueprint ? 'blueprint ready' : 'blueprint required'}</span></span>
-          <span class="actions"><button class="mini" data-action="craft-module" data-slot="${bp.slotType}" data-tier="${bp.tier}" data-testid="craft-${slotType}-t${bp.tier}" ${docked && have && hasBlueprint ? '' : 'disabled'}>Craft</button></span>`;
+          <span class="label">${bp.name} <span class="sub">${recipe} · ${requirements} · ${readiness.hasBlueprint ? 'blueprint ready' : 'blueprint required'}</span></span>
+          <span class="actions"><button class="mini" data-action="craft-module" data-slot="${bp.slotType}" data-tier="${bp.tier}" data-testid="craft-${slotType}-t${bp.tier}" ${readiness.canCraft ? '' : 'disabled'}>Craft</button></span>`;
         industry.appendChild(row);
       }
     }
@@ -178,28 +155,27 @@ export class HangarNode extends Node {
       for (const entry of tier.ships) {
         const type = entry.type;
         const blueprint = catalog.shipBlueprints[type];
+        const progression = state.shipProgression[type];
         const skillRequirements = entry.skills.map((requirement) => {
           const skill = catalog.skills[requirement.skill];
-          const level = (state.skills && state.skills[requirement.skill]) || 0;
+          const level = state.skillTraining[requirement.skill].level;
           return `${skill.name} ${level}/${requirement.level}${level < requirement.level ? ' (missing)' : ''}`;
         });
-        const skillsReady = entry.skills.every((requirement) =>
-          ((state.skills && state.skills[requirement.skill]) || 0) >= requirement.level
-        );
-        const hasBlueprint = type === 'rifter' || ownsBlueprint(state, 'ship', type);
-        const materialReady = !blueprint || canPay(state, blueprint.recipe);
+        const hasBlueprint = progression.blueprintReady;
         const ownedCount = state.ships.filter((ship) => ship.type === type).length;
         const row = document.createElement('div');
         row.className = 'row ship-tree-row';
         const requirements = [
           skillRequirements.length ? `Skills: ${skillRequirements.join(', ')}` : 'No skill prerequisite',
-          blueprint ? `Materials: ${recipeProgressText(blueprint.recipe, state, catalog)}` : 'Starter hull',
+          blueprint ? `Materials: ${Object.entries(progression.materials).map(([key, amount]) =>
+            `${fmt(progression.materialCounts[key])}/${fmt(amount)} ${itemName(catalog, key)}`
+          ).join(' · ')}` : 'Starter hull',
           type === 'rifter' ? 'Starter ship' : hasBlueprint ? 'Blueprint acquired' : 'Blueprint: rat loot',
           ownedCount ? `Owned: ${ownedCount}` : '',
         ].filter(Boolean).join(' · ');
         const action = type === 'rifter'
           ? '<span class="sub">Starting hull</span>'
-          : `<button class="mini" data-action="craft-ship" data-type="${type}" data-testid="craft-ship-${type}" ${docked && skillsReady && materialReady && hasBlueprint ? '' : 'disabled'}>Build</button>`;
+          : `<button class="mini" data-action="craft-ship" data-type="${type}" data-testid="craft-ship-${type}" ${progression.canBuild ? '' : 'disabled'}>Build</button>`;
         row.innerHTML = `
           <span class="label">${catalog.ships[type].name} <span class="sub">${requirements}</span></span>
           <span class="actions">${action}</span>`;
@@ -223,7 +199,8 @@ export class HangarNode extends Node {
         const next = ladder[index + 1];
         const row = document.createElement('div');
         row.className = 'row';
-        row.innerHTML = `<span class="label">${definitions[item].name} → ${definitions[next].name} <span class="sub">Have ${fmt(materialCount(state, item))}</span></span><span class="actions"><button class="mini" data-action="exchange-items" data-family="${family}" data-item="${item}" data-amount="3" data-testid="exchange-${family}-${item}" ${docked && materialCount(state, item) >= 3 ? '' : 'disabled'}>3 to 1</button></span>`;
+        const availability = state.actionAvailability.exchange[`${family}:${item}`];
+        row.innerHTML = `<span class="label">${definitions[item].name} → ${definitions[next].name} <span class="sub">Have ${fmt(availability.count)}</span></span><span class="actions"><button class="mini" data-action="exchange-items" data-family="${family}" data-item="${item}" data-amount="3" data-testid="exchange-${family}-${item}" ${availability.canExchange ? '' : 'disabled'}>3 to 1</button></span>`;
         market.appendChild(row);
       }
     }
@@ -236,9 +213,10 @@ export class HangarNode extends Node {
       const tier = Number(tierText);
       const def = catalog.modules[slotType];
       const cost = catalog.blueprintCosts[key];
+      const availability = state.actionAvailability.buyBlueprints[key];
       const row = document.createElement('div');
       row.className = 'row';
-      row.innerHTML = `<span class="label">${def.name} ${ROMAN[tier]} Blueprint <span class="sub">${recipeText(cost, catalog)}</span></span><span class="actions"><button class="mini" data-action="buy-blueprint" data-kind="module" data-type="${slotType}" data-tier="${tier}" data-testid="buy-blueprint-${slotType}-t${tier}" ${docked && canPay(state, cost) ? '' : 'disabled'}>Buy blueprint</button></span>`;
+      row.innerHTML = `<span class="label">${def.name} ${ROMAN[tier]} Blueprint <span class="sub">${recipeText(cost, catalog)}</span></span><span class="actions"><button class="mini" data-action="buy-blueprint" data-kind="module" data-type="${slotType}" data-tier="${tier}" data-testid="buy-blueprint-${slotType}-t${tier}" ${availability.canBuy ? '' : 'disabled'}>Buy blueprint</button></span>`;
       market.appendChild(row);
     }
     const dropNote = document.createElement('div');
@@ -250,8 +228,17 @@ export class HangarNode extends Node {
   renderCombatLog() {
     const log = document.getElementById('combat-log');
     log.innerHTML = '';
+    const stats = this.app.state.stats || {};
+    const summary = document.createElement('li');
+    summary.className = 'killboard-stats';
+    summary.dataset.testid = 'killboard-stats';
+    summary.innerHTML = `<span>Battles Won <strong>${fmt(stats.combatsWon || 0)}</strong></span><span>Ships Lost <strong>${fmt(stats.shipsLost || 0)}</strong></span>`;
+    log.appendChild(summary);
     if (!this.app.state.combatLog.length) {
-      log.innerHTML = '<li class="empty">No battles yet.</li>';
+      const empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = 'No battles yet.';
+      log.appendChild(empty);
       return;
     }
     for (const e of this.app.state.combatLog) {

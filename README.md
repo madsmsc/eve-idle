@@ -18,18 +18,22 @@ and a full cargo hold recalls it to a station to store its materials.
   disengage. Ship loss destroys the ship's cargo.
 - Docking replaces the world and flight HUD with full-screen station services.
   Manage ships, modules, fittings, skills, inventory, industry, achievements,
-  and agent contracts there. NPCs at every station exchange three items of a
+  and agent contracts there. Skill points are shown in Skills; battle victories
+  and ship losses are shown in Killboard. NPCs at every station exchange three items of a
   tier for one of the next tier. NPCs sell basic Tier I module blueprints;
   higher-tier module and ship blueprints drop as rat loot. Blueprints are
   consumed to manufacture ships or modules; the shipyard progression tree shows
   skill prerequisites, blueprint status, and material requirements for every
   hull. Launch leaves the ship floating outside the
   station; it does not steer back automatically, even if the hold is full.
-  Fitting consumes a module from inventory; un-fitting returns it.
-- Press C (or the Char button) any time to open the character sheet. Press I
-  (or Inventory) to see ship cargo plus **quantum storage** — a shared
-  warehouse for ore and components, accessible at every station and safe from
-  ship loss. Blueprints and modules are also inventory items.
+  Cargo is organized into ship loadout, fitting, and inventory columns. Fitting
+  is a read-only view; equip modules from selected Cargo items, and use the
+  Ship loadout action to return fitted modules to Cargo.
+- Press I (or Cargo) to see the ship's grouped module loadout above its item grid.
+  Quantum storage is a separate station service: it is shared across stations
+  and safe from ship loss. Blueprints and modules are inventory items. Equip
+  or remove modules while docked; larger ship tiers have more
+  total fitting slots while hulls keep their role-specific slot layouts.
 - Rats drop a small amount of Scrap and may drop modules or higher-tier
   blueprints. The target readout estimates combat difficulty from your fitted
   ship and the target's stats; it is a guide, not a guarantee. Salvage unwanted
@@ -60,6 +64,18 @@ Each mode has its own save:
 npm install
 npm start
 ```
+
+### Development with automatic reload
+
+Stop any currently running server with `Ctrl+C`, then run:
+
+```bash
+npm run dev
+```
+
+This restarts the Node process when server-side JavaScript changes and refreshes
+the browser when files under `public/` change. Use `npm start` for normal runs
+without development reloads.
 
 ## Performance benchmark
 
@@ -104,9 +120,11 @@ npx playwright install chromium
 
 ## Architecture
 
-The server owns validated game state, world rules, economy, combat, and save
-files. The browser renders the world and HUD, handles local smooth movement,
-and sends player actions to the server.
+The server owns validated game state, world rules, economy, combat, ship
+movement, autopilot decisions, and save files. The browser renders the world
+and HUD, interpolates server positions for smooth motion, and sends player
+intents such as destinations and actions. Derived progression readiness,
+offers, and cooldowns are included in the server state view.
 
 The render/update tree is rooted at `App.root`. Child order is the update and
 render order:
@@ -127,7 +145,6 @@ root: Node
 │   └── EffectsNode
 └── UINode
     ├── HangarNode
-    ├── CharacterNode
     ├── InventoryNode
     ├── MinimapNode
     ├── HudNode

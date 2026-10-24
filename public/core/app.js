@@ -30,11 +30,15 @@ export class App {
     this.activeMenu = 'cargo';
     this.overviewVisible = true;
     this.autoPilot = false;
-    this.lastAutoTick = 0;
     this.warpFx = 0;
     this.gateFx = 0;
     this.dockBackground = null;
     this.warpPending = false;
+    this.syncInFlight = false;
+    this.pendingActions = 0;
+    this.actionVersion = 0;
+    this.uiInteractionActive = false;
+    this.uiRefreshPending = false;
     this.deathTimer = null;
     this.lastFrame = 0;
     this.lastSync = 0;
@@ -110,8 +114,14 @@ export class App {
   finishBoot() {
     this.applySystemColor();
     this.player.dockTargetId = this.state.dockTargetId || null;
+    this.autoPilotMode = this.state.autoPilotMode || null;
+    this.autoPilot = !!this.autoPilotMode;
+    this.#refreshAutoPilotButton();
     const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
-    if (active) this.player.snap(active.x, active.y);
+    if (active) {
+      this.player.snap(active.x, active.y);
+      this.player.setServerState(active, this.state.navigation);
+    }
     this.input = new Input(this);
     this.input.wire();
     this.ui.refreshPanels();
@@ -137,6 +147,8 @@ export class App {
   // ---- server actions ----
 
   async doAction(action, payload) {
+    this.actionVersion++;
+    this.pendingActions++;
     try {
       const data = await api(`/api/${action}`, payload);
       this.onServerState(data.state);
@@ -144,6 +156,8 @@ export class App {
     } catch (e) {
       this.toast(e.message, true);
       return false;
+    } finally {
+      this.pendingActions--;
     }
   }
 
@@ -161,6 +175,11 @@ export class App {
     const prevSystem = this.state ? this.state.system.id : null;
     this.state = newState;
     this.player.dockTargetId = newState.dockTargetId || null;
+    this.targetEnemyId = (newState.combat && newState.combat.enemyId) ||
+      (newState.navigation && newState.navigation.targetId) || null;
+    this.autoPilotMode = newState.autoPilotMode || null;
+    this.autoPilot = !!this.autoPilotMode;
+    this.#refreshAutoPilotButton();
     this.applySystemColor();
     const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
     if (active) {
@@ -174,41 +193,11 @@ export class App {
           if (prevSystem !== this.state.system.id) this.world.genStars();
         }
       }
+      this.player.setServerState(active, this.state.navigation);
     }
     this.world.effects.combat.onServerState(prevShipPos);
-    this.#logAutoEvents(prevActive, prevSystem);
     this.ui.refreshPanels();
     this.syncDockedView();
-  }
-
-  #logAutoEvents(prevActiveId, prevSystemId) {
-    if (!this.autoPilot || !this.state || !this._prevAutoState) return;
-    const prev = this._prevAutoState;
-    const cur = this.state;
-    const events = [];
-    const prevCargo = Object.values(prev.minerals || {}).reduce((s, v) => s + v, 0);
-    const curCargo = Object.values(cur.minerals || {}).reduce((s, v) => s + v, 0);
-    if (curCargo > prevCargo) events.push(`mined ${Math.round(curCargo - prevCargo)} ore`);
-    const scrapGained = (cur.materials.scrap || 0) - (prev.materials.scrap || 0);
-    if (scrapGained > 0) events.push(`collected ${Math.round(scrapGained)} Scrap`);
-    if (cur.combat === null && prev.combat !== null) {
-      events.push(prev.combat.won ? 'rat killed' : 'combat lost');
-    }
-    const prevOreBelts = new Set(Object.keys(prev.world.asteroids.reduce((m, a) => { if (a.amount > 0) m[a.beltId] = 1; return m; }, {})));
-    const curOreBelts = new Set(Object.keys(cur.world.asteroids.reduce((m, a) => { if (a.amount > 0) m[a.beltId] = 1; return m; }, {})));
-    for (const bid of prevOreBelts) {
-      if (!curOreBelts.has(bid)) {
-        const belt = cur.world.belts.find((b) => b.id === bid);
-        events.push(`belt ${belt ? belt.name : bid} completed`);
-      }
-    }
-    if (prevSystemId && prevSystemId !== cur.system.id) events.push(`warp to ${cur.system.name}`);
-    for (const msg of events) {
-      this.autoLog = this.autoLog || [];
-      this.autoLog.unshift({ t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), msg });
-      if (this.autoLog.length > 20) this.autoLog.pop();
-    }
-    this._prevAutoState = { minerals: { ...cur.minerals }, materials: { ...cur.materials }, combat: cur.combat, world: { asteroids: cur.world.asteroids, belts: cur.world.belts }, system: cur.system };
   }
 
   // Docked stations overlay services on a ship-free capture of the world.
@@ -218,21 +207,12 @@ export class App {
 
   // Launch at the server-authoritative position outside the station.
   async launch({ keepAutoPilot = false } = {}) {
-    const station =
-      this.state.world.stations.find((s) => s.name === this.state.dockedStation) ||
-      this.state.world.stations[0];
-    if (!station) return;
-    if (this.autoPilot && !keepAutoPilot) this.toggleAutoPilot();
+    if (this.autoPilot && !keepAutoPilot) await this.doAction('autopilot', { mode: null });
     this.player.suppressAutoRecall = true;
-    // Fade to black while the server places the ship just outside dock range.
+    // Fade to black while the server performs the launch.
     this.player.docking.setFade(true);
     await new Promise((resolve) => setTimeout(resolve, 900));
-    const launched = await this.ship.doWarp(null, {
-      x: station.x + this.constants.dockRange + 30,
-      y: station.y,
-      silent: true,
-      noFx: true,
-    });
+    const launched = await this.doAction('launch', {});
     if (launched) this.player.startUndock();
     else this.player.suppressAutoRecall = false;
     this.player.docking.setFade(false);
@@ -240,16 +220,16 @@ export class App {
   }
 
   async sync() {
-    if (!this.state || !this.state.activeShip) return;
+    if (!this.state || !this.state.activeShip || this.syncInFlight || this.pendingActions) return;
+    this.syncInFlight = true;
+    const actionVersion = this.actionVersion;
     try {
-      const data = await api('/api/tick', {
-        x: this.player.x,
-        y: this.player.y,
-        dockTargetId: this.player.dockTargetId,
-      });
-      this.onServerState(data.state);
+      const data = await api('/api/tick', {});
+      if (actionVersion === this.actionVersion) this.onServerState(data.state);
     } catch (e) {
       /* transient; keep going */
+    } finally {
+      this.syncInFlight = false;
     }
   }
 
@@ -311,17 +291,9 @@ export class App {
     button.setAttribute('aria-expanded', String(this.overviewVisible));
   }
 
-  toggleCharacter(force) {
-    this.openMenu('pilot', force);
-  }
-
   toggleInventory(force) {
     this.ui.inventory.setFilter('all');
     this.openMenu('cargo', force);
-  }
-
-  toggleFitting(force) {
-    this.openMenu('fitting', force);
   }
 
   toggleLoot(force) {
@@ -335,53 +307,21 @@ export class App {
 
   // ---- autopilot ----
 
-  toggleAutoPilot() {
-    const modes = [null, 'mine', 'mine_hunt', 'hunt'];
-    const labels = { null: '▶ Auto', mine: '⛏ Mine', mine_hunt: '⛏⚔ Mine+Hunt', hunt: '⚔ Hunt' };
-    const cur = this.autoPilotMode || null;
-    const idx = modes.indexOf(cur);
-    const next = modes[(idx + 1) % modes.length];
-    this.autoPilot = next !== null;
-    this.autoPilotMode = next;
-    const btn = document.getElementById('auto-pilot');
-    btn.textContent = labels[next];
-    btn.classList.toggle('on', this.autoPilot);
-    if (this.autoPilot) {
-      this.lastAutoTick = 0;
-      this.autoLog = [];
-      this._prevAutoState = { minerals: { ...this.state.minerals }, materials: { ...this.state.materials }, combat: this.state.combat, world: { asteroids: this.state.world.asteroids, belts: this.state.world.belts }, system: this.state.system };
-      const w = this.state.world;
-      const oreBelts = new Set(w.asteroids.filter((a) => a.amount > 0).map((a) => a.beltId));
-      const beltCount = oreBelts.size;
-      let totalOre = 0;
-      const oreTypes = new Set();
-      for (const a of w.asteroids) {
-        if (a.amount <= 0) continue;
-        totalOre += a.amount;
-        oreTypes.add(a.mineral);
-      }
-      const ship = this.state.activeShip;
-      const playerHP = ship ? (ship.shield + ship.hull) : 0;
-      const safeRats = w.enemies.filter((e) => e.alive && (e.shield + e.hull) < playerHP * 0.5).length;
-      const parts = [];
-      if (next !== 'hunt') parts.push(`${beltCount} belt(s) [${Math.round(totalOre)} ore across ${oreTypes.size} types]`);
-      if (next !== 'mine') parts.push(`${safeRats} safe rat(s)`);
-      this.toast(`Auto [${next.replace('_', '+')}]: ${parts.join(', ') || 'nothing to do'}`);
-    } else {
-      this.toast('Auto-pilot OFF');
-    }
-    document.getElementById('auto-log').hidden = !this.autoPilot;
+  setAutoPilotMode(mode) {
+    const currentMode = this.state.autoPilotMode || null;
+    return this.doAction('autopilot', { mode: currentMode === mode ? null : mode });
   }
 
-  toggleAutoLog() {
-    const panel = document.getElementById('auto-log-panel');
-    const list = document.getElementById('auto-log-list');
-    if (!panel.hidden) {
-      panel.hidden = true;
-      return;
-    }
-    list.innerHTML = (this.autoLog || []).map((e) => `<li><span class="log-time">${e.t}</span> ${e.msg}</li>`).join('') || '<li>No activity yet.</li>';
-    panel.hidden = false;
+  setAutoPilot(on) {
+    return this.doAction('autopilot', { mode: on ? 'mine' : null });
+  }
+
+  #refreshAutoPilotButton() {
+    document.querySelectorAll('[data-auto-mode]').forEach((button) => {
+      const selected = button.dataset.autoMode === this.autoPilotMode;
+      button.classList.toggle('auto-mode-selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
   }
 
   // ---- loop ----

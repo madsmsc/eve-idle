@@ -13,8 +13,8 @@ function tmpDataFile() {
   return path.join(dir, 'state.json');
 }
 
-async function startServer(dataFile) {
-  const app = createApp({ dataFile });
+async function startServer(dataFile, options = {}) {
+  const app = createApp({ dataFile, ...options });
   await new Promise((resolve) => app.server.listen(0, resolve));
   const { port } = app.server.address();
   return { app, base: `http://127.0.0.1:${port}`, close: () => app.close() };
@@ -33,18 +33,22 @@ async function api(base, pathName, body) {
   return { status: res.status, data };
 }
 
-// Fly the active ship toward (x, y) over several ticks (each tick can only move
-// a limited distance, so we step incrementally).
-async function flyTo(base, x, y, maxIters = 40) {
+// Navigate using a server-side intent and wait until the authoritative ship
+// position reaches the destination.
+async function flyTo(base, x, y, maxIters = 80) {
   let st = (await api(base, '/api/state')).data.state;
+  if (st.docked) {
+    const launched = await api(base, '/api/launch', {});
+    assert.equal(launched.status, 200);
+    st = launched.data.state;
+  }
+  const navigation = await api(base, '/api/navigate', { x, y });
+  assert.equal(navigation.status, 200);
   for (let i = 0; i < maxIters; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    st = (await api(base, '/api/tick', {})).data.state;
     const ship = st.ships.find((s) => s.id === st.activeShipId);
-    const dx = x - ship.x;
-    const dy = y - ship.y;
-    const d = Math.hypot(dx, dy);
-    if (d < 80) return st;
-    const step = Math.min(700, d);
-    st = (await api(base, '/api/tick', { x: ship.x + (dx / d) * step, y: ship.y + (dy / d) * step })).data.state;
+    if (Math.hypot(x - ship.x, y - ship.y) < 160) return st;
   }
   return st;
 }
@@ -111,13 +115,39 @@ describe('HTTP API', () => {
     assert.equal(s.standing, undefined);
     assert.equal(s.isk, undefined);
     assert.ok(s.ambush && Object.keys(s.ambush).length === 3);
+    assert.ok(s.skillTraining.gunnery);
+    assert.equal(typeof s.shipProgression.falcon.canBuild, 'boolean');
+    assert.ok(s.agentMission.offer);
   });
 
-  test('POST /api/tick accepts a position and advances time', async () => {
+  test('POST /api/tick advances movement from server navigation and ignores client positions', async () => {
     const before = (await api(srv.base, '/api/state')).data.state;
-    const r = await api(srv.base, '/api/tick', { x: before.activeShip.x, y: before.activeShip.y });
+    const launch = await api(srv.base, '/api/launch', {});
+    assert.equal(launch.status, 200);
+    const target = { x: launch.data.state.activeShip.x + 1000, y: launch.data.state.activeShip.y };
+    const nav = await api(srv.base, '/api/navigate', target);
+    assert.equal(nav.status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const r = await api(srv.base, '/api/tick', { x: 0, y: 0 });
     assert.equal(r.status, 200);
     assert.ok(r.data.state.lastTick >= before.lastTick);
+    assert.ok(r.data.state.activeShip.x > launch.data.state.activeShip.x);
+    assert.ok(r.data.state.activeShip.x > 0);
+  });
+
+  test('autopilot selects targets and launches on the server', async () => {
+    const enabled = await api(srv.base, '/api/autopilot', { mode: 'mine' });
+    assert.equal(enabled.status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const updated = await api(srv.base, '/api/tick', {});
+    assert.equal(updated.data.state.autoPilotMode, 'mine');
+    assert.equal(updated.data.state.docked, false);
+    assert.ok(updated.data.state.navigation);
+    assert.ok(updated.data.state.automationLog.length > 0);
+    const selectedTarget = updated.data.state.navigation;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const continued = await api(srv.base, '/api/tick', {});
+    assert.deepEqual(continued.data.state.navigation, selectedTarget);
   });
 
   test('NPCs sell basic module blueprints but not higher-tier or ship blueprints', async () => {
@@ -238,6 +268,76 @@ describe('HTTP API', () => {
     assert.equal(r.data.state.loot.length, 0);
   });
 
+  test('GET /api/state explains and disables fitting modules above trained skill', async () => {
+    const state = srv.app.getState();
+    const ship = state.ships.find((item) => item.id === state.activeShipId);
+    state.loot.push({ id: 'mining-tier-4', slotType: 'mining', tier: 4 });
+    srv.app.setState(state);
+
+    const result = await api(srv.base, '/api/state');
+    const key = `${ship.id}:mining:0:4`;
+
+    assert.equal(result.data.state.actionAvailability.fitting[key], false);
+    assert.equal(result.data.state.actionAvailability.fittingReasons[key], 'Requires Mining Yield level 3.');
+    assert.equal(result.data.state.actionAvailability.loot['mining-tier-4'].canEquip, false);
+    assert.equal(result.data.state.actionAvailability.loot['mining-tier-4'].equipReason, 'Requires Mining Yield level 3.');
+
+    const fit = await api(srv.base, '/api/fit-module', {
+      shipId: ship.id,
+      slotType: 'mining',
+      slotIndex: 0,
+      tier: 4,
+    });
+    assert.equal(fit.status, 400);
+    assert.equal(fit.data.error, 'Requires Mining Yield level 3');
+  });
+
+  test('saving fitting presets is no longer available', async () => {
+    const result = await api(srv.base, '/api/save-fitting-preset', { name: 'Old fit' });
+    assert.equal(result.status, 400);
+    assert.equal(result.data.error, 'Unknown action: save-fitting-preset');
+  });
+
+  test('POST /api/unequip-all returns fitted modules to inventory', async () => {
+    const state = srv.app.getState();
+    const ship = state.ships.find((item) => item.id === state.activeShipId);
+    ship.fitting.weapon[0] = 2;
+    ship.fitting.shield[0] = 1;
+    srv.app.setState(state);
+
+    const before = (await api(srv.base, '/api/state')).data.state;
+    assert.equal(before.actionAvailability.canUnequipAll, true);
+    assert.equal(before.actionAvailability.unequipAllReason, '');
+    const result = await api(srv.base, '/api/unequip-all', {});
+
+    assert.equal(result.status, 200);
+    assert.equal(result.data.state.activeShip.fitting.weapon[0], 0);
+    assert.equal(result.data.state.activeShip.fitting.shield[0], 0);
+    assert.deepEqual(
+      result.data.state.loot.map(({ slotType, tier }) => ({ slotType, tier })),
+      [{ slotType: 'weapon', tier: 2 }, { slotType: 'shield', tier: 1 }],
+    );
+    assert.equal(result.data.state.actionAvailability.canUnequipAll, false);
+  });
+
+  test('POST /api/unequip-all requires docking', async () => {
+    const state = srv.app.getState();
+    const ship = state.ships.find((item) => item.id === state.activeShipId);
+    ship.x = 200;
+    ship.y = 200;
+    ship.dockedStationId = null;
+    ship.dockTargetId = null;
+    ship.fitting.weapon[0] = 1;
+    srv.app.setState(state);
+
+    const result = await api(srv.base, '/api/unequip-all', {});
+    assert.equal(result.status, 400);
+    assert.match(result.data.error, /dock at a station/i);
+    const stateAfter = (await api(srv.base, '/api/state')).data.state;
+    assert.equal(stateAfter.actionAvailability.canUnequipAll, false);
+    assert.equal(stateAfter.actionAvailability.unequipAllReason, 'Dock at a station to unequip modules.');
+  });
+
   test('POST /api/fit-module rejects a slot type the ship has none of (400)', async () => {
     const st = (await api(srv.base, '/api/state')).data.state;
     const r = await api(srv.base, '/api/fit-module', { shipId: st.activeShipId, slotType: 'armor', slotIndex: 0, tier: 1 });
@@ -344,7 +444,7 @@ describe('HTTP API', () => {
   });
 
   test('POST /api/deposit and /api/withdraw reject when not docked (400)', async () => {
-    await api(srv.base, '/api/tick', { x: 100, y: 100 });
+    await api(srv.base, '/api/warp', { x: 100, y: 100 });
     const dep = await api(srv.base, '/api/deposit', { mineral: 'iron', amount: 10 });
     assert.equal(dep.status, 400);
     assert.match(dep.data.error, /dock/i);
@@ -357,7 +457,7 @@ describe('HTTP API', () => {
     const st = (await api(srv.base, '/api/state')).data.state;
     const a = st.world.asteroids.find((x) => x.amount > 0);
     await flyTo(srv.base, a.x, a.y);
-    const r = await api(srv.base, '/api/tick', { x: a.x, y: a.y });
+    const r = await api(srv.base, '/api/tick', {});
     assert.equal(r.status, 200);
     assert.ok(r.data.state.stats.totalMineralsMined > 0);
     assert.ok(Object.values(r.data.state.minerals).some((amount) => amount > 0));
@@ -418,6 +518,36 @@ describe('HTTP API', () => {
     assert.equal(res.status, 200);
     const html = await res.text();
     assert.match(html, /<canvas id="world">/);
+  });
+
+  test('development server refreshes the browser when frontend files change', async () => {
+    const dev = await startServer(tmpDataFile(), { liveReload: true });
+    const changedFile = path.join(__dirname, '..', 'public', `__live-reload-${process.pid}-${Date.now()}.tmp`);
+    let reader;
+    try {
+      const page = await fetch(dev.base + '/');
+      assert.match(await page.text(), /__dev\/live-reload/);
+
+      const events = await fetch(dev.base + '/__dev/live-reload');
+      reader = events.body.getReader();
+      const connected = await reader.read();
+      assert.match(new TextDecoder().decode(connected.value), /event: session/);
+
+      const changeEvent = reader.read();
+      fs.writeFileSync(changedFile, 'changed');
+      let timeout;
+      const changed = await Promise.race([
+        changeEvent,
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('Timed out waiting for live reload')), 2000);
+        }),
+      ]).finally(() => clearTimeout(timeout));
+      assert.match(new TextDecoder().decode(changed.value), /event: change/);
+    } finally {
+      if (reader) await reader.cancel();
+      if (fs.existsSync(changedFile)) fs.unlinkSync(changedFile);
+      await dev.close();
+    }
   });
 
   test('POST /api/mode starts a story save with item supplies and the first mission', async () => {

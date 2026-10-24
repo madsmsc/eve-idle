@@ -1,6 +1,6 @@
 'use strict';
 
-// Cargo, fitting, and shared Quantum Storage menu content.
+// Ship loadout, cargo, and shared Quantum Storage menu content.
 // DOM is rebuilt when a menu page opens or state changes while one is active.
 import { Node } from '../core/node.js';
 import { fmt } from '../core/util.js';
@@ -26,7 +26,7 @@ export class InventoryNode extends Node {
 
   update(dt) {
     this.statsTimer -= dt;
-    if (this.statsTimer <= 0 && this.app.menuPageOpen && this.app.activeMenu === 'fitting' && this.app.state) {
+    if (this.statsTimer <= 0 && this.app.menuPageOpen && this.app.activeMenu === 'cargo' && this.app.state) {
       this.statsTimer = 0.25;
       this.renderStats();
     }
@@ -48,14 +48,14 @@ export class InventoryNode extends Node {
   }
 
   renderStats() {
-    const { state, player, constants } = this.app;
+    const { state, constants } = this.app;
     const ship = state.activeShip;
     const el = document.getElementById('fit-stats');
     el.innerHTML = '';
     if (!ship) return;
     const shield = state.combat ? state.combat.shipShield : ship.shield;
     const hull = state.combat ? state.combat.shipHull : ship.hull;
-    const speed = player ? Math.hypot(player.vx, player.vy) : 0;
+    const speed = ship.speed || 0;
     const rows = [
       ['⛏ Mining', `${ship.mining.toFixed(1)}/s`],
       ['⚔ DPS', fmt(ship.dps)],
@@ -76,21 +76,30 @@ export class InventoryNode extends Node {
     const { state, catalog } = this.app;
     const ship = state.activeShip;
     const el = document.getElementById('inv-fitting');
-    document.getElementById('inv-ship-name').textContent = ship ? ship.name : '';
+    const totalSlots = ship ? Object.values(ship.slots).reduce((total, count) => total + count, 0) : 0;
+    document.getElementById('inv-ship-name').textContent = ship ? `${ship.name} · ${totalSlots} slots` : '';
     el.innerHTML = '';
     this.renderStats();
     const presetSelect = document.getElementById('fitting-preset-select');
+    const presets = state.fittingPresets || [];
+    document.getElementById('fitting-presets').hidden = presets.length === 0;
     presetSelect.innerHTML = '<option value="">Saved presets</option>';
-    for (const preset of state.fittingPresets || []) {
+    for (const preset of presets) {
       const option = document.createElement('option');
       option.value = preset.name;
       option.textContent = `${preset.name} (${catalog.ships[preset.shipType].name})`;
       presetSelect.appendChild(option);
     }
-    if (presetSelect.options.length > 1) presetSelect.value = presetSelect.options[1].value;
-    document.querySelector('[data-action="save-fitting-preset"]').disabled = !ship;
+    if (presets.length) presetSelect.value = presets[0].name;
     document.querySelector('[data-action="apply-fitting-preset"]').disabled = !ship || presetSelect.options.length === 1;
     document.querySelector('[data-action="delete-fitting-preset"]').disabled = !presetSelect.value;
+    const unequipAll = document.querySelector('[data-action="unequip-all"]');
+    const canUnequipAll = state.actionAvailability.canUnequipAll;
+    unequipAll.disabled = !canUnequipAll;
+    document.getElementById('unequip-all-hint').textContent = canUnequipAll
+      ? 'Returns all fitted modules to inventory.'
+      : state.actionAvailability.unequipAllReason;
+    document.getElementById('loadout-hint').textContent = 'Fitted modules are shown here. Equip modules from Cargo; unequipped modules return to Cargo.';
     if (!ship) {
       el.innerHTML = '<div class="row"><span class="sub">No active ship.</span></div>';
       return;
@@ -98,19 +107,32 @@ export class InventoryNode extends Node {
     for (const slotType of Object.keys(catalog.modules)) {
       const count = ship.slots[slotType] || 0;
       const tiers = ship.fitting[slotType] || [];
+      if (!count) continue;
+      const equippedCount = tiers.slice(0, count).filter((tier) => tier > 0).length;
+      const group = document.createElement('section');
+      group.className = 'loadout-group';
+      group.dataset.slotType = slotType;
+      const heading = document.createElement('h4');
+      heading.innerHTML = `${catalog.modules[slotType].name}<span class="sub">${equippedCount}/${count} fitted</span>`;
+      group.appendChild(heading);
+      const slots = document.createElement('div');
+      slots.className = 'loadout-slots';
       for (let i = 0; i < count; i++) {
         const t = tiers[i] || 0;
-        const buttons = [0, 1, 2, 3, 4].map((tier) => {
-          const label = tier === 4 ? 'Faction' : ROMAN[tier];
-          const active = t === tier ? ' active' : '';
-          const available = tier === 0 || tier === t || (state.loot || []).some((item) => item.slotType === slotType && item.tier === tier);
-          return `<button class="mini fit-btn${active}" data-action="fit-module" data-ship="${ship.id}" data-slot="${slotType}" data-index="${i}" data-tier="${tier}" data-testid="fit-${slotType}-${i}-t${tier}" ${state.docked && available ? '' : 'disabled'}>${label}</button>`;
-        }).join('');
-        const row = document.createElement('div');
-        row.className = 'row';
-        row.innerHTML = `<span class="label">${catalog.modules[slotType].name} <span class="sub">slot ${i + 1}</span></span><span class="actions">${buttons}</span>`;
-        el.appendChild(row);
+        const card = document.createElement('div');
+        card.className = 'loadout-card';
+        const slot = document.createElement('div');
+        slot.className = 'loadout-slot';
+        slot.dataset.testid = `fit-slot-${slotType}-${i}`;
+        slot.setAttribute('role', 'group');
+        slot.setAttribute('aria-label', `${catalog.modules[slotType].name} slot ${i + 1}`);
+        const tierLabel = t ? `Tier ${ROMAN[t] || t}` : 'Empty';
+        slot.innerHTML = `<span class="loadout-slot-name">Slot ${i + 1}</span><span class="loadout-slot-tier">${tierLabel}</span>`;
+        card.appendChild(slot);
+        slots.appendChild(card);
       }
+      group.appendChild(slots);
+      el.appendChild(group);
     }
   }
 
@@ -152,7 +174,7 @@ export class InventoryNode extends Node {
     const { cells, total } = this.buildCells();
     if (this.selected && !cells.some((c) => c.select === this.selected)) this.selected = null;
     const storeAll = document.querySelector('[data-testid="inv-deposit-all"]');
-    storeAll.disabled = !state.docked || state.cargoUsed <= 0;
+    storeAll.disabled = !state.actionAvailability.canDepositAll;
 
     grid.innerHTML = '';
     grid.style.gridTemplateColumns = `repeat(${COLUMNS}, 1fr)`;
@@ -213,13 +235,14 @@ export class InventoryNode extends Node {
     if (kind === 'item') {
       const def = catalog.minerals[id] || catalog.components[id];
       const amt = (state.materials && state.materials[id]) || 0;
+      const deposit = state.actionAvailability.deposit[id];
       const row = document.createElement('div');
       row.className = 'row';
       row.innerHTML = `
         <span class="label">${def.name} <span class="sub">${fmt(amt)} in ship cargo</span></span>
         <span class="actions">
-          <button class="mini" data-action="deposit" data-mineral="${id}" data-amount="100" data-testid="inv-deposit-${id}-100" ${docked && amt > 0 ? '' : 'disabled'}>Deposit 100</button>
-          <button class="mini" data-action="deposit" data-mineral="${id}" data-amount="all" data-testid="inv-deposit-${id}-all" ${docked && amt > 0 ? '' : 'disabled'}>All</button>
+          <button class="mini" data-action="deposit" data-mineral="${id}" data-amount="100" data-testid="inv-deposit-${id}-100" ${deposit.canDeposit100 ? '' : 'disabled'}>Deposit 100</button>
+          <button class="mini" data-action="deposit" data-mineral="${id}" data-amount="all" data-testid="inv-deposit-${id}-all" ${deposit.canDepositAll ? '' : 'disabled'}>All</button>
         </span>`;
       el.appendChild(row);
       if (!docked) note('Dock at any station to store or exchange materials.');
@@ -230,14 +253,15 @@ export class InventoryNode extends Node {
       if (!loot) return;
       const row = document.createElement('div');
       row.className = 'row';
+      const availability = state.actionAvailability.loot[loot.id];
       row.innerHTML = `
         <span class="label">${loot.name} <span class="sub">Tier ${ROMAN[loot.tier] || loot.tier}</span></span>
         <span class="actions">
-          <button class="mini" data-action="equip-loot" data-loot="${loot.id}" data-testid="inv-equip-${loot.id}" ${docked ? '' : 'disabled'}>Equip</button>
+          <button class="mini" data-action="equip-loot" data-loot="${loot.id}" data-testid="inv-equip-${loot.id}" ${availability.canEquip ? '' : 'disabled'}>${availability.canEquip ? 'Equip' : 'Equip unavailable'}</button>
           <button class="mini" data-action="refine-loot" data-loot="${loot.id}" data-testid="inv-refine-loot-${loot.id}" ${docked ? '' : 'disabled'}>Salvage</button>
         </span>`;
       el.appendChild(row);
-      if (!docked) note('Dock at a station to equip or salvage this module.');
+      if (!availability.canEquip) note(availability.equipReason);
       return;
     }
     if (kind === 'blueprint') {

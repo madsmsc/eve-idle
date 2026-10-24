@@ -6,8 +6,8 @@
 //
 // The world is a 2D plane. Your active ship has a position; you mine the
 // asteroid you are standing next to and you can only engage an enemy you are
-// close to. The client only sends intents (its position, "buy X", "engage Y");
-// all ranges, yields, rewards and timing are computed here.
+// close to. The client only sends intents; movement, ranges, yields, rewards
+// and timing are computed here.
 
 const {
   SHIPS,
@@ -60,6 +60,8 @@ const {
   DOCK_RANGE,
   GATE_RANGE,
   MAX_SPEED,
+  DAMPING,
+  ARRIVE_RADIUS,
   STATE_VERSION,
 } = require('./config');
 
@@ -105,11 +107,14 @@ function agentMissionView(state, now = Date.now()) {
   const stored = state.agentMission;
   const active = stored && stored.status === 'active' && AGENT_MISSIONS.find((mission) => mission.key === stored.key);
   const availableAt = (state.agentMissionCompletedAt || 0) + AGENT_MISSION_COOLDOWN_MS;
+  const offerIndex = Math.floor(now / AGENT_MISSION_COOLDOWN_MS) % AGENT_MISSIONS.length;
   return {
     active: active ? { ...active, progress: Math.min(active.target, stored.progress), status: 'active' } : null,
     completed: stored && stored.status === 'complete' ? AGENT_MISSIONS.find((mission) => mission.key === stored.key).name : null,
     available: !(stored && stored.status === 'active') && now >= availableAt,
     availableAt,
+    remainingMs: Math.max(0, availableAt - now),
+    offer: AGENT_MISSIONS[offerIndex],
   };
 }
 function resetIds() {
@@ -185,6 +190,169 @@ function skillMults(state) {
 function skillCost(def, currentLevel) {
   return Math.round(def.baseCost * Math.pow(def.costGrowth, currentLevel));
 }
+
+function skillTrainingView(state) {
+  return Object.fromEntries(Object.entries(SKILLS).map(([key, def]) => {
+    const level = (state.skills && state.skills[key]) || 0;
+    const maxed = level >= def.maxLevel;
+    const cost = maxed ? 0 : skillCost(def, level);
+    return [key, {
+      level,
+      cost,
+      maxed,
+      canTrain: !maxed && (state.skillPoints || 0) >= cost,
+    }];
+  }));
+}
+
+function shipProgressionView(state, materials, docked) {
+  return Object.fromEntries(SHIP_PROGRESSION.flatMap((tier) => tier.ships.map((entry) => {
+    const blueprint = SHIP_BLUEPRINTS[entry.type];
+    const skillsReady = entry.skills.every((requirement) =>
+      ((state.skills && state.skills[requirement.skill]) || 0) >= requirement.level
+    );
+    const materialsReady = !blueprint || Object.entries(blueprint.recipe).every(([key, amount]) =>
+      (materials[key] || 0) >= amount
+    );
+    const materialCounts = blueprint
+      ? Object.fromEntries(Object.keys(blueprint.recipe).map((key) => [key, materials[key] || 0]))
+      : {};
+    const blueprintReady = entry.type === 'rifter' || (state.blueprints || []).some((item) =>
+      item.kind === 'ship' && item.type === entry.type
+    );
+    return [entry.type, {
+      skillsReady,
+      materialsReady,
+      blueprintReady,
+      canBuild: entry.type !== 'rifter' && docked && skillsReady && materialsReady && blueprintReady,
+      materials: blueprint ? { ...blueprint.recipe } : {},
+      materialCounts,
+    }];
+  })));
+}
+
+function actionAvailability(state, materials, docked, active) {
+  const craftModules = {};
+  for (const [slotType, tiers] of Object.entries(BLUEPRINTS)) {
+    for (const [tier, blueprint] of Object.entries(tiers)) {
+      const hasBlueprint = (state.blueprints || []).some((item) =>
+        item.kind === 'module' && item.type === slotType && item.tier === Number(tier)
+      );
+      const hasMaterials = Object.entries(blueprint.recipe).every(([key, amount]) =>
+        (materials[key] || 0) >= amount
+      );
+      craftModules[`${slotType}:${tier}`] = {
+        hasBlueprint,
+        hasMaterials,
+        materialCounts: Object.fromEntries(Object.keys(blueprint.recipe).map((key) => [key, materials[key] || 0])),
+        canCraft: docked && hasBlueprint && hasMaterials,
+      };
+    }
+  }
+
+  const buyBlueprints = {};
+  for (const key of NPC_BLUEPRINTS) {
+    const cost = BLUEPRINT_COSTS[key];
+    const hasMaterials = Object.entries(cost).every(([material, amount]) => (materials[material] || 0) >= amount);
+    buyBlueprints[key] = {
+      hasMaterials,
+      canBuy: docked && hasMaterials,
+      materialCounts: Object.fromEntries(Object.keys(cost).map((material) => [material, materials[material] || 0])),
+    };
+  }
+
+  const exchange = {};
+  for (const [family, ladder] of [['ore', ORE_EXCHANGE], ['components', COMPONENT_EXCHANGE]]) {
+    for (let index = 0; index < ladder.length - 1; index++) {
+      const item = ladder[index];
+      const count = materials[item] || 0;
+      exchange[`${family}:${item}`] = { count, canExchange: docked && count >= 3 };
+    }
+  }
+
+  const fitting = {};
+  const fittingReasons = {};
+  const loot = {};
+  const deposit = {};
+  for (const key of Object.keys(materials)) {
+    const amount = active && active.cargo ? active.cargo[key] || 0 : 0;
+    deposit[key] = {
+      canDeposit100: docked && amount >= 100,
+      canDepositAll: docked && amount > 0,
+    };
+  }
+  if (active) {
+    for (const [slotType, tiers] of Object.entries(active.fitting || {})) {
+      for (let slotIndex = 0; slotIndex < tiers.length; slotIndex++) {
+        const currentTier = tiers[slotIndex] || 0;
+        for (let tier = 0; tier <= MODULES[slotType].tiers.length; tier++) {
+          const hasItem = tier === 0 || tier === currentTier || (state.loot || []).some((item) =>
+            item.slotType === slotType && item.tier === tier
+          );
+          const skillError = tier > 0 && tier !== currentTier
+            ? moduleSkillError(state, slotType, tier)
+            : null;
+          const key = `${active.id}:${slotType}:${slotIndex}:${tier}`;
+          const reason = !docked
+            ? 'Dock at a station to change fittings.'
+            : state.combat
+              ? 'Modules cannot be changed during combat.'
+              : skillError
+                ? `${skillError}.`
+                : !hasItem
+                  ? `No ${MODULES[slotType].name} Tier ${tier} module in inventory.`
+                  : '';
+          fitting[key] = reason === '';
+          fittingReasons[key] = reason;
+        }
+      }
+    }
+  }
+  for (const item of state.loot || []) {
+    const module = MODULES[item.slotType];
+    const fitted = active && active.fitting && active.fitting[item.slotType];
+    const activeSlots = active && SHIPS[active.type] ? SHIPS[active.type].slots : {};
+    const skillError = module ? moduleSkillError(state, item.slotType, item.tier) : null;
+    const reason = !docked
+      ? 'Dock at a station to equip modules.'
+      : state.combat
+        ? 'Modules cannot be changed during combat.'
+        : !active
+          ? 'There is no active ship.'
+          : !module || !activeSlots[item.slotType]
+            ? `Active ship has no ${module ? module.name : 'matching'} slots.`
+            : skillError
+              ? `${skillError}.`
+              : !fitted || !fitted.some((tier) => !tier)
+                ? `All ${module.name} slots are occupied.`
+                : '';
+    loot[item.id] = { canEquip: reason === '', equipReason: reason };
+  }
+  const hasFittedModules = !!active && Object.values(active.fitting || {}).some((tiers) =>
+    Array.isArray(tiers) && tiers.some((tier) => tier > 0)
+  );
+  const unequipAllReason = !docked
+    ? 'Dock at a station to unequip modules.'
+    : state.combat
+      ? 'Modules cannot be changed during combat.'
+      : !active
+        ? 'There is no active ship.'
+        : !hasFittedModules
+          ? 'No fitted modules to return.'
+          : '';
+  return {
+    craftModules,
+    buyBlueprints,
+    exchange,
+    fitting,
+    fittingReasons,
+    loot,
+    deposit,
+    canDepositAll: docked && cargoUsed(state) > 0,
+    canUnequipAll: unequipAllReason === '',
+    unequipAllReason,
+  };
+}
 // Train a skill up one level, spending skill points.
 function trainSkill(state, skillKey) {
   const def = SKILLS[skillKey];
@@ -199,20 +367,6 @@ function trainSkill(state, skillKey) {
   }
   s.skillPoints -= cost;
   s.skills[skillKey] = current + 1;
-  return { state: s };
-}
-
-function saveFittingPreset(state, name) {
-  if (typeof name !== 'string' || !name.trim() || name.trim().length > 24) return { error: 'Preset name must be 1–24 characters' };
-  const ship = state.ships.find((item) => item.id === state.activeShipId);
-  if (!ship) return { error: 'No active ship' };
-  const s = clone(state);
-  if (!Array.isArray(s.fittingPresets)) s.fittingPresets = [];
-  const normalized = name.trim();
-  const existing = s.fittingPresets.find((preset) => preset.name.toLowerCase() === normalized.toLowerCase());
-  if (existing && existing.shipType !== ship.type) return { error: 'That preset name is already used for a different ship type' };
-  if (existing) existing.fitting = clone(ship.fitting || emptyFitting(ship.type));
-  else s.fittingPresets.push({ name: normalized, shipType: ship.type, fitting: clone(ship.fitting || emptyFitting(ship.type)) });
   return { state: s };
 }
 
@@ -404,6 +558,7 @@ function shipSkillError(state, type) {
 // first empty slot of its type on the active ship, free of charge.
 function equipLoot(state, lootId) {
   if (!isDocked(state)) return { error: 'Dock at a station to equip modules' };
+  if (state.combat) return { error: 'Modules cannot be changed during combat' };
   const s = clone(state);
   if (!Array.isArray(s.loot)) s.loot = [];
   const idx = s.loot.findIndex((l) => l && l.id === lootId);
@@ -1036,6 +1191,10 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
     systemId: homeSystem.id,
     dockTargetId: homeSystem.stations[0].id,
     dockedStationId: homeSystem.stations[0].id,
+    navigation: null,
+    vx: 0,
+    vy: 0,
+    heading: 0,
     cargo: emptyCargo(),
     fitting: emptyFitting('rifter'),
   };
@@ -1045,6 +1204,8 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
     mission: { active: mode === 'story' ? 'm1' : null, step: 0, flags: {}, completed: [] },
     agentMission: null,
     agentMissionCompletedAt: 0,
+    autoPilotMode: null,
+    automationLog: [],
     systems,
     ships: [rifter],
     activeShipId: rifter.id,
@@ -1180,9 +1341,279 @@ function mineActive(s, active, seconds) {
   }
 }
 
-// Advance the simulation to `now`. `pos` is the client-reported position of the
-// active ship (used for spatial mining/combat). Collects idle mining and
-// resolves any combat whose timer elapsed.
+function setNavigation(ship, x, y, targetId = null, dockTargetId = null, orbitTargetId = null) {
+  ship.navigation = { x, y, targetId, dockTargetId, orbitTargetId };
+  ship.dockTargetId = dockTargetId;
+  ship.dockedStationId = null;
+}
+
+function nearestStationFor(ship, sys) {
+  return sys.stations.reduce((best, station) => {
+    const distance = dist(ship.x, ship.y, station.x, station.y);
+    return !best || distance < best.distance ? { station, distance } : best;
+  }, null);
+}
+
+function nearestSafeRat(state, ship, sys) {
+  return sys.enemies
+    .filter((enemy) => enemy.alive)
+    .map((enemy) => ({ enemy, difficulty: estimateCombatDifficulty(state, ship, enemy) }))
+    .filter(({ difficulty }) => difficulty.ratio !== null && difficulty.ratio >= 0.85)
+    .sort((a, b) =>
+      dist(a.enemy.x, a.enemy.y, ship.x, ship.y) - dist(b.enemy.x, b.enemy.y, ship.x, ship.y)
+    )[0]?.enemy || null;
+}
+
+function bestBeltTarget(ship, sys) {
+  const values = new Map();
+  for (const asteroid of sys.asteroids) {
+    if (asteroid.amount <= 0) continue;
+    const tier = MINERALS[asteroid.mineral].tier || 1;
+    values.set(asteroid.beltId, (values.get(asteroid.beltId) || 0) + asteroid.amount * tier);
+  }
+  return sys.belts
+    .map((belt) => ({
+      belt,
+      score: (values.get(belt.id) || 0) / Math.max(1, dist(belt.x, belt.y, ship.x, ship.y)),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.belt || null;
+}
+
+function recordAutomation(state, message, at = Date.now()) {
+  if (!Array.isArray(state.automationLog)) state.automationLog = [];
+  state.automationLog.unshift({ at, message });
+  state.automationLog.length = Math.min(state.automationLog.length, 20);
+}
+
+function setAutopilotNavigation(state, ship, x, y, targetId = null, dockTargetId = null, orbitTargetId = null) {
+  const current = ship.navigation;
+  if (current && current.x === x && current.y === y && current.targetId === targetId &&
+      current.dockTargetId === dockTargetId && current.orbitTargetId === orbitTargetId) return;
+  setNavigation(ship, x, y, targetId, dockTargetId, orbitTargetId);
+  const sys = activeSystem(state);
+  const target = targetId && sys && sys.enemies.find((enemy) => enemy.id === targetId);
+  const station = dockTargetId && sys && sys.stations.find((item) => item.id === dockTargetId);
+  recordAutomation(state, target
+    ? `Engaging ${ENEMIES[target.type].name}`
+    : station ? `Returning to ${station.name}` : 'Traveling to a mining site');
+}
+
+function launchForAutopilot(ship, station) {
+  ship.x = clamp(station.x + DOCK_RANGE + 30, 0, WORLD_SIZE);
+  ship.y = station.y;
+  ship.vx = 0;
+  ship.vy = 0;
+  ship.dockedStationId = null;
+  ship.dockTargetId = null;
+}
+
+function runAutopilot(state, ship, sys, now) {
+  const mode = state.autoPilotMode;
+  if (!mode || state.combat || !ship || !sys) return;
+  const canMine = mode === 'mine' || mode === 'mine_hunt';
+  const canHunt = mode === 'hunt' || mode === 'mine_hunt';
+  const station = nearestStationFor(ship, sys);
+
+  if (isDocked(state)) {
+    if (cargoUsed(state) > 0) {
+      const stored = state.storage.items;
+      const storedCount = cargoUsed(state);
+      for (const [key, amount] of Object.entries(ship.cargo)) {
+        stored[key] = (stored[key] || 0) + amount;
+        ship.cargo[key] = 0;
+      }
+      recordAutomation(state, `Stored ${Math.floor(storedCount)} cargo`);
+    }
+    const belt = canMine ? bestBeltTarget(ship, sys) : null;
+    const rat = !belt && canHunt ? nearestSafeRat(state, ship, sys) : null;
+    const target = belt || rat;
+    if (!target) {
+      state.autoPilotMode = null;
+      ship.navigation = null;
+      recordAutomation(state, 'No suitable targets remain; auto-pilot stopped');
+      return;
+    }
+    const docked = dockedStation(state);
+    launchForAutopilot(ship, docked || station.station);
+    if (belt) {
+      const rock = closestBeltAsteroid(sys, belt, ship) || belt;
+      setAutopilotNavigation(state, ship, rock.x, rock.y, null, null, rock.id);
+    } else {
+      setAutopilotNavigation(state, ship, rat.x, rat.y, rat.id);
+    }
+    return;
+  }
+
+  if (cargoUsed(state) >= cargoCapacity(state)) {
+    if (station) setAutopilotNavigation(state, ship, station.station.x, station.station.y, null, station.station.id);
+    return;
+  }
+  const navigation = ship.navigation;
+  const navigationTarget = canHunt && navigation && navigation.targetId
+    ? sys.enemies.find((enemy) => enemy.id === navigation.targetId && enemy.alive)
+    : null;
+  if (navigationTarget && dist(navigationTarget.x, navigationTarget.y, ship.x, ship.y) <= ENGAGE_RANGE) {
+    startCombat(state, navigationTarget.id, now);
+    ship.navigation = null;
+    return;
+  }
+  const availableBelt = canMine ? bestBeltTarget(ship, sys) : null;
+  const availableRat = canHunt ? nearestSafeRat(state, ship, sys) : null;
+  if (!availableBelt && !availableRat) {
+    state.autoPilotMode = null;
+    ship.navigation = null;
+    ship.dockTargetId = null;
+    recordAutomation(state, 'No suitable targets remain; auto-pilot stopped');
+    return;
+  }
+  if (navigation && (
+    (navigation.targetId && sys.enemies.some((enemy) => enemy.id === navigation.targetId && enemy.alive)) ||
+    (navigation.dockTargetId && sys.stations.some((item) => item.id === navigation.dockTargetId)) ||
+    sys.asteroids.some((asteroid) =>
+      asteroid.amount > 0 && asteroid.x === navigation.x && asteroid.y === navigation.y)
+  )) return;
+  if (nearestAsteroidInRange(state, ship)) return;
+  if (canHunt) {
+    const rat = nearestSafeRat(state, ship, sys);
+    if (rat) {
+      setAutopilotNavigation(state, ship, rat.x, rat.y, rat.id);
+      if (dist(rat.x, rat.y, ship.x, ship.y) <= ENGAGE_RANGE) {
+        startCombat(state, rat.id, now);
+        ship.navigation = null;
+      }
+      return;
+    }
+  }
+  if (canMine) {
+    const belt = bestBeltTarget(ship, sys);
+    if (belt) {
+      const rock = closestBeltAsteroid(sys, belt, ship) || belt;
+      setAutopilotNavigation(state, ship, rock.x, rock.y, null, null, rock.id);
+      return;
+    }
+  }
+}
+
+function moveInOrbit(ship, target, radius, seconds, sys) {
+  const distance = dist(target.x, target.y, ship.x, ship.y);
+  const targetKey = target.id || `${target.x}:${target.y}`;
+  if (ship.orbitTargetKey !== targetKey) {
+    ship.orbitTargetKey = targetKey;
+    ship.orbitAngle = distance > 0 ? Math.atan2(ship.y - target.y, ship.x - target.x) : ship.heading || 0;
+  }
+  ship.orbitAngle += seconds * 0.18;
+  const desiredX = target.x + Math.cos(ship.orbitAngle) * radius;
+  const desiredY = target.y + Math.sin(ship.orbitAngle) * radius;
+  const previousX = ship.x;
+  const previousY = ship.y;
+  const response = 1 - Math.exp(-seconds * 4);
+  ship.x = clamp(ship.x + (desiredX - ship.x) * response, 0, sys.width);
+  ship.y = clamp(ship.y + (desiredY - ship.y) * response, 0, sys.height);
+  ship.vx = (ship.x - previousX) / seconds;
+  ship.vy = (ship.y - previousY) / seconds;
+  if (Math.hypot(ship.vx, ship.vy) > 4) ship.heading = Math.atan2(ship.vy, ship.vx);
+  ship.distanceTravelled = (ship.distanceTravelled || 0) + Math.hypot(ship.x - previousX, ship.y - previousY);
+}
+
+function advanceNavigation(ship, sys, seconds, combat = null) {
+  if (ship.dockedStationId) return;
+  let destination = ship.navigation;
+  const combatEnemy = combat && combat.shipId === ship.id
+    ? sys.enemies.find((enemy) => enemy.id === combat.enemyId && enemy.alive)
+    : null;
+  const enemy = combatEnemy || (destination && destination.targetId
+    ? sys.enemies.find((item) => item.id === destination.targetId && item.alive)
+    : null);
+  const asteroid = destination && destination.orbitTargetId
+    ? sys.asteroids.find((item) => item.id === destination.orbitTargetId && item.amount > 0)
+    : null;
+  if (destination && destination.orbitTargetId && !asteroid) {
+    ship.navigation = null;
+    destination = null;
+  }
+  const nearbyAsteroid = !destination && !combat
+    ? sys.asteroids
+      .filter((item) => item.amount > 0)
+      .map((item) => ({ item, distance: dist(item.x, item.y, ship.x, ship.y) }))
+      .filter(({ distance }) => distance <= miningRange(ship))
+      .sort((a, b) => a.distance - b.distance)[0]?.item || null
+    : null;
+  const orbit = combatEnemy
+    ? { target: combatEnemy, radius: 150 }
+    : enemy && destination && dist(enemy.x, enemy.y, ship.x, ship.y) <= 162
+      ? { target: enemy, radius: 150 }
+      : asteroid && dist(asteroid.x, asteroid.y, ship.x, ship.y) <= 112
+        ? { target: asteroid, radius: 100 }
+        : nearbyAsteroid
+          ? { target: nearbyAsteroid, radius: 100 }
+          : null;
+  if (orbit) {
+    moveInOrbit(ship, orbit.target, orbit.radius, seconds, sys);
+    return;
+  }
+  ship.orbitTargetKey = null;
+  ship.orbitAngle = null;
+  if (!destination) {
+    ship.vx = 0;
+    ship.vy = 0;
+    return;
+  }
+  const dx = destination.x - ship.x;
+  const dy = destination.y - ship.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance <= ARRIVE_RADIUS) {
+    const station = destination.dockTargetId && sys.stations.find((item) => item.id === destination.dockTargetId);
+    ship.navigation = null;
+    ship.vx = 0;
+    ship.vy = 0;
+    if (station) {
+      ship.x = station.x;
+      ship.y = station.y;
+      ship.dockTargetId = station.id;
+      ship.dockedStationId = station.id;
+    }
+    return;
+  }
+  const desired = Math.min(MAX_SPEED, distance * 0.6);
+  const steer = Math.min(1, seconds * 2.2);
+  ship.vx = (ship.vx || 0) + ((dx / distance) * desired - (ship.vx || 0)) * steer;
+  ship.vy = (ship.vy || 0) + ((dy / distance) * desired - (ship.vy || 0)) * steer;
+  const damping = Math.pow(DAMPING, seconds * 60);
+  ship.vx *= damping;
+  ship.vy *= damping;
+  const speed = Math.hypot(ship.vx, ship.vy);
+  if (speed > MAX_SPEED) {
+    ship.vx = (ship.vx / speed) * MAX_SPEED;
+    ship.vy = (ship.vy / speed) * MAX_SPEED;
+  }
+  const oldX = ship.x;
+  const oldY = ship.y;
+  ship.x = clamp(ship.x + ship.vx * seconds, 0, sys.width);
+  ship.y = clamp(ship.y + ship.vy * seconds, 0, sys.height);
+  ship.heading = Math.atan2(ship.vy, ship.vx);
+  ship.distanceTravelled = (ship.distanceTravelled || 0) + Math.hypot(ship.x - oldX, ship.y - oldY);
+}
+
+function recordMiningProgress(state, beforeMined, beforeOreBelts, now) {
+  const mined = (state.stats.totalMineralsMined || 0) - beforeMined;
+  const sys = activeSystem(state);
+  const afterOreBelts = new Set(sys.asteroids.filter((asteroid) => asteroid.amount > 0).map((asteroid) => asteroid.beltId));
+  for (const beltId of beforeOreBelts) {
+    if (!afterOreBelts.has(beltId)) state.stats.beltsCompleted = (state.stats.beltsCompleted || 0) + 1;
+  }
+  advanceAgentMission(state, 'mine', mined);
+  if (state.autoPilotMode && mined > 0) recordAutomation(state, `Mined ${Math.floor(mined)} ore`, now);
+  if (state.mode === 'story' && state.mission && state.mission.active) {
+    const definition = MISSIONS[state.mission.active];
+    if (definition && definition.objective.type === 'mine') {
+      state.mission.flags.mined = (state.mission.flags.mined || 0) + mined;
+    }
+  }
+}
+
+// Advance the simulation to `now`. Ship movement and automation are simulated
+// from server-held navigation intent; clients never submit authoritative positions.
 function tick(state, now = Date.now(), pos = null, rng = Math.random) {
   const s = clone(state);
   let elapsed = (now - s.lastTick) / 1000;
@@ -1216,23 +1647,35 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
       : null;
   }
 
-  if (active && !shipInCombat(s, active.id) && seconds > 0) {
+  if (active && sys && !pos && seconds > 0 &&
+      (active.navigation || s.autoPilotMode || s.combat || nearestAsteroidInRange(s, active))) {
     const beforeMined = s.stats.totalMineralsMined || 0;
-    const beforeOreBelts = sys ? new Set(sys.asteroids.filter((a) => a.amount > 0).map((a) => a.beltId)) : new Set();
+    const beforeOreBelts = new Set(sys.asteroids.filter((asteroid) => asteroid.amount > 0).map((asteroid) => asteroid.beltId));
+    let remaining = seconds;
+    const movementStep = seconds <= 10 ? 0.05 : 0.5;
+    while (remaining > 0) {
+      const step = Math.min(0.5, remaining);
+      if (!s.combat) runAutopilot(s, active, sys, now - remaining * 1000);
+      let movementRemaining = step;
+      while (movementRemaining > 0) {
+        const substep = Math.min(movementStep, movementRemaining);
+        advanceNavigation(active, sys, substep, s.combat);
+        movementRemaining -= substep;
+      }
+      if (!shipInCombat(s, active.id)) mineActive(s, active, step);
+      remaining -= step;
+    }
+    recordMiningProgress(s, beforeMined, beforeOreBelts, now);
+    s.stats.distanceTraveled = (s.stats.distanceTraveled || 0) +
+      (active.distanceTravelled || 0);
+    active.distanceTravelled = 0;
+  } else if (active && !shipInCombat(s, active.id) && seconds > 0) {
+    const beforeMined = s.stats.totalMineralsMined || 0;
+    const beforeOreBelts = sys
+      ? new Set(sys.asteroids.filter((asteroid) => asteroid.amount > 0).map((asteroid) => asteroid.beltId))
+      : new Set();
     mineActive(s, active, seconds);
-    if (sys) {
-      const afterOreBelts = new Set(sys.asteroids.filter((a) => a.amount > 0).map((a) => a.beltId));
-      for (const bid of beforeOreBelts) {
-        if (!afterOreBelts.has(bid)) s.stats.beltsCompleted = (s.stats.beltsCompleted || 0) + 1;
-      }
-    }
-    advanceAgentMission(s, 'mine', (s.stats.totalMineralsMined || 0) - beforeMined);
-    if (s.mode === 'story' && s.mission && s.mission.active) {
-      const mdef = MISSIONS[s.mission.active];
-      if (mdef && mdef.objective.type === 'mine') {
-        s.mission.flags.mined = (s.mission.flags.mined || 0) + ((s.stats.totalMineralsMined || 0) - beforeMined);
-      }
-    }
+    if (sys) recordMiningProgress(s, beforeMined, beforeOreBelts, now);
   }
   // Skill points accrue over time (idle progression), including offline gaps.
   if (elapsed > 0) {
@@ -1413,6 +1856,25 @@ function fitModule(state, shipId, slotType, slotIndex, tier) {
   return { state: s };
 }
 
+function unequipAllModules(state) {
+  if (!isDocked(state)) return { error: 'Dock at a station to change fittings' };
+  if (state.combat) return { error: 'Cannot change fittings during combat' };
+  const s = clone(state);
+  const ship = s.ships.find((item) => item.id === s.activeShipId);
+  if (!ship) return { error: 'No active ship' };
+  if (!Array.isArray(s.loot)) s.loot = [];
+  for (const [slotType, tiers] of Object.entries(ship.fitting || {})) {
+    if (!MODULES[slotType] || !Array.isArray(tiers)) continue;
+    for (const tier of tiers) {
+      if (Number.isInteger(tier) && tier > 0) {
+        s.loot.push({ id: nextId(), slotType, tier });
+      }
+    }
+  }
+  ship.fitting = emptyFitting(ship.type);
+  return { state: s };
+}
+
 // Move minerals from the active ship's cargo hold into quantum storage. Storage
 // is shared by every station (see emptyStorage), so you can park ore at any
 // dock and pick it up anywhere else. Docking is required.
@@ -1525,12 +1987,19 @@ function engage(state, enemyId, now = Date.now()) {
   const ship = s.ships.find((sh) => sh.id === s.activeShipId);
   if (!ship) return { error: 'No active ship' };
   const sys = activeSystem(s);
-  const enemy = sys ? sys.enemies.find((e) => e.id === enemyId) : null;
+  const enemy = sys
+    ? enemyId
+      ? sys.enemies.find((e) => e.id === enemyId)
+      : sys.enemies
+        .filter((item) => item.alive && dist(item.x, item.y, ship.x, ship.y) <= ENGAGE_RANGE)
+        .sort((a, b) => dist(a.x, a.y, ship.x, ship.y) - dist(b.x, b.y, ship.x, ship.y))[0]
+    : null;
   if (!enemy || !enemy.alive) return { error: 'Target not found' };
   if (dist(enemy.x, enemy.y, ship.x, ship.y) > ENGAGE_RANGE) {
     return { error: 'Target out of range' };
   }
   startCombat(s, enemyId, now);
+  ship.navigation = null;
   return { state: s };
 }
 
@@ -1612,6 +2081,79 @@ function closestBeltAsteroid(sys, belt, from) {
   return best;
 }
 
+function navigate(state, request) {
+  const s = clone(state);
+  const ship = s.ships.find((item) => item.id === s.activeShipId);
+  const sys = activeSystem(s);
+  if (!ship || !sys) return { error: 'No active ship or system' };
+  if (s.combat) return { error: 'Cannot navigate while in combat' };
+  if (isDocked(s)) return { error: 'Launch from the station before navigating' };
+  if (request && request.cancel) {
+    ship.navigation = null;
+    ship.dockTargetId = null;
+    ship.vx = 0;
+    ship.vy = 0;
+    return { state: s };
+  }
+
+  let target = null;
+  if (request && request.kind) {
+    const lists = {
+      belt: sys.belts,
+      station: sys.stations,
+      rat: sys.enemies.filter((enemy) => enemy.alive),
+    };
+    const candidates = lists[request.kind];
+    if (!candidates) return { error: 'Unknown navigation target kind' };
+    target = candidates.reduce((best, poi) =>
+      !best || dist(poi.x, poi.y, ship.x, ship.y) < dist(best.x, best.y, ship.x, ship.y) ? poi : best
+    , null);
+    if (!target) return { error: `No ${request.kind} in this system` };
+  } else if (request && request.targetId) {
+    target = findPoi(sys, request.targetId);
+    if (!target || (sys.enemies.includes(target) && !target.alive)) {
+      return { error: 'Navigation target is no longer available' };
+    }
+  }
+
+  if (target) {
+    const asteroid = sys.belts.includes(target) ? closestBeltAsteroid(sys, target, ship) : null;
+    const destination = asteroid || target;
+    const station = sys.stations.find((item) => item.id === target.id);
+    const orbitTargetId = sys.asteroids.includes(destination) ? destination.id : null;
+    setNavigation(ship, destination.x, destination.y, sys.enemies.includes(target) ? target.id : null, station ? station.id : null, orbitTargetId);
+  } else if (request && Number.isFinite(request.x) && Number.isFinite(request.y)) {
+    setNavigation(ship, clamp(request.x, 0, sys.width), clamp(request.y, 0, sys.height));
+  } else {
+    return { error: 'Invalid navigation target' };
+  }
+  return { state: s };
+}
+
+function setAutopilot(state, mode) {
+  if (![null, 'mine', 'mine_hunt', 'hunt'].includes(mode)) return { error: 'Unknown autopilot mode' };
+  const s = clone(state);
+  s.autoPilotMode = mode;
+  recordAutomation(s, mode ? `Auto-pilot set to ${mode.replace('_', '+')}` : 'Auto-pilot stopped');
+  return { state: s };
+}
+
+function launch(state) {
+  const s = clone(state);
+  const ship = s.ships.find((item) => item.id === s.activeShipId);
+  const station = dockedStation(s);
+  const sys = activeSystem(s);
+  if (!ship || !station || !sys) return { error: 'Dock at a station before launching' };
+  ship.x = clamp(station.x + DOCK_RANGE + 30, 0, sys.width);
+  ship.y = station.y;
+  ship.vx = 0;
+  ship.vy = 0;
+  ship.navigation = null;
+  ship.dockTargetId = null;
+  ship.dockedStationId = null;
+  return { state: s };
+}
+
 // Warp the active ship instantly within its own system. `targetId` may be a POI
 // id (belt/station/rat/planet/moon/gate/star) or, if omitted, raw {x, y}
 // coordinates. This is the single-click navigation: no long flights.
@@ -1643,6 +2185,9 @@ function warp(state, targetId, x, y) {
   }
   ship.x = clamp(tx, 0, sys.width);
   ship.y = clamp(ty, 0, sys.height);
+  ship.navigation = null;
+  ship.vx = 0;
+  ship.vy = 0;
   return { state: s };
 }
 
@@ -1688,7 +2233,11 @@ function gateJump(state, gateId, rng = Math.random, now = Date.now()) {
   }
   const sys = activeSystem(s);
   if (!sys) return { error: 'No active system' };
-  const gate = (sys.gates || []).find((g) => g.id === gateId);
+  const gate = gateId
+    ? (sys.gates || []).find((item) => item.id === gateId)
+    : (sys.gates || [])
+      .filter((item) => dist(ship.x, ship.y, item.x, item.y) <= GATE_RANGE)
+      .sort((a, b) => dist(ship.x, ship.y, a.x, a.y) - dist(ship.x, ship.y, b.x, b.y))[0];
   if (!gate) return { error: 'Gate not found in this system' };
   if (dist(ship.x, ship.y, gate.x, gate.y) > GATE_RANGE) {
     return { error: 'Too far from the gate to jump' };
@@ -1701,6 +2250,9 @@ function gateJump(state, gateId, rng = Math.random, now = Date.now()) {
   ship.systemId = targetSys.id;
   ship.x = clamp(arriveX, 0, targetSys.width);
   ship.y = clamp(arriveY, 0, targetSys.height);
+  ship.navigation = null;
+  ship.vx = 0;
+  ship.vy = 0;
   ship.dockTargetId = null;
   ship.dockedStationId = null;
   // Lower security systems have a higher chance of gate ambushes.
@@ -1961,6 +2513,10 @@ function shipView(ship, mults, drone) {
     name: def.name,
     x: ship.x,
     y: ship.y,
+    vx: ship.vx || 0,
+    vy: ship.vy || 0,
+    heading: ship.heading || 0,
+    speed: Math.hypot(ship.vx || 0, ship.vy || 0),
     systemId: ship.systemId,
     // Effective stats: base stats plus the flat bonus of every fitted module,
     // with drones adding a player-level bonus and trained skills multiplying
@@ -1999,11 +2555,18 @@ function view(state) {
   const mults = skillMults(state);
   const drone = { mining: droneBonus(state, 'mining'), dps: droneBonus(state, 'combat') };
   const materials = active ? { ...emptyMaterials(), ...active.cargo } : emptyMaterials();
+  const storageItems = (state.storage && (state.storage.items || state.storage.minerals)) || emptyMaterials();
+  const dockedAt = dockedStation(state);
+  const progressionMaterials = { ...materials };
+  for (const [key, amount] of Object.entries(storageItems)) {
+    progressionMaterials[key] = (progressionMaterials[key] || 0) + amount;
+  }
   const v = {
     version: state.version,
     mode: state.mode,
     mission: missionView(state),
     agentMission: agentMissionView(state),
+    automationLog: state.automationLog || [],
     materials,
     minerals: Object.fromEntries(Object.keys(MINERALS).map((key) => [key, materials[key] || 0])),
     ships: state.ships.map((sh) => shipView(sh, mults, drone)),
@@ -2039,9 +2602,7 @@ function view(state) {
     }),
     // Quantum storage (shared by every station) — mirrors of the raw state so
     // the client can render the inventory overlay.
-    storage: {
-      items: (state.storage && (state.storage.items || state.storage.minerals)) || emptyMaterials(),
-    },
+    storage: { items: storageItems },
     combat: state.combat
       ? combatView(state.combat)
       : null,
@@ -2099,10 +2660,14 @@ function view(state) {
     ),
   };
   v.activeShip = active ? shipView(active, mults, drone) : null;
-  const ds = dockedStation(state);
-  v.docked = !!ds;
-  v.dockedStation = ds ? ds.name : null;
+  v.docked = !!dockedAt;
+  v.dockedStation = dockedAt ? dockedAt.name : null;
   v.dockTargetId = active ? active.dockTargetId || null : null;
+  v.navigation = active && active.navigation ? { ...active.navigation } : null;
+  v.autoPilotMode = state.autoPilotMode || null;
+  v.skillTraining = skillTrainingView(state);
+  v.shipProgression = shipProgressionView(state, progressionMaterials, v.docked);
+  v.actionAvailability = actionAvailability(state, progressionMaterials, v.docked, active);
   v.cargoUsed = cargoUsed(state);
   v.cargoCapacity = cargoCapacity(state);
   v.cargoFull = v.cargoCapacity > 0 && v.cargoUsed >= v.cargoCapacity;
@@ -2116,6 +2681,28 @@ function view(state) {
       v.miningRate = shipMining(active, mults, drone.mining);
       v.miningTargetId = t.id;
     }
+  }
+  if (active && sys) {
+    const nearestStation = sys.stations
+      .map((station) => ({ station, distance: dist(active.x, active.y, station.x, station.y) }))
+      .sort((a, b) => a.distance - b.distance)[0];
+    const nearestGate = sys.gates
+      .map((gate) => ({ gate, distance: dist(active.x, active.y, gate.x, gate.y) }))
+      .filter((entry) => entry.distance <= GATE_RANGE)
+      .sort((a, b) => a.distance - b.distance)[0];
+    const nearestEnemy = sys.enemies
+      .filter((enemy) => enemy.alive)
+      .map((enemy) => ({ enemy, distance: dist(active.x, active.y, enemy.x, enemy.y) }))
+      .filter((entry) => entry.distance <= ENGAGE_RANGE)
+      .sort((a, b) => a.distance - b.distance)[0];
+    v.nearby = {
+      stationId: nearestStation ? nearestStation.station.id : null,
+      stationDistance: nearestStation ? nearestStation.distance : null,
+      gateId: nearestGate ? nearestGate.gate.id : null,
+      enemyId: nearestEnemy ? nearestEnemy.enemy.id : null,
+    };
+  } else {
+    v.nearby = { stationId: null, stationDistance: null, gateId: null, enemyId: null };
   }
   return v;
 }
@@ -2153,9 +2740,12 @@ module.exports = {
   MISSIONS,
   MISSION_ORDER,
   tick,
+  navigate,
+  setAutopilot,
+  launch,
   setActive,
   fitModule,
-  saveFittingPreset,
+  unequipAllModules,
   applyFittingPreset,
   deleteFittingPreset,
   craftShip,

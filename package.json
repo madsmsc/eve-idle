@@ -6,7 +6,7 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
+    "dev": "node --watch server/index.js --dev",
     "test": "node --test tests/game.test.js tests/economy.test.js tests/api.test.js tests/client.test.js",
     "test:unit": "node --test tests/game.test.js",
     "test:client": "node --test tests/client.test.js",

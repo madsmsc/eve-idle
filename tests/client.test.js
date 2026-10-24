@@ -126,14 +126,13 @@ describe('App scene tree', () => {
 });
 
 describe('UI panel refresh', () => {
-  test('refreshes the open menu page and pilot details when selected', async () => {
+  test('refreshes the open menu page when selected', async () => {
     const { UINode } = await import('../public/ui/ui.js');
     const app = { hangarOpen: false, menuPageOpen: false, activeMenu: 'cargo' };
     const ui = new UINode(app);
     const refreshed = [];
     ui.hud.refreshPanels = () => refreshed.push('hud');
     ui.hangar.refresh = () => refreshed.push('hangar');
-    ui.character.refresh = () => refreshed.push('character');
     ui.inventory.refresh = () => refreshed.push('inventory');
 
     ui.refreshPanels();
@@ -147,9 +146,78 @@ describe('UI panel refresh', () => {
     ui.refreshPanels();
     assert.deepEqual(refreshed, ['hud', 'hud', 'hangar', 'hud', 'hangar', 'inventory']);
 
-    app.activeMenu = 'pilot';
+    app.activeMenu = 'cargo';
     ui.refreshPanels();
-    assert.deepEqual(refreshed, ['hud', 'hud', 'hangar', 'hud', 'hangar', 'inventory', 'hud', 'hangar', 'inventory', 'character']);
+    assert.deepEqual(refreshed, ['hud', 'hud', 'hangar', 'hud', 'hangar', 'inventory', 'hud', 'hangar', 'inventory']);
+  });
+
+  test('defers destructive panel refreshes during a UI pointer interaction', async () => {
+    const { UINode } = await import('../public/ui/ui.js');
+    const app = { hangarOpen: true, menuPageOpen: true, activeMenu: 'cargo', uiInteractionActive: true };
+    const ui = new UINode(app);
+    let refreshCount = 0;
+    ui.hud.refreshPanels = () => refreshCount++;
+    ui.hangar.refresh = () => refreshCount++;
+    ui.inventory.refresh = () => refreshCount++;
+
+    ui.refreshPanels();
+
+    assert.equal(refreshCount, 0);
+    assert.equal(app.uiRefreshPending, true);
+  });
+});
+
+describe('HUD activity log', () => {
+  test('shows newest events first, fades old events, and removes expired events', async () => {
+    const { HudNode } = await import('../public/ui/hud.js');
+    const previousDocument = global.document;
+    const list = {
+      children: [],
+      set innerHTML(value) {
+        if (value === '') this.children = [];
+      },
+      appendChild(child) {
+        this.children.push(child);
+      },
+    };
+    global.document = {
+      querySelector: () => list,
+      createElement: () => ({ style: {}, dataset: {} }),
+    };
+
+    try {
+      const hud = new HudNode({});
+      hud.pushEvent('Older event', '');
+      hud.renderEventLog();
+      hud.pushEvent('Newer event', '');
+      hud.renderEventLog();
+
+      assert.deepEqual(list.children.map((line) => line.textContent), ['Newer event', 'Older event']);
+
+      hud.events.find((event) => event.text === 'Older event').at -= 2500;
+      hud.renderEventLog();
+      assert.ok(Number.parseFloat(list.children[1].style.opacity) < 1);
+
+      hud.events.find((event) => event.text === 'Older event').at -= 12000;
+      hud.renderEventLog();
+      assert.deepEqual(list.children.map((line) => line.textContent), ['Newer event']);
+    } finally {
+      global.document = previousDocument;
+    }
+  });
+
+  test('adds new autopilot messages to the shared activity log', async () => {
+    const { HudNode } = await import('../public/ui/hud.js');
+    const hud = new HudNode({});
+    hud.seenAutomationEvents = hud.countAutomationEvents([{ at: 100, message: 'Old event' }]);
+
+    hud.collectAutomationEvents([
+      { at: 200, message: 'Latest event' },
+      { at: 100, message: 'Old event' },
+    ]);
+
+    assert.equal(hud.events[0].text, 'Latest event');
+    assert.equal(hud.events[0].tone, 'auto');
   });
 });
 
@@ -387,26 +455,20 @@ describe('Ship destination indicator', () => {
   });
 });
 
-describe('Player auto-recall', () => {
-  test('launching suppresses recall of cargo already full at the station', async () => {
+describe('Player authoritative state', () => {
+  test('cargo state does not trigger client-side recall decisions', async () => {
     const { Player } = await import('../public/core/player.js');
     const app = {
-      constants: { worldSize: 8000, dockRange: 260 },
-      state: { combat: null, cargoFull: true, world: { stations: [] } },
+      state: { combat: null, cargoFull: true },
+      docking: null,
     };
     const player = new Player(app);
-    const station = { x: 1000, y: 1000 };
-    player.nearestStation = () => ({ station, d: 500 });
-    player.suppressAutoRecall = true;
-    player.maybeAutoRecall();
+    player.x = 100;
+    player.y = 200;
+    player.setServerState({ x: 100, y: 200 }, null);
+    player.update(0.05);
     assert.equal(player.destination, null);
-
-    app.state.cargoFull = false;
-    player.maybeAutoRecall();
-    assert.equal(player.suppressAutoRecall, false);
-    app.state.cargoFull = true;
-    player.maybeAutoRecall();
-    assert.deepEqual(player.destination, station);
+    assert.deepEqual({ x: player.x, y: player.y }, { x: 100, y: 200 });
   });
 });
 
@@ -428,13 +490,15 @@ describe('Player undocking', () => {
     assert.equal(player.y, 1000);
     assert.equal(app.undocking, false);
     assert.equal(player.undock, null);
-    player.setDestination(3000, 2500);
+    player.setServerState({ x: 3000, y: 2500 }, { x: 3000, y: 2500 });
     assert.deepEqual(player.destination, { x: 3000, y: 2500 });
+    player.update(0.05);
+    assert.ok(player.x > 1260);
   });
 });
 
-describe('Player target orbit', () => {
-  test('slowly orbits a selected rat during and outside combat', async () => {
+describe('Player server-authoritative motion', () => {
+  test('does not locally orbit a selected rat', async () => {
     const { Player } = await import('../public/core/player.js');
     const enemy = { id: 'rat-1', x: 500, y: 500, alive: true };
     const app = {
@@ -453,19 +517,12 @@ describe('Player target orbit', () => {
     player.x = enemy.x + 150;
     player.y = enemy.y;
 
+    const position = { x: player.x, y: player.y };
     for (let i = 0; i < 200; i++) player.update(0.05);
-    const distance = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-    const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
-    assert.ok(Math.abs(distance - 150) < 5, `orbit radius was ${distance}`);
-    assert.ok(angle > 0.5, `ship did not orbit far enough: ${angle}`);
-
-    app.state.combat = { enemyId: enemy.id };
-    const beforeCombatOrbit = { x: player.x, y: player.y };
-    for (let i = 0; i < 40; i++) player.update(0.05);
-    assert.notDeepEqual({ x: player.x, y: player.y }, beforeCombatOrbit);
+    assert.deepEqual({ x: player.x, y: player.y }, position);
   });
 
-  test('slowly orbits a nearby mineable asteroid', async () => {
+  test('does not locally orbit a nearby mineable asteroid', async () => {
     const { Player } = await import('../public/core/player.js');
     const asteroid = { x: 500, y: 500, amount: 100, mineral: 'iron' };
     const app = {
@@ -484,11 +541,9 @@ describe('Player target orbit', () => {
     player.x = asteroid.x + 100;
     player.y = asteroid.y;
 
+    const position = { x: player.x, y: player.y };
     for (let i = 0; i < 200; i++) player.update(0.05);
-    const distance = Math.hypot(player.x - asteroid.x, player.y - asteroid.y);
-    const angle = Math.atan2(player.y - asteroid.y, player.x - asteroid.x);
-    assert.ok(Math.abs(distance - 100) < 5, `orbit radius was ${distance}`);
-    assert.ok(angle > 0.5, `ship did not orbit far enough: ${angle}`);
+    assert.deepEqual({ x: player.x, y: player.y }, position);
   });
 
   test('starts orbiting an asteroid as soon as the orbit radius is reached', async () => {
@@ -509,21 +564,16 @@ describe('Player target orbit', () => {
     const player = new Player(app);
     player.x = 100;
     player.y = 500;
-    player.setDestination(asteroid.x, asteroid.y);
-
-    let closestDistance = Infinity;
+    player.setServerState({ x: asteroid.x, y: asteroid.y }, { x: asteroid.x, y: asteroid.y });
+    const initialX = player.x;
     for (let i = 0; i < 300; i++) {
       player.update(0.05);
-      closestDistance = Math.min(closestDistance, Math.hypot(player.x - asteroid.x, player.y - asteroid.y));
     }
-
-    const distance = Math.hypot(player.x - asteroid.x, player.y - asteroid.y);
-    assert.ok(closestDistance > 95, `ship moved too close before orbiting: ${closestDistance}`);
-    assert.ok(Math.abs(distance - 100) < 5, `orbit radius was ${distance}`);
-    assert.ok(player.destination, 'approach destination remains associated with its asteroid orbit');
+    assert.ok(player.x > initialX);
+    assert.equal(player.destination.x, asteroid.x);
   });
 
-  test('manual destinations take priority over orbiting a previously selected rat', async () => {
+  test('server position updates control the interpolated destination', async () => {
     const { Player } = await import('../public/core/player.js');
     const enemy = { id: 'rat-1', x: 500, y: 500, alive: true };
     const app = {
@@ -541,9 +591,63 @@ describe('Player target orbit', () => {
     const player = new Player(app);
     player.x = enemy.x + 150;
     player.y = enemy.y;
-    player.setDestination(900, 900);
+    player.setServerState({ x: 900, y: 900 }, { x: 900, y: 900 });
     player.update(0.05);
-    assert.ok(player.x > enemy.x + 150, 'ship should continue toward the manual destination');
+    assert.ok(player.x > enemy.x + 150);
+  });
+
+  test('continues moving smoothly between server position updates', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const app = {
+      state: { world: { enemies: [], asteroids: [] } },
+    };
+    const player = new Player(app);
+    player.x = 100;
+    player.y = 200;
+    player.setServerState({ x: 100, y: 200, vx: 120, vy: 0, heading: 0 }, null);
+
+    for (let i = 0; i < 8; i++) player.update(0.05);
+
+    assert.ok(player.x > 130);
+    assert.ok(player.x < 200);
+    assert.equal(player.y, 200);
+  });
+
+  test('snap resets the prediction acceleration before rendering resumes', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const app = {
+      state: { world: { enemies: [], asteroids: [] } },
+    };
+    const player = new Player(app);
+    player.snap(200, 300);
+    player.update(0.05);
+
+    assert.equal(player.x, 200);
+    assert.equal(player.y, 300);
+    assert.equal(Number.isFinite(player.x), true);
+    assert.equal(Number.isFinite(player.y), true);
+  });
+
+  test('smoothly predicts acceleration between server updates', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const app = {
+      state: { world: { enemies: [], asteroids: [] } },
+    };
+    const player = new Player(app);
+    player.setServerState({ x: 0, y: 0, vx: 100, vy: 0, heading: 0 }, null);
+    for (let i = 0; i < 8; i++) player.update(0.05);
+
+    player.x = 40;
+    player.setServerState({ x: 40, y: 0, vx: 200, vy: 0, heading: 0 }, null);
+    assert.ok(Math.abs(player.serverTarget.ax - 250) < 0.001);
+    const positions = [];
+    for (let i = 0; i < 5; i++) {
+      player.update(0.05);
+      positions.push(player.x);
+    }
+
+    assert.ok(positions[1] - positions[0] > positions[0] - 40);
+    assert.ok(positions[4] > positions[0]);
   });
 });
 

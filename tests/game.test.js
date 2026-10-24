@@ -1024,6 +1024,124 @@ describe('range free-fire window', () => {
   });
 });
 
+describe('autopilot target selection', () => {
+  test('hunt selects a viable standard pirate and launches from station', () => {
+    const state = fresh();
+    const system = sys(state);
+    for (const enemy of system.enemies) {
+      enemy.type = 'pirate';
+      enemy.tier = 'standard';
+      enemy.alive = true;
+    }
+    state.autoPilotMode = 'hunt';
+
+    const after = game.tick(state, T0 + 1000);
+    const ship = after.ships.find((item) => item.id === after.activeShipId);
+
+    assert.equal(after.autoPilotMode, 'hunt');
+    assert.equal(game.isDocked(after), false);
+    assert.ok(ship.navigation && ship.navigation.targetId);
+  });
+
+  test('hunt automatically engages a viable target when already in range', () => {
+    const state = fresh();
+    const system = sys(state);
+    const ship = state.ships.find((item) => item.id === state.activeShipId);
+    const enemy = system.enemies[0];
+    for (const item of system.enemies) item.alive = false;
+    enemy.type = 'pirate';
+    enemy.tier = 'standard';
+    enemy.alive = true;
+    ship.x = enemy.x;
+    ship.y = enemy.y;
+    ship.dockedStationId = null;
+    ship.dockTargetId = null;
+    state.autoPilotMode = 'hunt';
+
+    const after = game.tick(state, T0 + 1000);
+
+    assert.equal(after.autoPilotMode, 'hunt');
+    assert.equal(after.combat.enemyId, enemy.id);
+  });
+
+  test('stops in space instead of docking when no targets remain and cargo is empty', () => {
+    const state = fresh();
+    const system = sys(state);
+    system.asteroids.forEach((asteroid) => { asteroid.amount = 0; });
+    system.enemies.forEach((enemy) => { enemy.alive = false; });
+    const ship = state.ships.find((item) => item.id === state.activeShipId);
+    const station = system.stations[0];
+    ship.x = station.x + 1000;
+    ship.y = station.y;
+    ship.dockedStationId = null;
+    ship.dockTargetId = null;
+    state.autoPilotMode = 'mine';
+
+    const after = game.tick(state, T0 + 1000);
+    const updatedShip = after.ships.find((item) => item.id === after.activeShipId);
+
+    assert.equal(game.cargoUsed(after), 0);
+    assert.equal(after.autoPilotMode, null);
+    assert.equal(game.isDocked(after), false);
+    assert.equal(updatedShip.navigation, null);
+    assert.match(after.automationLog[0].message, /No suitable targets remain/);
+  });
+});
+
+describe('server-authoritative target orbit', () => {
+  function placeUndockedShip(state, x, y) {
+    const ship = state.ships.find((item) => item.id === state.activeShipId);
+    ship.x = x;
+    ship.y = y;
+    ship.vx = 0;
+    ship.vy = 0;
+    ship.dockedStationId = null;
+    ship.dockTargetId = null;
+    return ship;
+  }
+
+  test('orbits a mineable asteroid without a navigation destination', () => {
+    const state = fresh();
+    const system = sys(state);
+    const asteroid = system.asteroids.find((item) => item.amount > 0);
+    system.asteroids = [asteroid];
+    const ship = placeUndockedShip(state, asteroid.x + 100, asteroid.y);
+    const before = { x: ship.x, y: ship.y };
+
+    const after = game.tick(state, T0 + 10_000);
+    const movedShip = after.ships.find((item) => item.id === after.activeShipId);
+    const movedAsteroid = sys(after).asteroids[0];
+    const distance = Math.hypot(movedShip.x - movedAsteroid.x, movedShip.y - movedAsteroid.y);
+    const angle = Math.atan2(movedShip.y - movedAsteroid.y, movedShip.x - movedAsteroid.x);
+
+    assert.ok(Math.hypot(movedShip.x - before.x, movedShip.y - before.y) > 20);
+    assert.ok(Math.abs(distance - 100) < 5, `orbit radius was ${distance}`);
+    assert.ok(angle > 0.5, `ship did not orbit far enough: ${angle}`);
+  });
+
+  test('orbits a selected rat and continues orbiting during combat', () => {
+    const state = fresh();
+    const enemy = sys(state).enemies.find((item) => item.alive);
+    const ship = placeUndockedShip(state, enemy.x + 150, enemy.y);
+    const navigation = game.navigate(state, { targetId: enemy.id });
+    assert.ok(navigation.state);
+
+    const afterNavigation = game.tick(navigation.state, T0 + 5_000);
+    const afterShip = afterNavigation.ships.find((item) => item.id === afterNavigation.activeShipId);
+    const distance = Math.hypot(afterShip.x - enemy.x, afterShip.y - enemy.y);
+    assert.ok(Math.abs(distance - 150) < 5, `orbit radius was ${distance}`);
+    assert.equal(afterShip.navigation.targetId, enemy.id);
+
+    const engaged = game.engage(afterNavigation, enemy.id, T0 + 5_000);
+    assert.ok(engaged.state);
+    const beforeCombat = { x: engaged.state.ships[0].x, y: engaged.state.ships[0].y };
+    const duringCombat = game.tick(engaged.state, T0 + 6_000);
+    const combatShip = duringCombat.ships.find((item) => item.id === duringCombat.activeShipId);
+
+    assert.ok(Math.hypot(combatShip.x - beforeCombat.x, combatShip.y - beforeCombat.y) > 1);
+  });
+});
+
 describe('fitting slots', () => {
   // The default active ship is a rifter: weapon 1, shield 1, armor 0, mining 1, cargo 1.
   const shipId = (s) => s.ships[0].id;
@@ -1114,26 +1232,30 @@ describe('fitting slots', () => {
     assert.ok(Math.abs((after - before) - cfg.MODULES.cargo.tiers[0].bonus) < 1e-6);
   });
 
-  test('fitting presets save, apply with the correct price delta, and delete', () => {
-    let s = fresh();
-    s = game.fitModule(s, shipId(s), 'weapon', 0, 1).state;
-    s = game.saveFittingPreset(s, 'Combat').state;
-    s = game.fitModule(s, shipId(s), 'weapon', 0, 0).state;
+  test('existing fitting presets consume inventory modules and can be deleted', () => {
+    const s = fresh();
+    s.loot.push({ id: 'preset-weapon', slotType: 'weapon', tier: 1 });
+    s.fittingPresets = [{
+      name: 'Combat',
+      shipType: 'rifter',
+      fitting: { ...game.emptyFitting('rifter'), weapon: [1] },
+    }];
     const applied = game.applyFittingPreset(s, 'Combat');
     assert.ok(!applied.error, applied.error);
     assert.equal(applied.state.ships[0].fitting.weapon[0], 1);
-    assert.equal(applied.state.isk, s.isk - cfg.MODULES.weapon.tiers[0].cost);
+    assert.equal(applied.state.loot.length, 0);
     const removed = game.deleteFittingPreset(applied.state, 'Combat');
     assert.equal(removed.state.fittingPresets.length, 0);
   });
 
-  test('fitting preset rejects invalid names and insufficient funds', () => {
+  test('applying a fitting preset rejects modules above trained skill', () => {
     const s = fresh();
-    assert.ok(game.saveFittingPreset(s, '   ').error);
-    const saved = game.saveFittingPreset(s, 'Expensive').state;
-    saved.fittingPresets[0].fitting.weapon[0] = 4;
-    saved.isk = 0;
-    assert.match(game.applyFittingPreset(saved, 'Expensive').error, /not enough isk/i);
+    s.fittingPresets = [{
+      name: 'High tier',
+      shipType: 'rifter',
+      fitting: { ...game.emptyFitting('rifter'), mining: [4] },
+    }];
+    assert.match(game.applyFittingPreset(s, 'High tier').error, /requires mining yield level 3/i);
   });
 
   test('faction-grade Tier IV modules can be crafted and fitted', () => {

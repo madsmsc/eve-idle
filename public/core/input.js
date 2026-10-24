@@ -11,6 +11,26 @@ export class Input {
 
   wire() {
     const app = this.app;
+    const activeUiPointers = new Set();
+    document.addEventListener('pointerdown', (ev) => {
+      if (!(ev.target instanceof Element) || !ev.target.closest('#menu-window, #hangar, #left-menu, #hud')) return;
+      activeUiPointers.add(ev.pointerId);
+      app.uiInteractionActive = true;
+    }, true);
+    const finishUiPointer = (ev) => {
+      if (!activeUiPointers.delete(ev.pointerId) || activeUiPointers.size) return;
+      setTimeout(() => {
+        if (activeUiPointers.size) return;
+        app.uiInteractionActive = false;
+        if (!app.uiRefreshPending) return;
+        app.uiRefreshPending = false;
+        app.ui.refreshPanels();
+        app.syncDockedView();
+      }, 0);
+    };
+    document.addEventListener('pointerup', finishUiPointer, true);
+    document.addEventListener('pointercancel', finishUiPointer, true);
+
     window.addEventListener('keydown', (e) => {
       const tag = e.target && e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -18,12 +38,10 @@ export class Input {
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
       if (k === 'e') app.doEngage();
       if (k === 'h') app.toggleHangar();
-      if (k === 'c') app.toggleCharacter();
       if (k === 'i') app.toggleInventory();
-      if (k === 'f') app.toggleFitting();
       if (k === 'l') app.toggleLoot();
       if (k === 'q') app.toggleStorage();
-      if (k === 'a') app.toggleAutoPilot();
+      if (k === 'a') app.setAutoPilotMode('mine');
       if (k === 'm') app.toggleOverview();
       if (k === 'b') app.navigateToNearest('belt');
       if (k === 's') app.navigateToNearest('station');
@@ -104,7 +122,6 @@ export class Input {
 
     document.getElementById('engage').addEventListener('click', () => app.doEngage());
     document.getElementById('overview-toggle').addEventListener('click', () => app.toggleOverview());
-    document.getElementById('menu-window-close').addEventListener('click', () => app.closeMenu());
     document.getElementById('left-menu').addEventListener('click', (ev) => {
       const button = ev.target.closest('.menu-card');
       if (button) app.openMenu(button.dataset.menu);
@@ -114,8 +131,9 @@ export class Input {
     document.getElementById('navigate-station').addEventListener('click', () => app.navigateToNearest('station'));
     document.getElementById('navigate-rat').addEventListener('click', () => app.navigateToNearest('rat'));
     document.getElementById('gate-jump').addEventListener('click', () => app.doGateJump());
-    document.getElementById('auto-pilot').addEventListener('click', () => app.toggleAutoPilot());
-    document.getElementById('auto-log').addEventListener('click', () => app.toggleAutoLog());
+    document.querySelectorAll('[data-auto-mode]').forEach((button) => {
+      button.addEventListener('click', () => app.setAutoPilotMode(button.dataset.autoMode));
+    });
     document.getElementById('mission-continue').addEventListener('click', async () => {
       await app.doAction('mission', { action: 'continue' });
       document.getElementById('mission-dialogue').hidden = true;
@@ -134,24 +152,15 @@ export class Input {
       if (!el) return;
       const a = el.dataset.action;
       if (a === 'set-active') app.doAction('set-active', { shipId: el.dataset.id });
-      else if (a === 'fit-module') app.doAction('fit-module', { shipId: el.dataset.ship, slotType: el.dataset.slot, slotIndex: Number(el.dataset.index), tier: Number(el.dataset.tier) });
-      else if (a === 'save-fitting-preset') app.doAction('save-fitting-preset', { name: document.getElementById('fitting-preset-name').value });
-      else if (a === 'apply-fitting-preset' || a === 'delete-fitting-preset') {
-        const name = document.getElementById('fitting-preset-select').value;
-        if (name) app.doAction(a, { name });
-      }
       else if (a === 'train-skill') app.doAction('train-skill', { skill: el.dataset.skill });
       else if (a === 'buy-blueprint') app.doAction('buy-blueprint', { kind: el.dataset.kind, type: el.dataset.type, tier: el.dataset.tier ? Number(el.dataset.tier) : null });
       else if (a === 'exchange-items') app.doAction('exchange-items', { family: el.dataset.family, item: el.dataset.item, amount: Number(el.dataset.amount) });
-      else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
-      else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
       else if (a === 'craft-module') app.doAction('craft-module', { slotType: el.dataset.slot, tier: Number(el.dataset.tier) });
       else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type });
       else if (a === 'accept-agent-mission') app.doAction('agent-mission', { action: 'accept' });
       else if (a === 'cancel-agent-mission') app.doAction('agent-mission', { action: 'cancel' });
     };
     document.getElementById('hangar').addEventListener('click', onHangarAction);
-    document.getElementById('fitting-panel').addEventListener('click', onHangarAction);
 
     // inventory grid selection + equip, and quantum-storage transfers
     const onInventoryClick = (ev) => {
@@ -171,6 +180,11 @@ export class Input {
       if (a === 'deposit-all') app.doAction('deposit-all', {});
       else if (a === 'deposit') app.doAction('deposit', { mineral: el.dataset.mineral, amount: el.dataset.amount });
       else if (a === 'withdraw') app.doAction('withdraw', { mineral: el.dataset.mineral, amount: el.dataset.amount });
+      else if (a === 'unequip-all') app.doAction('unequip-all', {});
+      else if (a === 'apply-fitting-preset' || a === 'delete-fitting-preset') {
+        const name = document.getElementById('fitting-preset-select').value;
+        if (name) app.doAction(a, { name });
+      }
       else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
       else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
     };

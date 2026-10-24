@@ -13,16 +13,12 @@ const app = new App({ canvas, ctx, minimap, mctx });
 
 // Test hook used by the E2E suite to drive flight and setup scenarios.
 window.__eve = {
-  setDestination: (x, y) => {
-    app.player.setDestination(x, y);
-  },
+  setDestination: (x, y) => app.navigate(null, { x, y }, { silent: true }),
   getDestination: () => app.player.destination && { ...app.player.destination },
   warp: (targetId, opts) => app.doWarp(targetId, { silent: true, ...(opts || {}) }),
   combatAction: (action) => app.doCombatAction(action),
   showDeath: (mail) => app.overlays.showDeath(mail),
-  setAutoPilot: (on) => {
-    while (app.autoPilot !== !!on) app.toggleAutoPilot();
-  },
+  setAutoPilot: (on) => app.setAutoPilot(on),
   getShip: () => ({ x: app.player.x, y: app.player.y }),
   perf: {
     reset: () => app.resetPerfMetrics(),

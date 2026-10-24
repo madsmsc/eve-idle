@@ -75,6 +75,15 @@ describe('item economy', () => {
       assert.ok(cfg.SHIP_BLUEPRINTS[entry.type].recipe);
       assert.ok(entry.skills.length > 0);
     }
+    const slotCountsByTier = cfg.SHIP_PROGRESSION.map((tier) =>
+      tier.ships.map((ship) => Object.values(cfg.SHIPS[ship.type].slots).reduce((total, count) => total + count, 0))
+    );
+    for (let tier = 1; tier < slotCountsByTier.length; tier++) {
+      assert.ok(
+        Math.min(...slotCountsByTier[tier]) > Math.max(...slotCountsByTier[tier - 1]),
+        `Tier ${tier + 1} ships must have more module slots than every Tier ${tier} ship`
+      );
+    }
   });
 
   test('target difficulty reflects the fitted ship compared with the enemy', () => {

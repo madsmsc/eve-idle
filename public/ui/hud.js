@@ -1,6 +1,6 @@
 'use strict';
 
-// The main HUD: top-left readouts (system, security), the
+// The main HUD: top-left system readout,
 // mission tracker/dialogue, the ship-info line, and the per-frame fast readouts
 // (status box + event log, engage/gate buttons, combat banner + combat HUD).
 // DOM only; panels refresh on server sync, while fast readouts update every frame.
@@ -9,7 +9,8 @@ import { fmt, pct } from '../core/util.js';
 
 const CTX_COLORS = { idle: '#7a89ad', mining: '#35d07f', travel: '#4fd1ff', combat: '#ff5c7a', docked: '#a58bff', warn: '#ffb454' };
 const EVENT_LIFETIME_MS = 14000;
-const EVENT_FADE_AFTER_MS = 8000;
+const EVENT_FADE_AFTER_MS = 2000;
+const MAX_VISIBLE_EVENTS = 6;
 
 export class HudNode extends Node {
   constructor(app) {
@@ -31,8 +32,6 @@ export class HudNode extends Node {
       sysNameEl.style.color = '';
       sysNameEl.style.textShadow = '';
     }
-    const securityEl = document.getElementById('security');
-    securityEl.textContent = this.app.state.system ? `Sec ${this.app.state.system.security.toFixed(1)}` : '';
     this.collectEvents();
   }
 
@@ -45,6 +44,7 @@ export class HudNode extends Node {
       this.lastLogAt = newest;
       this.lastSystemId = state.system ? state.system.id : null;
       this.wasCargoFull = !!state.cargoFull;
+      this.seenAutomationEvents = this.countAutomationEvents(state.automationLog);
       return;
     }
     const fresh = log.filter((e) => e.at > this.lastLogAt).reverse();
@@ -59,11 +59,36 @@ export class HudNode extends Node {
     this.lastLogAt = Math.max(this.lastLogAt, newest);
     const systemId = state.system ? state.system.id : null;
     if (systemId && this.lastSystemId && systemId !== this.lastSystemId) {
-      this.pushEvent(`Entered ${state.system.name} (sec ${state.system.security.toFixed(1)})`, '');
+      this.pushEvent(`Entered ${state.system.name}`, '');
     }
     this.lastSystemId = systemId;
     if (state.cargoFull && !this.wasCargoFull) this.pushEvent('Cargo hold full', 'warn');
     this.wasCargoFull = !!state.cargoFull;
+    this.collectAutomationEvents(state.automationLog);
+  }
+
+  countAutomationEvents(log = []) {
+    const counts = new Map();
+    for (const event of log) {
+      const key = `${event.at}:${event.message}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return counts;
+  }
+
+  collectAutomationEvents(log = []) {
+    const currentCounts = this.countAutomationEvents(log);
+    const seenCounts = this.seenAutomationEvents || new Map();
+    const fresh = [];
+    const processed = new Map();
+    for (const event of log.slice().reverse()) {
+      const key = `${event.at}:${event.message}`;
+      const count = (processed.get(key) || 0) + 1;
+      processed.set(key, count);
+      if (count > (seenCounts.get(key) || 0)) fresh.push(event);
+    }
+    for (const event of fresh) this.pushEvent(event.message, 'auto');
+    this.seenAutomationEvents = currentCounts;
   }
 
   blueprintName(blueprint) {
@@ -77,8 +102,8 @@ export class HudNode extends Node {
 
   pushEvent(text, tone) {
     this.events = this.events || [];
-    this.events.push({ id: (this.eventId = (this.eventId || 0) + 1), text, tone, at: performance.now() });
-    if (this.events.length > 3) this.events.shift();
+    this.events.unshift({ id: (this.eventId = (this.eventId || 0) + 1), text, tone, at: performance.now() });
+    if (this.events.length > MAX_VISIBLE_EVENTS) this.events.length = MAX_VISIBLE_EVENTS;
   }
 
   renderEventLog() {
@@ -124,7 +149,7 @@ export class HudNode extends Node {
       const shieldMax = state.combat ? state.combat.shipShieldMax : active.shield;
       const hull = state.combat ? state.combat.shipHull : active.hull;
       const hullMax = state.combat ? state.combat.shipHullMax : active.hull;
-      const speed = Math.hypot(this.app.player.vx, this.app.player.vy);
+      const speed = active.speed || 0;
       const speedMax = this.app.constants.maxSpeed;
       const setStatusBar = (name, value, max, label) => {
         const bar = status.querySelector(`[data-testid="status-${name}"]`);
@@ -137,7 +162,7 @@ export class HudNode extends Node {
     }
 
     const btn = document.getElementById('engage');
-    const target = this.app.player.nearestEnemyInRange();
+    const target = state.world.enemies.find((enemy) => enemy.id === state.nearby.enemyId);
     if (target && !state.combat) {
       btn.disabled = false;
       btn.classList.add('engage-ready');
@@ -149,7 +174,7 @@ export class HudNode extends Node {
     }
 
     const gateBtn = document.getElementById('gate-jump');
-    const atGate = this.app.player.nearestGate();
+    const atGate = state.world.gates.find((gate) => gate.id === state.nearby.gateId);
     if (atGate && !state.combat) {
       gateBtn.hidden = false;
       const targetName = (state.systemNames || []).find((s) => s.id === atGate.targetSystemId);
@@ -241,7 +266,8 @@ export class HudNode extends Node {
       const hpMax = Math.ceil(c.enemyShieldMax + c.enemyHullMax);
       return { label: 'Fighting', color: CTX_COLORS.combat, detail: `${name}${tier} · ${fmt(hp)}/${fmt(hpMax)} HP · ⚔${fmt(c.enemyDps)} dps` };
     }
-    const ns = player.nearestStation();
+    const nearestStation = state.world.stations.find((station) => station.id === state.nearby.stationId);
+    const ns = nearestStation ? { station: nearestStation, d: state.nearby.stationDistance } : null;
     if (state.docked) {
       if (state.cargoFull) return { label: 'Docked', color: CTX_COLORS.docked, detail: `Cargo full at ${state.dockedStation} — sell or store it` };
       return { label: 'Docked', color: CTX_COLORS.docked, detail: `Docked at ${state.dockedStation} — access station services` };
@@ -266,7 +292,9 @@ export class HudNode extends Node {
         detail: `${def ? def.name : 'Rat'}${tier} · Approx. ${difficulty} · ${fmt(distance)} m${inRange ? ' — press E to engage' : ''}`,
       };
     }
-    const a = player.nearestAsteroid();
+    const a = state.miningTargetId
+      ? state.world.asteroids.find((asteroid) => asteroid.id === state.miningTargetId)
+      : null;
     if (a && active && !state.cargoFull) {
       const belt = state.world.belts.find((b) => b.id === a.beltId);
       const ore = this.app.catalog.minerals[a.mineral].name;
@@ -280,7 +308,7 @@ export class HudNode extends Node {
       return { label: 'Traveling', color: CTX_COLORS.travel, detail: `${label || 'Your destination'} · ${fmt(d)} m` };
     }
     if (ns && ns.d < 240) return { label: 'Approaching', color: CTX_COLORS.travel, detail: `${ns.station.name}…` };
-    const nearbyEnemy = player.nearestEnemyInRange();
+    const nearbyEnemy = state.world.enemies.find((enemy) => enemy.id === state.nearby.enemyId);
     if (nearbyEnemy) {
       const def = this.app.catalog.enemies[nearbyEnemy.type];
       const tier = nearbyEnemy.tierName ? ` (${nearbyEnemy.tierName})` : '';

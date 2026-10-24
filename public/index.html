@@ -23,7 +23,6 @@
   <div id="hud">
     <div class="hud-tl">
       <div id="system-name" class="system-name" data-testid="system-name"></div>
-      <div id="security" class="hud-line security" data-testid="security"></div>
     </div>
 
     <div class="hud-tr">
@@ -55,34 +54,37 @@
     </div>
 
     <div id="flight-actions" class="flight-actions" data-testid="flight-actions">
-      <div id="navigation-actions" class="navigation-actions" data-testid="navigation-actions" role="group" aria-label="Flight actions">
-        <button id="engage" class="hud-btn flight-control" data-shortcut="E" data-testid="engage-btn" disabled>Engage</button>
-        <button id="gate-jump" class="hud-btn gate-btn flight-control" data-testid="gate-jump" hidden>⇄ Jump</button>
-        <button id="auto-pilot" class="hud-btn auto-btn" data-shortcut="A" data-testid="auto-pilot">▶ Auto</button>
-        <button id="auto-log" class="hud-btn auto-btn" data-testid="auto-log" title="Auto-pilot activity log" hidden>☰ Log</button>
-        <button id="navigate-belt" class="hud-btn navigate-btn" data-shortcut="B" data-testid="navigate-belt" title="Fly to the nearest asteroid belt">⌖ Belt</button>
-        <button id="navigate-station" class="hud-btn navigate-btn" data-shortcut="S" data-testid="navigate-station" title="Fly to the nearest station">⌖ Station</button>
-        <button id="navigate-rat" class="hud-btn navigate-btn" data-shortcut="R" data-testid="navigate-rat" title="Fly to the nearest hostile">⌖ Rat</button>
+      <div class="flight-panel auto-panel" data-testid="auto-panel">
+        <h2>Auto</h2>
+        <div class="flight-panel-actions" role="group" aria-label="Autopilot modes">
+          <button id="auto-mine" class="menu-card auto-mode" data-auto-mode="mine" data-testid="auto-mine" data-shortcut="A">⛏ Mine</button>
+          <button id="auto-mine-hunt" class="menu-card auto-mode" data-auto-mode="mine_hunt" data-testid="auto-mine-hunt">⛏⚔ Mine + Hunt</button>
+          <button id="auto-hunt" class="menu-card auto-mode" data-auto-mode="hunt" data-testid="auto-hunt">⚔ Hunt</button>
+        </div>
+      </div>
+      <div class="flight-panel actions-panel" data-testid="actions-panel">
+        <h2>Actions</h2>
+        <div id="navigation-actions" class="flight-panel-actions" data-testid="navigation-actions" role="group" aria-label="Flight actions">
+          <button id="engage" class="menu-card" data-shortcut="E" data-testid="engage-btn" disabled>Engage</button>
+          <button id="gate-jump" class="menu-card gate-btn" data-testid="gate-jump" hidden>⇄ Jump</button>
+          <button id="navigate-belt" class="menu-card" data-shortcut="B" data-testid="navigate-belt" title="Fly to the nearest asteroid belt">⌖ Belt</button>
+          <button id="navigate-station" class="menu-card" data-shortcut="S" data-testid="navigate-station" title="Fly to the nearest station">⌖ Station</button>
+          <button id="navigate-rat" class="menu-card" data-shortcut="R" data-testid="navigate-rat" title="Fly to the nearest hostile">⌖ Rat</button>
+        </div>
       </div>
     </div>
     <div id="combat-banner" class="combat-banner" data-testid="combat-banner" hidden></div>
     <div id="combat-hud" class="combat-hud" data-testid="combat-hud" hidden></div>
-    <div id="auto-log-panel" class="auto-log-panel" data-testid="auto-log-panel" hidden>
-      <h3>Auto-pilot log</h3>
-      <ul id="auto-log-list"></ul>
-    </div>
   </div>
 
   <nav id="left-menu" class="left-menu" data-testid="left-menu" aria-label="Game menus">
     <div class="left-menu-group">
       <h2>Ship</h2>
       <button class="menu-card" data-menu="cargo" data-shortcut="I" data-testid="menu-cargo">Cargo</button>
-      <button class="menu-card" data-menu="fitting" data-shortcut="F" data-testid="menu-fitting">Fitting</button>
       <button class="menu-card" data-menu="fleet" data-station-menu data-testid="menu-fleet" disabled>Fleet</button>
     </div>
     <div class="left-menu-group">
-      <h2>Pilot</h2>
-      <button class="menu-card" data-menu="pilot" data-shortcut="C" data-testid="menu-pilot">Pilot</button>
+      <h2>Progression</h2>
       <button class="menu-card" data-menu="skills" data-station-menu data-testid="menu-skills" disabled>Skills</button>
       <button class="menu-card" data-menu="achievements" data-station-menu data-testid="menu-achievements" disabled>Achieve</button>
     </div>
@@ -148,9 +150,6 @@
 
   <!-- Station services stay over the rendered space backdrop while docked. -->
   <div id="hangar" class="hangar" data-testid="hangar" hidden>
-    <div class="hangar-header">
-      <h2>Station Services</h2>
-    </div>
     <div class="hangar-layout">
       <div class="hangar-body">
         <section data-panel="fleet" class="active">
@@ -158,7 +157,8 @@
           <div id="hangar-fleet" class="hangar-fleet" data-testid="hangar-fleet"></div>
         </section>
         <section data-panel="skills">
-          <h3>Skills <span class="sub" id="hangar-sp" data-testid="hangar-sp"></span></h3>
+          <h3>Skills</h3>
+          <p class="sub" id="hangar-sp" data-testid="hangar-sp"></p>
           <div id="hangar-skills" class="hangar-skills" data-testid="hangar-skills"></div>
         </section>
         <section data-panel="achievements">
@@ -166,7 +166,8 @@
           <div id="hangar-achievements" data-testid="hangar-achievements"></div>
         </section>
         <section data-panel="missions">
-          <h3>Agent Missions <span class="sub" id="agent-mission-cooldown"></span></h3>
+          <h3>Agent Missions</h3>
+          <p class="sub" id="agent-mission-cooldown"></p>
           <div id="hangar-agent-missions" data-testid="hangar-agent-missions"></div>
         </section>
         <section id="storage-panel" data-panel="storage" data-testid="storage-panel">
@@ -179,7 +180,8 @@
           <div id="hangar-market" class="hangar-market" data-testid="hangar-market"></div>
         </section>
         <section data-panel="industry">
-          <h3>Industry <span class="sub">craft modules from ore</span></h3>
+          <h3>Industry</h3>
+          <p class="sub">Craft modules from ore.</p>
           <div id="hangar-industry" class="hangar-industry" data-testid="hangar-industry"></div>
         </section>
         <section data-panel="shipyard">
@@ -196,46 +198,43 @@
 
   <!-- Each left-menu entry opens its own un-tabbed workspace. -->
   <div id="menu-window" class="panel panel--left menu-window" data-testid="menu-window" hidden>
-    <div class="panel-header">
-      <h2 id="menu-window-title">Cargo</h2>
-      <button id="menu-window-close" class="hud-btn" data-testid="menu-window-close">Close</button>
-    </div>
     <div class="panel-body menu-page-body">
       <section id="inventory" class="menu-page active" data-menu-page="cargo" data-testid="inventory">
-        <h3>Cargo <span class="sub" id="inv-cargo-usage"></span></h3>
-        <div class="cargo-filters" role="group" aria-label="Cargo item filter">
-          <button class="mini active" data-cargo-filter="all" data-testid="cargo-filter-all">All</button>
-          <button class="mini" data-cargo-filter="ore" data-testid="cargo-filter-ore">Ore</button>
-          <button class="mini" data-cargo-filter="components" data-testid="cargo-filter-components">Components</button>
-          <button class="mini" data-cargo-filter="loot" data-testid="cargo-filter-loot">Modules</button>
-          <button class="mini" data-cargo-filter="blueprints" data-testid="cargo-filter-blueprints">Blueprints</button>
+        <div class="cargo-layout" data-testid="cargo-layout">
+          <section class="cargo-column ship-loadout" data-testid="ship-loadout">
+            <h3>Ship loadout <span class="sub" id="inv-ship-name"></span></h3>
+            <div id="fit-stats" class="fit-stats" data-testid="inv-ship-stats"></div>
+            <button class="mini danger unequip-all" data-action="unequip-all" data-testid="unequip-all" aria-describedby="unequip-all-hint" disabled>Unequip all modules</button>
+            <p id="unequip-all-hint" class="sub unequip-all-hint" data-testid="unequip-all-hint" role="status"></p>
+          </section>
+          <section class="cargo-column fitting-column" data-testid="fitting-column">
+            <h3>Fitting</h3>
+            <p id="loadout-hint" class="sub loadout-hint" data-testid="loadout-hint"></p>
+            <div id="inv-fitting" class="loadout-groups" data-testid="inv-fitting"></div>
+          </section>
+          <section class="cargo-column inventory-column" data-testid="inventory-column">
+            <h3>Cargo <span class="sub" id="inv-cargo-usage"></span></h3>
+            <div class="cargo-filters" role="group" aria-label="Cargo item filter">
+              <button class="mini active" data-cargo-filter="all" data-testid="cargo-filter-all">All</button>
+              <button class="mini" data-cargo-filter="ore" data-testid="cargo-filter-ore">Ore</button>
+              <button class="mini" data-cargo-filter="components" data-testid="cargo-filter-components">Components</button>
+              <button class="mini" data-cargo-filter="loot" data-testid="cargo-filter-loot">Modules</button>
+              <button class="mini" data-cargo-filter="blueprints" data-testid="cargo-filter-blueprints">Blueprints</button>
+            </div>
+            <div class="fitting-presets" id="fitting-presets">
+              <select id="fitting-preset-select" aria-label="Saved fitting presets"></select>
+              <button class="mini" data-action="apply-fitting-preset" data-testid="apply-fitting-preset">Apply</button>
+              <button class="mini danger" data-action="delete-fitting-preset" data-testid="delete-fitting-preset">Delete</button>
+            </div>
+            <div class="inv-toolbar">
+              <button class="mini" data-action="deposit-all" data-testid="inv-deposit-all" disabled>Store all materials</button>
+            </div>
+            <div id="inv-grid" class="inv-grid" data-testid="inv-grid"></div>
+            <div id="inv-detail" class="inv-detail" data-testid="inv-detail"></div>
+          </section>
         </div>
-        <div class="inv-toolbar">
-          <button class="mini" data-action="deposit-all" data-testid="inv-deposit-all" disabled>Store all materials</button>
-        </div>
-        <div id="inv-grid" class="inv-grid" data-testid="inv-grid"></div>
-        <div id="inv-detail" class="inv-detail" data-testid="inv-detail"></div>
       </section>
 
-      <section id="fitting-panel" class="menu-page" data-menu-page="fitting" data-testid="fitting-panel" hidden>
-        <h3>Fitting <span class="sub" id="inv-ship-name"></span></h3>
-        <h3>Ship stats</h3>
-        <div id="fit-stats" class="fit-stats" data-testid="inv-ship-stats"></div>
-        <h3>Equipped modules</h3>
-        <div class="fitting-presets">
-          <input id="fitting-preset-name" maxlength="24" placeholder="Preset name" aria-label="Fitting preset name" />
-          <button class="mini" data-action="save-fitting-preset" data-testid="save-fitting-preset">Save</button>
-          <select id="fitting-preset-select" aria-label="Saved fitting presets"></select>
-          <button class="mini" data-action="apply-fitting-preset" data-testid="apply-fitting-preset">Apply</button>
-          <button class="mini danger" data-action="delete-fitting-preset" data-testid="delete-fitting-preset">Delete</button>
-        </div>
-        <div id="inv-fitting" class="inv-list" data-testid="inv-fitting"></div>
-      </section>
-
-      <section id="character-sheet" class="menu-page" data-menu-page="pilot" data-testid="character-sheet" hidden>
-        <h3>Pilot</h3>
-        <div id="character-pilot" class="character-pilot" data-testid="character-pilot"></div>
-      </section>
     </div>
   </div>
 

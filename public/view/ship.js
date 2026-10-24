@@ -59,59 +59,27 @@ export class ShipNode extends Node {
       return false;
     }
 
-    let destination = coordinates;
-    if (targetId) {
-      const lists = this.app.state.world;
-      const target = [
-        ...lists.enemies.filter((enemy) => enemy.alive),
-        ...lists.stations,
-        ...lists.belts,
-        ...lists.planets,
-        ...lists.moons,
-        ...lists.gates,
-        lists.star,
-      ].find((poi) => poi.id === targetId);
-      if (!target) {
-        this.app.toast('Navigation target is no longer available', true);
-        return false;
-      }
-      destination = lists.belts.includes(target) ? this.app.player.beltApproachPoint(target) : target;
-      if (lists.enemies.some((enemy) => enemy.id === targetId)) this.app.targetEnemyId = targetId;
-      else this.app.targetEnemyId = null;
-    } else {
-      this.app.targetEnemyId = null;
-    }
-
-    if (!destination || !Number.isFinite(destination.x) || !Number.isFinite(destination.y)) {
+    const payload = targetId ? { targetId } : coordinates;
+    if (!payload) {
       this.app.toast('Invalid navigation destination', true);
       return false;
     }
-    const dockTargetId = targetId && this.app.state.world.stations.some((station) => station.id === targetId)
-      ? targetId
-      : null;
-    this.app.player.setDestination(destination.x, destination.y, dockTargetId);
-    if (!opts.silent) this.app.toast('Destination set');
-    return true;
+    return this.app.doAction('navigate', payload).then((ok) => {
+      if (ok) {
+        this.app.targetEnemyId = this.app.state.navigation && this.app.state.navigation.targetId;
+        if (!opts.silent) this.app.toast('Destination set');
+      }
+      return ok;
+    });
   }
 
   navigateToNearest(kind) {
-    const poi = this.app.player.nearestPoiOf(kind);
-    if (!poi) {
-      this.app.toast(`No ${kind} in this system`, true);
-      return;
-    }
-    return this.navigate(poi.id);
+    return this.app.doAction('navigate', { kind });
   }
 
   async doGateJump() {
-    const g = this.app.player.nearestGate();
-    if (!g) {
-      this.app.toast('Not at a gate', true);
-      return;
-    }
-    const targetName = (this.app.state.systemNames || []).find((s) => s.id === g.targetSystemId);
     this.app.warpPending = true;
-    const ok = await this.app.doAction('gate', { gateId: g.id });
+    const ok = await this.app.doAction('gate', {});
     this.app.warpPending = false;
     if (ok) {
       // A jump feels like a warp (the tunnel) plus its own gate effect on top.
@@ -121,23 +89,13 @@ export class ShipNode extends Node {
         this.app.toast('⚠ Ambushed at the gate!', true);
         this.app.camera.addShake(1);
       } else {
-        this.app.toast('Jumping to ' + (targetName ? targetName.name : 'system') + '…');
+        this.app.toast('Jumping to ' + this.app.state.system.name + '…');
       }
     }
   }
 
   async doEngage() {
-    let target = null;
-    if (this.app.targetEnemyId) {
-      const e = this.app.state.world.enemies.find((x) => x.id === this.app.targetEnemyId && x.alive);
-      if (e && dist(e.x, e.y, this.app.player.x, this.app.player.y) <= this.app.constants.engageRange) target = e;
-    }
-    if (!target) target = this.app.player.nearestEnemyInRange();
-    if (!target) {
-      this.app.toast('No target in range', true);
-      return;
-    }
-    const ok = await this.app.doAction('engage', { enemyId: target.id });
+    const ok = await this.app.doAction('engage', { enemyId: this.app.targetEnemyId });
     if (ok) this.app.toast('Engaged!');
   }
 
@@ -196,7 +154,8 @@ export class ShipNode extends Node {
   drawBeam(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
-    const a = this.app.player.nearestAsteroid();
+    const a = this.app.state.miningTargetId &&
+      this.app.state.world.asteroids.find((asteroid) => asteroid.id === this.app.state.miningTargetId);
     if (!a || this.app.state.combat) return;
     const p = camera.worldToScreen(a.x, a.y);
     const cx = this.app.canvas.width / 2;
@@ -264,7 +223,8 @@ class MiningDroneNode extends Node {
     const miningDroneSlots = (state.activeShip && state.activeShip.fitting && state.activeShip.fitting.miningDrone) || [];
     const n = miningDroneSlots.filter((tier) => tier > 0).length;
     if (!n || state.combat) return super.render(now);
-    const a = this.app.player.nearestAsteroid();
+    const a = state.miningTargetId &&
+      state.world.asteroids.find((asteroid) => asteroid.id === state.miningTargetId);
     if (!a) return super.render(now);
     const p = this.app.camera.worldToScreen(a.x, a.y);
     const orbitR = 42 * this.app.camera.zoom;

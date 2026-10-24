@@ -1,8 +1,8 @@
 'use strict';
 
 // Static game data + spatial constants. The server is the single source of
-// truth. The client only sends intents (positions, "buy X", "engage Y"); every
-// quantity, range, yield and reward is computed here.
+// truth. The client sends intents (destinations, "buy X", "engage Y"); every
+// movement, quantity, range, yield and reward is computed here.
 
 // Combat stats are a real-time simulation: each ship has a shield pool (front
 // damage buffer), a hull pool (last resort) and a damage-per-second figure. A
@@ -369,9 +369,9 @@ const MINING_RANGE = 160;       // must be this close to an asteroid to mine it
 const ENGAGE_RANGE = 240;       // must be this close to an enemy to engage it
 const DOCK_RANGE = 260;         // must be this close to a station to dock/trade
 const GATE_RANGE = 320;         // must be this close to a gate to jump systems
-const MAX_SPEED = 600;          // units/sec (client + server agree on this)
-const MAX_THRUST = 260;         // units/sec^2 (client-side)
-const DAMPING = 0.985;          // per-frame velocity damping (client-side)
+const MAX_SPEED = 600;          // units/sec
+const MAX_THRUST = 260;         // legacy constant retained for catalog compatibility
+const DAMPING = 0.985;          // per-frame velocity damping
 const ARRIVE_RADIUS = 24;       // click-to-move arrival radius
 const STATE_VERSION = 16;
 

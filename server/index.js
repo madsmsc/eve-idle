@@ -55,7 +55,7 @@ function readBody(req) {
   });
 }
 
-function serveStatic(req, res, pathname) {
+function serveStatic(req, res, pathname, liveReload = false) {
   const p = pathname === '/' ? '/index.html' : pathname;
   const safePath = path.normalize(p).replace(/^(\.\.[/\\])+/, '');
   const filePath = path.join(PUBLIC_DIR, safePath);
@@ -71,7 +71,27 @@ function serveStatic(req, res, pathname) {
       return;
     }
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+    if (liveReload) headers['Cache-Control'] = 'no-store';
+    if (liveReload && ext === '.html') {
+      const reloadClient = `<script>
+        (() => {
+          const source = new EventSource('/__dev/live-reload');
+          source.addEventListener('session', (event) => {
+            const key = 'eve-idle-dev-session';
+            const previous = sessionStorage.getItem(key);
+            sessionStorage.setItem(key, event.data);
+            if (previous && previous !== event.data) window.location.reload();
+          });
+          source.addEventListener('change', () => window.location.reload());
+        })();
+      </script>`;
+      const html = data.toString('utf8').replace('</body>', `${reloadClient}</body>`);
+      res.writeHead(200, headers);
+      res.end(html);
+      return;
+    }
+    res.writeHead(200, headers);
     res.end(data);
   });
 }
@@ -110,13 +130,30 @@ function materialTotals(state) {
   return totals;
 }
 
-function createApp({ dataFile } = {}) {
+function createApp({ dataFile, liveReload = false } = {}) {
   const store = new Store(dataFile);
   const saves = normalizeStore(store.load());
   let mode = 'demo';
   let state = game.isValidState(saves[mode]) ? saves[mode] : game.createInitialState(undefined, undefined, mode);
   saves[mode] = state;
   store.save(saves);
+  const liveReloadClients = new Set();
+  const liveReloadSession = `${process.pid}-${Date.now()}-${Math.random()}`;
+  let liveReloadWatcher = null;
+  let liveReloadTimer = null;
+
+  if (liveReload) {
+    liveReloadWatcher = fs.watch(PUBLIC_DIR, { recursive: true }, () => {
+      if (liveReloadTimer) clearTimeout(liveReloadTimer);
+      liveReloadTimer = setTimeout(() => {
+        liveReloadTimer = null;
+        for (const client of liveReloadClients) client.write('event: change\ndata: reload\n\n');
+      }, 100);
+    });
+    liveReloadWatcher.on('error', (error) => {
+      console.error('Live reload file watcher error:', error);
+    });
+  }
 
   function persist() {
     saves[mode] = state;
@@ -138,7 +175,28 @@ function createApp({ dataFile } = {}) {
     const now = Date.now();
     switch (action) {
       case 'tick': {
-        state = game.tick(state, now, payload);
+        state = game.tick(state, now);
+        persist();
+        return { state };
+      }
+      case 'navigate': {
+        const r = game.navigate(state, payload);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'autopilot': {
+        const r = game.setAutopilot(state, payload.mode);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'launch': {
+        const r = game.launch(state);
+        if (r.error) return r;
+        state = r.state;
         persist();
         return { state };
       }
@@ -156,8 +214,8 @@ function createApp({ dataFile } = {}) {
         persist();
         return { state };
       }
-      case 'save-fitting-preset': {
-        const r = game.saveFittingPreset(state, payload.name);
+      case 'unequip-all': {
+        const r = game.unequipAllModules(state);
         if (r.error) return r;
         state = r.state;
         persist();
@@ -304,6 +362,19 @@ function createApp({ dataFile } = {}) {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       const pathname = url.pathname;
 
+      if (pathname === '/__dev/live-reload') {
+        if (!liveReload) return sendJson(res, 404, { error: 'Not found' });
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        });
+        res.write(`event: session\ndata: ${liveReloadSession}\n\n`);
+        liveReloadClients.add(res);
+        req.on('close', () => liveReloadClients.delete(res));
+        return;
+      }
+
       if (pathname === '/health') return sendJson(res, 200, { ok: true });
 
       if (pathname === '/api/state') {
@@ -412,7 +483,7 @@ function createApp({ dataFile } = {}) {
         return sendJson(res, 200, { state: game.view(result.state) });
       }
 
-      if (req.method === 'GET') return serveStatic(req, res, pathname);
+      if (req.method === 'GET') return serveStatic(req, res, pathname, liveReload);
 
       sendJson(res, 405, { error: 'Method not allowed' });
     } catch (e) {
@@ -421,6 +492,9 @@ function createApp({ dataFile } = {}) {
   });
 
   function close() {
+    if (liveReloadTimer) clearTimeout(liveReloadTimer);
+    if (liveReloadWatcher) liveReloadWatcher.close();
+    for (const client of liveReloadClients) client.end();
     return new Promise((resolve) => server.close(resolve));
   }
 
@@ -430,8 +504,9 @@ function createApp({ dataFile } = {}) {
 function start({
   port = Number(process.env.PORT) || 3000,
   dataFile = process.env.DATA_FILE || path.join(__dirname, '..', 'data', 'state.json'),
+  liveReload = process.argv.includes('--dev'),
 } = {}) {
-  const app = createApp({ dataFile });
+  const app = createApp({ dataFile, liveReload });
   return new Promise((resolve) => {
     app.server.listen(port, () => {
       console.log(`EVE Idle running on http://localhost:${port}`);
