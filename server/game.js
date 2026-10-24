@@ -50,11 +50,7 @@ const {
   MISSION_ORDER,
   MISSIONS,
   WORLD_SIZE,
-  ASTEROID_FIELDS,
-  ASTEROIDS_PER_FIELD,
-  ASTEROID_AMOUNT,
   MINING_RATE_MULTIPLIER,
-  PLANET_COUNT,
   MINING_RANGE,
   ENGAGE_RANGE,
   DOCK_RANGE,
@@ -64,6 +60,35 @@ const {
   ARRIVE_RADIUS,
   STATE_VERSION,
 } = require('./config');
+const {
+  clone,
+  dist,
+  emptyMaterials,
+  emptyCargo,
+  emptyStorage,
+  materialDefinition,
+  addStoredItems,
+  availableMaterials,
+  hasMaterials,
+  consumeMaterials,
+  cargoUsed,
+  activeSystem,
+  dockedStation,
+  isDocked,
+} = require('./game/state');
+const {
+  deposit,
+  depositAll,
+  depositFiltered,
+  withdraw: withdrawFromStorage,
+  storeInventoryItem,
+  retrieveInventoryItem,
+} = require('./game/inventory');
+const {
+  SYSTEM_DEFS,
+  generateSystems: generateWorldSystems,
+  recoverWorldSeed,
+} = require('./game/world');
 
 let _counter = 0;
 function nextId() {
@@ -123,9 +148,6 @@ function resetIds() {
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
-}
-function clone(s) {
-  return JSON.parse(JSON.stringify(s));
 }
 // A ship's effective stats are its base stats plus the flat bonus of every
 // fitted module, multiplied by trained skills. There is no level/upgrade system:
@@ -637,65 +659,9 @@ function craftModule(state, slotType, tier) {
 function shipInCombat(state, shipId) {
   return !!(state.combat && state.combat.shipId === shipId);
 }
-// A fresh, empty cargo hold (one key per mineral).
-function emptyCargo() {
-  return emptyMaterials();
-}
-// Quantum storage: a single player-level warehouse shared by every station in
-// every system. It lives on the state (not per-system), so any station lets you
-// deposit or withdraw the same contents. Unlike the active ship's hold, storage
-// survives ship loss.
-function emptyStorage() {
-  return { items: emptyMaterials() };
-}
-function emptyMaterials() {
-  return Object.fromEntries([...Object.keys(MINERALS), ...Object.keys(COMPONENTS)].map((key) => [key, 0]));
-}
-function materialDefinition(key) {
-  return MINERALS[key] || COMPONENTS[key] || null;
-}
-function addStoredItems(state, items = {}) {
-  if (!state.storage) state.storage = emptyStorage();
-  if (!state.storage.items) state.storage.items = emptyMaterials();
-  for (const [key, amount] of Object.entries(items)) {
-    if (materialDefinition(key) && Number.isFinite(amount) && amount > 0) {
-      state.storage.items[key] = (state.storage.items[key] || 0) + amount;
-    }
-  }
-}
-function availableMaterials(state, key) {
-  if (!materialDefinition(key)) return 0;
-  const active = state.ships.find((ship) => ship.id === state.activeShipId);
-  const cargoAmount = active && active.cargo ? active.cargo[key] || 0 : 0;
-  const stored = state.storage && (state.storage.items || state.storage.minerals);
-  return cargoAmount + (stored ? stored[key] || 0 : 0);
-}
-function hasMaterials(state, recipe) {
-  return Object.entries(recipe).every(([key, amount]) => availableMaterials(state, key) >= amount);
-}
-function consumeMaterials(state, recipe) {
-  if (!hasMaterials(state, recipe)) return false;
-  const active = state.ships.find((ship) => ship.id === state.activeShipId);
-  if (!state.storage) state.storage = emptyStorage();
-  if (!state.storage.items) state.storage.items = { ...emptyMaterials(), ...(state.storage.minerals || {}) };
-  for (const [key, amount] of Object.entries(recipe)) {
-    const fromCargo = Math.min(active && active.cargo ? active.cargo[key] || 0 : 0, amount);
-    if (fromCargo > 0) active.cargo[key] -= fromCargo;
-    state.storage.items[key] = (state.storage.items[key] || 0) - (amount - fromCargo);
-  }
-  return true;
-}
-// Total materials carried in the active ship's cargo hold.
-function cargoUsed(state) {
-  const active = state.ships.find((sh) => sh.id === state.activeShipId);
-  return active ? Object.values(active.cargo).reduce((a, b) => a + b, 0) : 0;
-}
 function cargoCapacity(state) {
   const active = state.ships.find((sh) => sh.id === state.activeShipId);
   return active ? shipCargo(active, skillMults(state)) : 0;
-}
-function dist(ax, ay, bx, by) {
-  return Math.hypot(ax - bx, ay - by);
 }
 
 // ---- real-time combat simulation ----
@@ -816,270 +782,8 @@ function damageEnemy(c, dmg) {
   c.enemyHull = p.hull;
 }
 
-// The station the active ship is docked at (within DOCK_RANGE), or null.
-function dockedStation(state) {
-  const ship = state.ships.find((sh) => sh.id === state.activeShipId);
-  const sys = activeSystem(state);
-  if (!ship || !sys) return null;
-  if (ship.dockedStationId !== undefined) {
-    const station = sys.stations.find((st) => st.id === ship.dockedStationId);
-    return station && dist(ship.x, ship.y, station.x, station.y) <= DOCK_RANGE ? station : null;
-  }
-  // Preserve docking for saves created before station-directed docking intent
-  // was stored, while all new states use the explicit station marker.
-  let best = null;
-  let bd = Infinity;
-  for (const st of sys.stations) {
-    const d = dist(ship.x, ship.y, st.x, st.y);
-    if (d <= DOCK_RANGE && d < bd) {
-      bd = d;
-      best = st;
-    }
-  }
-  return best;
-}
-function isDocked(state) {
-  return !!dockedStation(state);
-}
-
-// Deterministic PRNG so a world generated from a seed is stable.
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// The systems the player can travel between. Each is a separate star system
-// with its own POIs; gates link them (a triangle: Jita <-> Placid <-> Domain).
-// `color` is a persistent, unique tint for the system's background so each
-// system is memorable by its hue (the "green system", the "purple system").
-const SYSTEM_DEFS = [
-  { id: 'sys_0', name: 'Jita',   color: '#ff9f45', security: 1.0, stationCount: 2 },
-  { id: 'sys_1', name: 'Placid', color: '#3fd6a0', security: 0.5, stationCount: 2 },
-  { id: 'sys_2', name: 'Domain', color: '#a970ff', security: 0.1, stationCount: 1 },
-];
-const GATE_LINKS = [
-  [0, 1],
-  [1, 2],
-  [2, 0],
-];
-
-function hashStr(s) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
-  return h >>> 0;
-}
-
-// Generate a single star system's POIs. `profile` controls its character.
-function generateWorld(seed, profile) {
-  const rng = mulberry32(seed);
-  const size = WORLD_SIZE;
-  const cx = size / 2;
-  const cy = size / 2;
-  const mineralKeys = Object.keys(MINERALS);
-  const planets = [];
-  const moons = [];
-  const stations = [];
-  const outposts = [];
-  const belts = [];
-  const asteroids = [];
-  const enemies = [];
-  let aid = 1;
-
-  // The star anchors the system at the centre.
-  const star = { id: 'star_1', x: cx, y: cy, size: 130 + rng() * 60, name: 'Sol' };
-
-  // Reserve fixed gate locations and the home station before placing sites.
-  const home = { id: 'stn_1', x: cx + 520, y: cy, name: 'Station A' };
-  stations.push(home);
-  const placedSites = [
-    home,
-    gateSlot(0),
-    gateSlot(1),
-  ];
-  const placeSite = () => {
-    for (let tries = 0; tries < 500; tries++) {
-      const x = 600 + rng() * (size - 1200);
-      const y = 600 + rng() * (size - 1200);
-      if (placedSites.every((site) => dist(x, y, site.x, site.y) >= 1000)) {
-        const site = { x, y };
-        placedSites.push(site);
-        return site;
-      }
-    }
-    throw new Error(`Could not place a spaced site in ${profile.name}`);
-  };
-
-  // Additional stations are kept apart from all other navigational sites.
-  for (let i = 1; i < profile.stationCount; i++) {
-    const site = placeSite();
-    stations.push({ id: `stn_${i + 1}`, ...site, name: `Station ${String.fromCharCode(66 + i)}` });
-  }
-
-  for (let i = 0; i < 2; i++) {
-    const site = placeSite();
-    outposts.push({ id: `outpost_${i + 1}`, ...site, name: `Outpost ${String.fromCharCode(65 + i)}` });
-  }
-
-  // Landmark planets, kept away from the star.
-  const planetColors = ['#e0894c', '#5c9ce0', '#9ce05c', '#c95ce0', '#e05c7a', '#5ce0c8'];
-  for (let i = 0; i < PLANET_COUNT; i++) {
-    let x;
-    let y;
-    let tries = 0;
-    do {
-      x = 1000 + rng() * (size - 2000);
-      y = 1000 + rng() * (size - 2000);
-      tries++;
-    } while (dist(x, y, cx, cy) < 1400 && tries < 40);
-    planets.push({
-      id: `pl_${i + 1}`,
-      x,
-      y,
-      size: 70 + rng() * 90,
-      color: planetColors[i % planetColors.length],
-      name: `Planet ${String.fromCharCode(65 + i)}`,
-      ring: rng() < 0.45,
-    });
-  }
-
-  // A moon orbits a subset of the planets.
-  for (const p of planets) {
-    if (rng() < 0.6) {
-      const ang = rng() * Math.PI * 2;
-      const rad = p.size + 140 + rng() * 140;
-      moons.push({
-        id: `mn_${p.id}`,
-        x: clamp(p.x + Math.cos(ang) * rad, 60, size - 60),
-        y: clamp(p.y + Math.sin(ang) * rad, 60, size - 60),
-        size: 18 + rng() * 14,
-        name: `${p.name} Moon`,
-      });
-    }
-  }
-
-  // Asteroid belts: named clusters of mineable rocks.
-  for (let f = 0; f < ASTEROID_FIELDS; f++) {
-    const { x: fx, y: fy } = placeSite();
-    const fieldMineral = mineralKeys[Math.floor(rng() * mineralKeys.length)];
-    belts.push({
-      id: `belt_${f + 1}`,
-      x: fx,
-      y: fy,
-      name: `Belt ${String.fromCharCode(65 + f)}`,
-      mineral: fieldMineral,
-    });
-    const count =
-      ASTEROIDS_PER_FIELD[0] +
-      Math.floor(rng() * (ASTEROIDS_PER_FIELD[1] - ASTEROIDS_PER_FIELD[0] + 1));
-    for (let i = 0; i < count; i++) {
-      const ang = rng() * Math.PI * 2;
-      // The first rock hugs the belt center so a ship parked on the belt is
-      // always in mining range; the rest scatter out to the belt's edge.
-      const rad = i === 0 ? 40 + rng() * 50 : 60 + rng() * 260;
-      const x = clamp(fx + Math.cos(ang) * rad, 60, size - 60);
-      const y = clamp(fy + Math.sin(ang) * rad, 60, size - 60);
-      const mineral =
-        rng() < 0.8 ? fieldMineral : mineralKeys[Math.floor(rng() * mineralKeys.length)];
-      const amount =
-        ASTEROID_AMOUNT[0] +
-        Math.floor(rng() * (ASTEROID_AMOUNT[1] - ASTEROID_AMOUNT[0] + 1));
-      asteroids.push({
-        id: `ast_${aid++}`,
-        x,
-        y,
-        mineral,
-        amount,
-        maxAmount: amount,
-        seed: Math.floor(rng() * 1e9),
-        size: 14 + rng() * 22,
-        beltId: `belt_${f + 1}`,
-      });
-    }
-  }
-
-  for (const outpost of outposts) {
-    const count = 3 + Math.floor(rng() * 3);
-    for (let i = 0; i < count; i++) {
-      const ang = rng() * Math.PI * 2;
-      const rad = 180 + rng() * 260;
-      const { type, tier } = rollRat(profile.security, rng);
-      enemies.push({
-        id: `en_${enemies.length + 1}`,
-        x: clamp(outpost.x + Math.cos(ang) * rad, 60, size - 60),
-        y: clamp(outpost.y + Math.sin(ang) * rad, 60, size - 60),
-        type,
-        tier,
-        outpostId: outpost.id,
-        alive: true,
-        seed: Math.floor(rng() * 1e9),
-      });
-    }
-  }
-
-  return {
-    id: profile.id,
-    name: profile.name,
-    color: profile.color,
-    security: profile.security,
-    width: size,
-    height: size,
-    star,
-    planets,
-    moons,
-    stations,
-    outposts,
-    belts,
-    asteroids,
-    enemies,
-    gates: [],
-    seed,
-  };
-}
-
-// Fixed gate slots within a system (two per system, on opposite sides of the star).
-function gateSlot(idx) {
-  const cx = WORLD_SIZE / 2;
-  const cy = WORLD_SIZE / 2;
-  return idx === 0 ? { x: cx - 1700, y: cy - 500 } : { x: cx + 1700, y: cy + 500 };
-}
-
-// Generate all systems and wire up the gates that link them.
 function generateSystems(seed) {
-  const systems = {};
-  for (const def of SYSTEM_DEFS) {
-    systems[def.id] = generateWorld((seed + hashStr(def.id)) >>> 0, def);
-  }
-  for (const [i, j] of GATE_LINKS) {
-    const defA = SYSTEM_DEFS[i];
-    const defB = SYSTEM_DEFS[j];
-    const sysA = systems[defA.id];
-    const sysB = systems[defB.id];
-    const pA = gateSlot(sysA.gates.length);
-    const pB = gateSlot(sysB.gates.length);
-    sysA.gates.push({
-      id: `gate_${i}_${j}`,
-      x: pA.x,
-      y: pA.y,
-      targetSystemId: defB.id,
-      targetGateId: `gate_${j}_${i}`,
-      name: `Gate to ${defB.name}`,
-    });
-    sysB.gates.push({
-      id: `gate_${j}_${i}`,
-      x: pB.x,
-      y: pB.y,
-      targetSystemId: defA.id,
-      targetGateId: `gate_${i}_${j}`,
-      name: `Gate to ${defA.name}`,
-    });
-  }
-  return systems;
+  return generateWorldSystems(seed, rollRat);
 }
 
 function migrateWorldLayout(state) {
@@ -1122,7 +826,7 @@ function migrateWorldLayout(state) {
 
   const homeSystem = state.systems.sys_0;
   const seed = homeSystem && Number.isInteger(homeSystem.seed)
-    ? (homeSystem.seed - hashStr('sys_0')) >>> 0
+    ? recoverWorldSeed(homeSystem.seed)
     : 1;
   const regenerated = generateSystems(seed);
   for (const def of SYSTEM_DEFS) {
@@ -1251,6 +955,8 @@ function migrateEconomy(state) {
   migrated.storage = migrated.storage || emptyStorage();
   const legacyStorage = migrated.storage.items || migrated.storage.minerals || {};
   migrated.storage.items = { ...emptyMaterials(), ...legacyStorage };
+  migrated.storage.loot = Array.isArray(migrated.storage.loot) ? migrated.storage.loot : [];
+  migrated.storage.blueprints = Array.isArray(migrated.storage.blueprints) ? migrated.storage.blueprints : [];
   const legacyBalance = Math.max(0, Number(migrated.isk) || 0);
   migrated.storage.items.iron += Math.floor(legacyBalance / 100);
   migrated.storage.items.scrap += Math.floor(legacyBalance / 250);
@@ -1286,12 +992,6 @@ function isValidState(state) {
     Array.isArray(state.ships) &&
     state.ships.length > 0
   );
-}
-
-// The star system the active ship is currently in (or null).
-function activeSystem(state) {
-  const ship = state.ships.find((sh) => sh.id === state.activeShipId);
-  return ship && state.systems ? state.systems[ship.systemId] || null : null;
 }
 
 function nearestAsteroidInRange(state, ship) {
@@ -1875,64 +1575,8 @@ function unequipAllModules(state) {
   return { state: s };
 }
 
-// Move minerals from the active ship's cargo hold into quantum storage. Storage
-// is shared by every station (see emptyStorage), so you can park ore at any
-// dock and pick it up anywhere else. Docking is required.
-function deposit(state, mineral, amount) {
-  const def = materialDefinition(mineral);
-  if (!def) return { error: `Unknown mineral: ${mineral}` };
-  if (!isDocked(state)) return { error: 'Dock at a station to access storage' };
-  const s = clone(state);
-  if (!s.storage) s.storage = emptyStorage();
-  if (!s.storage.items) s.storage.items = { ...emptyMaterials(), ...(s.storage.minerals || {}) };
-  const active = s.ships.find((sh) => sh.id === s.activeShipId);
-  if (!active) return { error: 'No active ship' };
-  const amt = amount === 'all' ? active.cargo[mineral] : Number(amount);
-  if (!Number.isFinite(amt) || amt <= 0) return { error: 'Invalid amount' };
-  if (amt > active.cargo[mineral] + 1e-9) return { error: `Not enough ${def.name} in cargo` };
-  const moved = Math.min(amt, active.cargo[mineral]);
-  active.cargo[mineral] -= moved;
-  s.storage.items[mineral] = (s.storage.items[mineral] || 0) + moved;
-  return { state: s };
-}
-
-function depositAll(state) {
-  if (!isDocked(state)) return { error: 'Dock at a station to access storage' };
-  const s = clone(state);
-  if (!s.storage) s.storage = emptyStorage();
-  if (!s.storage.items) s.storage.items = { ...emptyMaterials(), ...(s.storage.minerals || {}) };
-  const active = s.ships.find((ship) => ship.id === s.activeShipId);
-  if (!active) return { error: 'No active ship' };
-  const deposited = Object.values(active.cargo || {}).reduce((sum, amount) => sum + amount, 0);
-  if (deposited <= 0) return { error: 'Nothing to deposit' };
-  for (const [mineral, amount] of Object.entries(active.cargo)) {
-    s.storage.items[mineral] = (s.storage.items[mineral] || 0) + amount;
-    active.cargo[mineral] = 0;
-  }
-  return { state: s };
-}
-
-// Move minerals from quantum storage back into the active ship's cargo hold,
-// limited by the hold's free space. Docking is required.
 function withdraw(state, mineral, amount) {
-  const def = materialDefinition(mineral);
-  if (!def) return { error: `Unknown mineral: ${mineral}` };
-  if (!isDocked(state)) return { error: 'Dock at a station to access storage' };
-  const s = clone(state);
-  if (!s.storage) s.storage = emptyStorage();
-  if (!s.storage.items) s.storage.items = { ...emptyMaterials(), ...(s.storage.minerals || {}) };
-  const active = s.ships.find((sh) => sh.id === s.activeShipId);
-  if (!active) return { error: 'No active ship' };
-  const have = s.storage.items[mineral] || 0;
-  const amt = amount === 'all' ? have : Number(amount);
-  if (!Number.isFinite(amt) || amt <= 0) return { error: 'Invalid amount' };
-  if (amt > have + 1e-9) return { error: `Not enough ${def.name} in storage` };
-  const room = shipCargo(active, skillMults(s)) - cargoUsed(s);
-  const moved = Math.min(amt, have, Math.max(0, room));
-  if (moved <= 0) return { error: 'Cargo hold is full' };
-  active.cargo[mineral] += moved;
-  s.storage.items[mineral] -= moved;
-  return { state: s };
+  return withdrawFromStorage(state, mineral, amount, { shipCargo, skillMults });
 }
 
 // Engage the enemy you are standing next to with your active ship. Starts a
@@ -2602,7 +2246,13 @@ function view(state) {
     }),
     // Quantum storage (shared by every station) — mirrors of the raw state so
     // the client can render the inventory overlay.
-    storage: { items: storageItems },
+    storage: {
+      items: storageItems,
+      loot: state.storage && Array.isArray(state.storage.loot) ? state.storage.loot.map((item) => ({ ...item })) : [],
+      blueprints: state.storage && Array.isArray(state.storage.blueprints)
+        ? state.storage.blueprints.map((blueprint) => ({ ...blueprint }))
+        : [],
+    },
     combat: state.combat
       ? combatView(state.combat)
       : null,
@@ -2764,7 +2414,10 @@ module.exports = {
   craftModule,
   deposit,
   depositAll,
+  depositFiltered,
   withdraw,
+  storeInventoryItem,
+  retrieveInventoryItem,
   emptyStorage,
   cargoUsed,
   cargoCapacity,

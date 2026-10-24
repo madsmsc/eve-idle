@@ -6,25 +6,28 @@ import { Node } from '../core/node.js';
 import { mixRgb, rgbStr } from '../core/util.js';
 
 export class MinimapNode extends Node {
+  // PUBLIC
   render(now) {
     const w = this.app.minimap.width;
     const h = this.app.minimap.height;
     const sc = w / this.app.constants.worldSize;
     const state = this.app.state;
 
-    this.drawBackground(this.app.mctx, w, h);
-    this.drawWorld(state, sc);
-    this.drawPlayer(sc);
+    this.#drawBackground(this.app.mctx, w, h);
+    this.#drawWorld(state, sc);
+    this.#drawPlayer(sc);
     return super.render(now);
   }
 
-  drawBackground(ctx, width, height) {
+  // PRIVATE
+  #drawBackground(ctx, width, height) {
     ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = rgbStr(mixRgb({ r: 6, g: 10, b: 20 }, this.app.systemColor, 0.2), 0.9);
     ctx.fillRect(0, 0, width, height);
   }
 
-  drawWorld(state, scale) {
+  // PRIVATE
+  #drawWorld(state, scale) {
     const ctx = this.app.mctx;
     const world = state.world;
     const star = world.star;
@@ -66,7 +69,8 @@ export class MinimapNode extends Node {
     }
   }
 
-  drawPlayer(scale) {
+  // PRIVATE
+  #drawPlayer(scale) {
     const ctx = this.app.mctx;
     ctx.fillStyle = '#4fd1ff';
     ctx.beginPath();

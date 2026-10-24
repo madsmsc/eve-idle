@@ -5,8 +5,21 @@ import { Node } from '../core/node.js';
 import { fmt } from '../core/util.js';
 
 export class OverlaysNode extends Node {
+  // PUBLIC
+  constructor(app) {
+    super(app);
+    this.offlineDialogReady = false;
+  }
+
+  // PUBLIC
   showOfflineReport(report) {
     const el = document.getElementById('offline-report');
+    if (!this.offlineDialogReady) {
+      el.addEventListener('cancel', (event) => event.preventDefault());
+      el.addEventListener('close', () => { el.hidden = true; });
+      document.getElementById('offline-report-close').addEventListener('click', () => el.close());
+      this.offlineDialogReady = true;
+    }
     const summary = document.getElementById('offline-report-summary');
     const detail = document.getElementById('offline-report-detail');
     const hours = Math.floor(report.elapsedSeconds / 3600);
@@ -29,13 +42,15 @@ export class OverlaysNode extends Node {
     if (report.skillPoints > 0) lines.push(`Skill points: ${fmt(report.skillPoints)} SP`);
     detail.innerHTML = lines.length ? `<ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>` : '<p>Nothing happened while you were away.</p>';
     el.hidden = false;
-    document.getElementById('offline-report-close').addEventListener('click', () => { el.hidden = true; }, { once: true });
+    if (!el.open) el.showModal();
   }
 
+  // PUBLIC
   toast(msg, isError) {
     this.app.ui.hud.pushEvent(msg, isError ? 'bad' : '');
   }
 
+  // PUBLIC
   showDeath(mail) {
     const el = document.getElementById('death-screen');
     const detail = document.getElementById('death-detail');
@@ -48,6 +63,7 @@ export class OverlaysNode extends Node {
     this.app.deathTimer = setTimeout(() => { el.hidden = true; }, 6000);
   }
 
+  // PUBLIC
   hideDeath() {
     document.getElementById('death-screen').hidden = true;
     if (this.app.deathTimer) clearTimeout(this.app.deathTimer);

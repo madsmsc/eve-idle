@@ -17,20 +17,24 @@ function recipeText(recipe, catalog) {
 }
 
 export class HangarNode extends Node {
+  // PUBLIC
   refresh() {
-    this.renderHangar();
-    this.renderCombatLog();
+    this.#renderHangar();
+    this.#renderCombatLog();
+    this.app.ui.inventory.renderFitting();
     this.app.ui.inventory.renderStorage();
     return this;
   }
   // Display one station service selected from the persistent menu rail.
+  // PUBLIC
   showService(name) {
     const hangar = document.getElementById('hangar');
     hangar.querySelectorAll('.hangar-body section[data-panel]').forEach((section) => {
       section.classList.toggle('active', section.dataset.panel === name);
     });
   }
-  renderHangar() {
+  // PRIVATE
+  #renderHangar() {
     const state = this.app.state;
     const catalog = this.app.catalog;
     const docked = !!state.docked;
@@ -183,17 +187,19 @@ export class HangarNode extends Node {
       }
     }
 
-    const market = document.getElementById('hangar-market');
-    market.innerHTML = '';
+    const tradeUp = document.getElementById('market-trade-up');
+    const blueprints = document.getElementById('market-blueprints');
+    tradeUp.innerHTML = '';
+    blueprints.innerHTML = '';
     const exchangeFamilies = [
       ['ore', catalog.oreExchange, catalog.minerals],
       ['components', catalog.componentExchange, catalog.components],
     ];
     for (const [family, ladder, definitions] of exchangeFamilies) {
       const header = document.createElement('div');
-      header.className = 'row';
+      header.className = 'skill-cat';
       header.textContent = family === 'ore' ? 'Ore exchange — 3 lower tier → 1 higher tier' : 'Component exchange — 3 lower tier → 1 higher tier';
-      market.appendChild(header);
+      tradeUp.appendChild(header);
       for (let index = 0; index < ladder.length - 1; index++) {
         const item = ladder[index];
         const next = ladder[index + 1];
@@ -201,13 +207,13 @@ export class HangarNode extends Node {
         row.className = 'row';
         const availability = state.actionAvailability.exchange[`${family}:${item}`];
         row.innerHTML = `<span class="label">${definitions[item].name} → ${definitions[next].name} <span class="sub">Have ${fmt(availability.count)}</span></span><span class="actions"><button class="mini" data-action="exchange-items" data-family="${family}" data-item="${item}" data-amount="3" data-testid="exchange-${family}-${item}" ${availability.canExchange ? '' : 'disabled'}>3 to 1</button></span>`;
-        market.appendChild(row);
+        tradeUp.appendChild(row);
       }
     }
     const blueprintHeader = document.createElement('div');
-    blueprintHeader.className = 'row';
+    blueprintHeader.className = 'sub';
     blueprintHeader.textContent = 'NPC blueprints — available at any station; each is consumed during manufacturing';
-    market.appendChild(blueprintHeader);
+    blueprints.appendChild(blueprintHeader);
     for (const key of catalog.npcBlueprints || []) {
       const [, slotType, tierText] = key.split(':');
       const tier = Number(tierText);
@@ -217,15 +223,16 @@ export class HangarNode extends Node {
       const row = document.createElement('div');
       row.className = 'row';
       row.innerHTML = `<span class="label">${def.name} ${ROMAN[tier]} Blueprint <span class="sub">${recipeText(cost, catalog)}</span></span><span class="actions"><button class="mini" data-action="buy-blueprint" data-kind="module" data-type="${slotType}" data-tier="${tier}" data-testid="buy-blueprint-${slotType}-t${tier}" ${availability.canBuy ? '' : 'disabled'}>Buy blueprint</button></span>`;
-      market.appendChild(row);
+      blueprints.appendChild(row);
     }
     const dropNote = document.createElement('div');
-    dropNote.className = 'row';
+    dropNote.className = 'sub';
     dropNote.textContent = 'Higher-tier module and ship blueprints are recovered from rat loot; NPCs do not sell them.';
-    market.appendChild(dropNote);
+    blueprints.appendChild(dropNote);
   }
 
-  renderCombatLog() {
+  // PRIVATE
+  #renderCombatLog() {
     const log = document.getElementById('combat-log');
     log.innerHTML = '';
     const stats = this.app.state.stats || {};

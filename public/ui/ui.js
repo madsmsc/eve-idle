@@ -9,9 +9,10 @@ import { HangarNode } from './hangar.js';
 import { InventoryNode } from './inventory.js';
 import { OverlaysNode } from './overlays.js';
 
-const STATION_MENUS = ['fleet', 'shipyard', 'storage', 'market', 'skills', 'achievements', 'missions', 'industry', 'killboard'];
+const STATION_MENUS = ['fitting', 'fleet', 'shipyard', 'storage', 'market', 'skills', 'achievements', 'missions', 'industry', 'killboard'];
 
 class MenuGroupNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.hangar = this.add(new HangarNode());
@@ -20,6 +21,7 @@ class MenuGroupNode extends Node {
 }
 
 class HudGroupNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.minimap = this.add(new MinimapNode());
@@ -29,6 +31,7 @@ class HudGroupNode extends Node {
 }
 
 export class UINode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.menus = this.add(new MenuGroupNode(app));
@@ -39,6 +42,7 @@ export class UINode extends Node {
     this.overlays = this.screen.overlays;
   }
 
+  // PUBLIC
   refreshPanels() {
     if (this.app.uiInteractionActive) {
       this.app.uiRefreshPending = true;
@@ -46,13 +50,10 @@ export class UINode extends Node {
     }
     this.hud.refreshPanels();
     if (this.app.hangarOpen) this.hangar.refresh();
-    if (this.app.menuPageOpen) this.refreshMenuPage();
+    if (this.app.menuPageOpen) this.#refreshMenuPage();
   }
 
-  refreshMenuPage() {
-    this.inventory.refresh();
-  }
-
+  // PUBLIC
   syncDockedView() {
     const app = this.app;
     if (app.uiInteractionActive) {
@@ -101,6 +102,7 @@ export class UINode extends Node {
     });
   }
 
+  // PUBLIC
   openMenu(name, force) {
     const app = this.app;
     const shipMenus = ['cargo'];
@@ -133,13 +135,14 @@ export class UINode extends Node {
       item.classList.toggle('active', selected);
       item.setAttribute('aria-current', selected ? 'page' : 'false');
     });
-    if (app.menuPageOpen) this.refreshMenuPage();
+    if (app.menuPageOpen) this.#refreshMenuPage();
     if (app.hangarOpen) {
       this.hangar.showService(name);
       this.hangar.refresh();
     }
   }
 
+  // PUBLIC
   closeMenu() {
     const app = this.app;
     app.menuPageOpen = false;
@@ -152,6 +155,11 @@ export class UINode extends Node {
       item.classList.remove('active');
       item.setAttribute('aria-current', 'false');
     });
+  }
+
+  // PRIVATE
+  #refreshMenuPage() {
+    this.inventory.refresh();
   }
 
 }

@@ -298,8 +298,29 @@ function createApp({ dataFile, liveReload = false } = {}) {
         persist();
         return { state };
       }
+      case 'deposit-filtered': {
+        const r = game.depositFiltered(state, payload.filter);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
       case 'withdraw': {
         const r = game.withdraw(state, payload.mineral, payload.amount);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'store-item': {
+        const r = game.storeInventoryItem(state, payload.kind, payload.id);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'retrieve-item': {
+        const r = game.retrieveInventoryItem(state, payload.kind, payload.id);
         if (r.error) return r;
         state = r.state;
         persist();

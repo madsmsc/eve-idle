@@ -5,10 +5,12 @@
 // Input is a wiring class — the same class of exception as app/api/cam/util, so
 // it does not need to be a scene-graph node.
 export class Input {
+  // PUBLIC
   constructor(app) {
     this.app = app;
   }
 
+  // PUBLIC
   wire() {
     const app = this.app;
     const activeUiPointers = new Set();
@@ -34,6 +36,7 @@ export class Input {
     window.addEventListener('keydown', (e) => {
       const tag = e.target && e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (document.querySelector('#offline-report:modal')) return;
       const k = e.key.toLowerCase();
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
       if (k === 'e') app.doEngage();
@@ -159,6 +162,10 @@ export class Input {
       else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type });
       else if (a === 'accept-agent-mission') app.doAction('agent-mission', { action: 'accept' });
       else if (a === 'cancel-agent-mission') app.doAction('agent-mission', { action: 'cancel' });
+      else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
+      else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
+      else if (a === 'retrieve-item') app.doAction('retrieve-item', { kind: el.dataset.kind, id: el.dataset.id });
+      else if (a === 'unequip-all') app.doAction('unequip-all', {});
     };
     document.getElementById('hangar').addEventListener('click', onHangarAction);
 
@@ -177,22 +184,13 @@ export class Input {
       const el = ev.target.closest('button[data-action]');
       if (!el || el.disabled) return;
       const a = el.dataset.action;
-      if (a === 'deposit-all') app.doAction('deposit-all', {});
+      if (a === 'deposit-filtered') app.doAction('deposit-filtered', { filter: app.ui.inventory.filter });
       else if (a === 'deposit') app.doAction('deposit', { mineral: el.dataset.mineral, amount: el.dataset.amount });
       else if (a === 'withdraw') app.doAction('withdraw', { mineral: el.dataset.mineral, amount: el.dataset.amount });
-      else if (a === 'unequip-all') app.doAction('unequip-all', {});
-      else if (a === 'apply-fitting-preset' || a === 'delete-fitting-preset') {
-        const name = document.getElementById('fitting-preset-select').value;
-        if (name) app.doAction(a, { name });
-      }
-      else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
-      else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
+      else if (a === 'store-item') app.doAction('store-item', { kind: el.dataset.kind, id: el.dataset.id });
     };
     document.getElementById('inventory').addEventListener('click', onInventoryClick);
     document.getElementById('storage-panel').addEventListener('click', onInventoryClick);
-    document.getElementById('fitting-preset-select').addEventListener('change', (ev) => {
-      document.querySelector('[data-action="delete-fitting-preset"]').disabled = !ev.target.value;
-    });
 
     window.addEventListener('resize', () => app.resize());
     document.getElementById('station-launch').addEventListener('click', () => app.launch());

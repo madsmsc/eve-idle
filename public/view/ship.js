@@ -9,7 +9,17 @@ import { Node } from '../core/node.js';
 import { api } from '../core/api.js';
 import { clamp, dist } from '../core/util.js';
 
+function polygonPath(ctx, points) {
+  ctx.beginPath();
+  points.forEach(([x, y], i) => {
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+}
+
 export class ShipNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.add(new MiningDroneNode());
@@ -19,6 +29,7 @@ export class ShipNode extends Node {
   // The ship decides how it moves: these used to live on the app orchestrator,
   // but they belong to the ship node so the scene graph owns the ship's behaviour.
 
+  // PUBLIC
   async doWarp(targetId, opts) {
     opts = opts || {};
     if (this.app.docking) return false;
@@ -49,6 +60,7 @@ export class ShipNode extends Node {
     return ok;
   }
 
+  // PUBLIC
   navigate(targetId, coordinates, opts = {}) {
     if (this.app.state.combat) {
       this.app.toast('Cannot navigate while in combat', true);
@@ -73,10 +85,12 @@ export class ShipNode extends Node {
     });
   }
 
+  // PUBLIC
   navigateToNearest(kind) {
     return this.app.doAction('navigate', { kind });
   }
 
+  // PUBLIC
   async doGateJump() {
     this.app.warpPending = true;
     const ok = await this.app.doAction('gate', {});
@@ -94,11 +108,13 @@ export class ShipNode extends Node {
     }
   }
 
+  // PUBLIC
   async doEngage() {
     const ok = await this.app.doAction('engage', { enemyId: this.app.targetEnemyId });
     if (ok) this.app.toast('Engaged!');
   }
 
+  // PUBLIC
   async doCombatAction(action) {
     const ok = await this.app.doAction('combat-action', { action });
     if (ok) {
@@ -108,15 +124,17 @@ export class ShipNode extends Node {
     }
   }
 
+  // PUBLIC
   render(now) {
     if (this.app.state.docked) return super.render(now);
-    this.drawDestination(now);
-    this.drawBeam(now);
-    this.drawShip();
+    this.#drawDestination(now);
+    this.#drawBeam(now);
+    this.#drawShip();
     return super.render(now);
   }
 
-  drawDestination(now) {
+  // PRIVATE
+  #drawDestination(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
     const player = this.app.player;
@@ -151,7 +169,8 @@ export class ShipNode extends Node {
     ctx.stroke();
   }
 
-  drawBeam(now) {
+  // PRIVATE
+  #drawBeam(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
     const a = this.app.state.miningTargetId &&
@@ -174,7 +193,8 @@ export class ShipNode extends Node {
     ctx.restore();
   }
 
-  drawShip() {
+  // PRIVATE
+  #drawShip() {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
     const player = this.app.player;
@@ -196,19 +216,70 @@ export class ShipNode extends Node {
       ctx.fill();
       ctx.globalAlpha = 1;
     }
-    ctx.beginPath();
-    ctx.moveTo(0, -s);
-    ctx.lineTo(s * 0.7, s * 0.7);
-    ctx.lineTo(0, s * 0.35);
-    ctx.lineTo(-s * 0.7, s * 0.7);
-    ctx.closePath();
+    polygonPath(ctx, [
+      [0, -s],
+      [s * 0.32, -s * 0.3],
+      [s * 0.92, s * 0.24],
+      [s * 0.68, s * 0.66],
+      [s * 0.22, s * 0.46],
+      [0, s * 0.78],
+      [-s * 0.22, s * 0.46],
+      [-s * 0.68, s * 0.66],
+      [-s * 0.92, s * 0.24],
+      [-s * 0.32, -s * 0.3],
+    ]);
     ctx.fillStyle = 'rgba(30, 60, 90, 0.95)';
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#4fd1ff';
     ctx.stroke();
+    polygonPath(ctx, [
+      [0, -s * 0.8],
+      [s * 0.22, -s * 0.22],
+      [0, s * 0.2],
+      [-s * 0.22, -s * 0.22],
+    ]);
+    ctx.fillStyle = 'rgba(100, 200, 235, 0.3)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(115, 225, 255, 0.75)';
+    ctx.lineWidth = Math.max(1, camera.zoom);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(110, 210, 245, 0.7)';
+    ctx.lineWidth = Math.max(1, camera.zoom);
     ctx.beginPath();
-    ctx.arc(0, -s * 0.2, s * 0.22, 0, Math.PI * 2);
+    ctx.moveTo(-s * 0.65, s * 0.35);
+    ctx.lineTo(-s * 0.25, s * 0.18);
+    ctx.lineTo(0, s * 0.45);
+    ctx.lineTo(s * 0.25, s * 0.18);
+    ctx.lineTo(s * 0.65, s * 0.35);
+    ctx.stroke();
+    for (const side of [-1, 1]) {
+      polygonPath(ctx, [
+        [side * s * 0.78, s * 0.27],
+        [side * s * 0.49, s * 0.31],
+        [side * s * 0.34, s * 0.43],
+      ]);
+      ctx.fillStyle = '#54c9e8';
+      ctx.fill();
+    }
+    polygonPath(ctx, [
+      [-s * 0.12, s * 0.56],
+      [0, s * 0.46],
+      [s * 0.12, s * 0.56],
+      [s * 0.1, s * 0.69],
+      [-s * 0.1, s * 0.69],
+    ]);
+    ctx.fillStyle = '#17364f';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(130, 230, 255, 0.8)';
+    ctx.lineWidth = Math.max(1, camera.zoom);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 0.64);
+    ctx.lineTo(0, s * 0.37);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -s * 0.2, s * 0.12, 0, Math.PI * 2);
     ctx.fillStyle = '#bfefff';
     ctx.fill();
     ctx.restore();
@@ -217,6 +288,7 @@ export class ShipNode extends Node {
 
 // The mining drones orbiting the asteroid you are mining (one per owned drone).
 class MiningDroneNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const state = this.app.state;
@@ -237,16 +309,24 @@ class MiningDroneNode extends Node {
       ctx.translate(dx, dy);
       ctx.rotate(t);
       const r = 5 * this.app.camera.zoom;
-      ctx.beginPath();
-      ctx.moveTo(0, -r);
-      ctx.lineTo(r * 0.8, r * 0.7);
-      ctx.lineTo(-r * 0.8, r * 0.7);
-      ctx.closePath();
+      polygonPath(ctx, [
+        [0, -r],
+        [r * 0.42, -r * 0.15],
+        [r, r * 0.3],
+        [r * 0.35, r * 0.42],
+        [0, r * 0.85],
+        [-r * 0.35, r * 0.42],
+        [-r, r * 0.3],
+        [-r * 0.42, -r * 0.15],
+      ]);
       ctx.fillStyle = 'rgba(60, 200, 140, 0.9)';
       ctx.fill();
       ctx.strokeStyle = '#7ff0c0';
       ctx.lineWidth = 1;
       ctx.stroke();
+      polygonPath(ctx, [[0, -r * 0.58], [r * 0.25, 0], [0, r * 0.3], [-r * 0.25, 0]]);
+      ctx.fillStyle = 'rgba(215, 255, 225, 0.85)';
+      ctx.fill();
       ctx.restore();
     }
     return super.render(now);

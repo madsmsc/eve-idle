@@ -14,7 +14,29 @@ const STAR_TILE = 1500;
 const STAR_COUNT = 170;
 const TIER_COLORS = { novice: '#8fd19e', standard: '#8ec5ff', elite: '#ffcf5c' };
 
+function polygonPath(ctx, points) {
+  ctx.beginPath();
+  points.forEach(([x, y], i) => {
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+}
+
+function regularPolygonPath(ctx, radius, sides, rotation = 0) {
+  ctx.beginPath();
+  for (let i = 0; i < sides; i++) {
+    const angle = rotation + (i / sides) * Math.PI * 2;
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
 export class StarNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const s = this.app.state.world.star;
@@ -37,6 +59,7 @@ export class StarNode extends Node {
 }
 
 export class BeltNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -79,6 +102,7 @@ export class BeltNode extends Node {
 }
 
 export class PlanetNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -99,6 +123,11 @@ export class PlanetNode extends Node {
         ctx.beginPath();
         ctx.ellipse(0, 0, r * 1.7, r * 0.5, -0.4, 0, Math.PI * 2);
         ctx.stroke();
+        ctx.strokeStyle = 'rgba(255, 235, 190, 0.4)';
+        ctx.lineWidth = Math.max(1, r * 0.035);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 1.42, r * 0.4, -0.4, Math.PI * 0.05, Math.PI * 0.95);
+        ctx.stroke();
       }
       const g = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.2, 0, 0, r);
       g.addColorStop(0, pl.color);
@@ -107,6 +136,42 @@ export class PlanetNode extends Node {
       ctx.beginPath();
       ctx.arc(0, 0, r, 0, Math.PI * 2);
       ctx.fill();
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.98, 0, Math.PI * 2);
+      ctx.clip();
+      const seed = pl.x + pl.y;
+      for (let i = 0; i < 5; i++) {
+        const a = pseudo(seed + i * 13) * Math.PI * 2;
+        const x = Math.cos(a) * r * 0.42;
+        const y = Math.sin(a) * r * 0.42;
+        const size = r * (0.22 + pseudo(seed + i * 19) * 0.2);
+        polygonPath(ctx, [
+          [x - size * 0.8, y - size * 0.4],
+          [x - size * 0.25, y - size],
+          [x + size * 0.7, y - size * 0.65],
+          [x + size, y + size * 0.1],
+          [x + size * 0.15, y + size * 0.75],
+          [x - size * 0.65, y + size * 0.45],
+        ]);
+        ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)';
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(235,245,255,0.12)';
+      ctx.lineWidth = Math.max(1, r * 0.025);
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.ellipse(0, i * r * 0.24, r * 0.92, r * (0.18 + Math.abs(i) * 0.06), -0.16, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+      if (pl.ring) {
+        ctx.strokeStyle = 'rgba(245, 220, 170, 0.58)';
+        ctx.lineWidth = Math.max(1, r * 0.045);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 1.7, r * 0.5, -0.4, Math.PI, Math.PI * 2);
+        ctx.stroke();
+      }
       ctx.restore();
     }
     return super.render(now);
@@ -114,6 +179,7 @@ export class PlanetNode extends Node {
 }
 
 export class MoonNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -123,12 +189,29 @@ export class MoonNode extends Node {
       ctx.beginPath();
       ctx.arc(p.x, p.y, Math.max(1.5, m.size * camera.zoom), 0, Math.PI * 2);
       ctx.fill();
+      const r = Math.max(1.5, m.size * camera.zoom);
+      if (r > 5) {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(pseudo(m.x + m.y) * Math.PI);
+        ctx.strokeStyle = 'rgba(55, 65, 85, 0.42)';
+        ctx.lineWidth = Math.max(1, r * 0.08);
+        regularPolygonPath(ctx, r * 0.55, 6, Math.PI / 6);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(35, 45, 62, 0.24)';
+        ctx.beginPath();
+        ctx.arc(-r * 0.28, -r * 0.18, r * 0.16, 0, Math.PI * 2);
+        ctx.arc(r * 0.25, r * 0.22, r * 0.1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     }
     return super.render(now);
   }
 }
 
 export class AsteroidNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -137,12 +220,13 @@ export class AsteroidNode extends Node {
       if (a.amount <= 0) continue;
       if (a.x < view.minX - 50 || a.x > view.maxX + 50 || a.y < view.minY - 50 || a.y > view.maxY + 50) continue;
       const p = camera.worldToScreen(a.x, a.y);
-      this.drawAsteroid(p.x, p.y, a);
+      this.#drawAsteroid(p.x, p.y, a);
     }
     return super.render(now);
   }
 
-  drawAsteroid(sx, sy, a) {
+  // PRIVATE
+  #drawAsteroid(sx, sy, a) {
     const ctx = this.app.ctx;
     const zoom = this.app.camera.zoom;
     const r = a.size * zoom;
@@ -154,32 +238,46 @@ export class AsteroidNode extends Node {
       return;
     }
     const color = this.app.catalog.minerals[a.mineral].color;
-    const n = 8;
-    ctx.beginPath();
+    const n = 9;
+    const points = [];
     for (let i = 0; i < n; i++) {
       const ang = (i / n) * Math.PI * 2;
-      const wobble = 0.72 + 0.34 * pseudo(a.seed + i * 7);
-      const px = sx + Math.cos(ang) * r * wobble;
-      const py = sy + Math.sin(ang) * r * wobble;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+      const wobble = 0.62 + 0.42 * pseudo(a.seed + i * 7);
+      points.push([Math.cos(ang) * r * wobble, Math.sin(ang) * r * wobble]);
     }
-    ctx.closePath();
+    ctx.save();
+    ctx.translate(sx, sy);
+    polygonPath(ctx, points);
     ctx.fillStyle = 'rgba(52, 58, 76, 0.92)';
     ctx.fill();
+    for (let i = 0; i < n; i++) {
+      const [x1, y1] = points[i];
+      const [x2, y2] = points[(i + 1) % n];
+      polygonPath(ctx, [[0, 0], [x1 * 0.78, y1 * 0.78], [x2 * 0.78, y2 * 0.78]]);
+      ctx.fillStyle = pseudo(a.seed + i * 23) > 0.5
+        ? 'rgba(225, 235, 255, 0.11)'
+        : 'rgba(8, 14, 24, 0.2)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(190, 205, 225, 0.14)';
+      ctx.lineWidth = Math.max(0.6, zoom);
+      ctx.stroke();
+    }
     ctx.lineWidth = Math.max(1, 2 * zoom);
     ctx.strokeStyle = color;
     ctx.stroke();
-    ctx.globalAlpha = 0.85;
-    ctx.beginPath();
-    ctx.arc(sx, sy, r * 0.32, 0, Math.PI * 2);
+    ctx.globalAlpha = 0.8;
+    regularPolygonPath(ctx, r * 0.25, 6, Math.PI / 6);
     ctx.fillStyle = color;
     ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(225, 245, 255, 0.75)';
+    ctx.lineWidth = Math.max(1, zoom);
+    ctx.stroke();
+    ctx.restore();
   }
 }
 
 export class StationNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -189,23 +287,38 @@ export class StationNode extends Node {
       const r = 34 * zoom;
       ctx.save();
       ctx.translate(p.x, p.y);
-      ctx.strokeStyle = 'rgba(120, 200, 255, 0.7)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.rotate(pseudo(st.x + st.y) * Math.PI);
+      ctx.strokeStyle = 'rgba(120, 200, 255, 0.72)';
+      ctx.lineWidth = Math.max(1, 2 * zoom);
+      regularPolygonPath(ctx, r, 8, Math.PI / 8);
       ctx.stroke();
-      ctx.strokeStyle = 'rgba(120, 200, 255, 0.35)';
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.6, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(120, 200, 255, 0.4)';
+      regularPolygonPath(ctx, r * 0.65, 6, 0);
       ctx.stroke();
+      ctx.fillStyle = 'rgba(50, 115, 165, 0.3)';
+      regularPolygonPath(ctx, r * 0.38, 6, Math.PI / 6);
+      ctx.fill();
       ctx.strokeStyle = 'rgba(120, 200, 255, 0.6)';
       for (let i = 0; i < 4; i++) {
         const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
         ctx.beginPath();
-        ctx.moveTo(Math.cos(a) * r * 0.6, Math.sin(a) * r * 0.6);
-        ctx.lineTo(Math.cos(a) * r * 1.15, Math.sin(a) * r * 1.15);
+        ctx.moveTo(Math.cos(a) * r * 0.35, Math.sin(a) * r * 0.35);
+        ctx.lineTo(Math.cos(a) * r * 0.68, Math.sin(a) * r * 0.68);
+        ctx.lineTo(Math.cos(a) * r * 1.05, Math.sin(a) * r * 1.05);
         ctx.stroke();
+        const podX = Math.cos(a) * r * 1.05;
+        const podY = Math.sin(a) * r * 1.05;
+        ctx.save();
+        ctx.translate(podX, podY);
+        ctx.rotate(a);
+        ctx.fillStyle = 'rgba(30, 70, 105, 0.8)';
+        ctx.fillRect(-r * 0.16, -r * 0.11, r * 0.32, r * 0.22);
+        ctx.strokeRect(-r * 0.16, -r * 0.11, r * 0.32, r * 0.22);
+        ctx.restore();
       }
+      ctx.fillStyle = 'rgba(170, 235, 255, 0.95)';
+      regularPolygonPath(ctx, r * 0.17, 4, Math.PI / 4);
+      ctx.fill();
       ctx.fillStyle = 'rgba(120, 200, 255, 0.9)';
       ctx.font = `${Math.max(10, 12 * zoom)}px sans-serif`;
       ctx.textAlign = 'center';
@@ -217,6 +330,7 @@ export class StationNode extends Node {
 }
 
 export class OutpostNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -226,12 +340,28 @@ export class OutpostNode extends Node {
       const r = 24 * zoom;
       ctx.save();
       ctx.translate(p.x, p.y);
-      ctx.rotate(Math.PI / 4);
+      ctx.rotate(pseudo(outpost.x + outpost.y) * Math.PI);
       ctx.fillStyle = 'rgba(255, 176, 92, 0.16)';
-      ctx.fillRect(-r, -r, r * 2, r * 2);
+      regularPolygonPath(ctx, r, 6, Math.PI / 6);
+      ctx.fill();
       ctx.strokeStyle = 'rgba(255, 190, 110, 0.85)';
       ctx.lineWidth = Math.max(1.5, 2 * zoom);
-      ctx.strokeRect(-r, -r, r * 2, r * 2);
+      regularPolygonPath(ctx, r, 6, Math.PI / 6);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255, 190, 110, 0.52)';
+      ctx.lineWidth = Math.max(1, zoom);
+      regularPolygonPath(ctx, r * 0.62, 4, Math.PI / 4);
+      ctx.stroke();
+      for (let i = 0; i < 4; i++) {
+        const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(angle) * r * 0.24, Math.sin(angle) * r * 0.24);
+        ctx.lineTo(Math.cos(angle) * r * 0.8, Math.sin(angle) * r * 0.8);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(255, 214, 158, 0.95)';
+      regularPolygonPath(ctx, r * 0.24, 4, Math.PI / 4);
+      ctx.fill();
       ctx.restore();
       ctx.fillStyle = 'rgba(255, 210, 160, 0.9)';
       ctx.font = `${Math.max(10, 12 * zoom)}px sans-serif`;
@@ -243,6 +373,7 @@ export class OutpostNode extends Node {
 }
 
 export class GateNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -263,15 +394,25 @@ export class GateNode extends Node {
       ctx.arc(0, 0, r * 1.8, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = `rgba(180, 150, 255, ${0.8 * pulse})`;
-      ctx.lineWidth = 3 * zoom;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(1, 3 * zoom);
+      regularPolygonPath(ctx, r, 8, Math.PI / 8);
       ctx.stroke();
       ctx.strokeStyle = 'rgba(220, 200, 255, 0.9)';
-      ctx.lineWidth = 1.5 * zoom;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.7, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(1, 1.5 * zoom);
+      regularPolygonPath(ctx, r * 0.68, 6, Math.PI / 6);
       ctx.stroke();
+      ctx.fillStyle = `rgba(180, 150, 255, ${0.2 * pulse})`;
+      regularPolygonPath(ctx, r * 0.38, 4, Math.PI / 4);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(220, 200, 255, ${0.5 * pulse})`;
+      ctx.lineWidth = Math.max(1, zoom);
+      for (let i = 0; i < 4; i++) {
+        const a = i * Math.PI / 2 + Math.PI / 4;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * r * 0.68, Math.sin(a) * r * 0.68);
+        ctx.lineTo(Math.cos(a) * r * 1.18, Math.sin(a) * r * 1.18);
+        ctx.stroke();
+      }
       const target = (this.app.state.systemNames || []).find((s) => s.id === g.targetSystemId);
       ctx.fillStyle = target && target.color ? target.color : 'rgba(200, 180, 255, 0.9)';
       ctx.font = `${Math.max(9, 11 * zoom)}px sans-serif`;
@@ -284,6 +425,7 @@ export class GateNode extends Node {
 }
 
 export class EnemyNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -292,19 +434,20 @@ export class EnemyNode extends Node {
       if (!e.alive) continue;
       if (e.x < view.minX - 60 || e.x > view.maxX + 60 || e.y < view.minY - 60 || e.y > view.maxY + 60) continue;
       const p = camera.worldToScreen(e.x, e.y);
-      this.drawEnemyShip(p.x, p.y, e);
-      this.drawEnemyStatus(p.x, p.y, e);
+      this.#drawEnemyShip(p.x, p.y, e);
+      this.#drawEnemyStatus(p.x, p.y, e);
       if (e.id === this.app.targetEnemyId) {
-        this.drawTargetIndicator(p.x, p.y, e, now);
+        this.#drawTargetIndicator(p.x, p.y, e, now);
       }
     }
     return super.render(now);
   }
 
-  drawTargetIndicator(sx, sy, enemy, now) {
+  // PRIVATE
+  #drawTargetIndicator(sx, sy, enemy, now) {
     const ctx = this.app.ctx;
     const zoom = this.app.camera.zoom;
-    const radius = (this.enemySize(enemy.type) + 8) * zoom;
+    const radius = (this.#enemySize(enemy.type) + 8) * zoom;
     const length = Math.min(radius * 0.55, 14 * zoom);
     const left = sx - radius;
     const right = sx + radius;
@@ -336,34 +479,49 @@ export class EnemyNode extends Node {
     ctx.restore();
   }
 
-  enemySize(type) {
+  // PRIVATE
+  #enemySize(type) {
     return type === 'dread' ? 26 : type === 'faction' ? 20 : type === 'gang' ? 16 : 13;
   }
 
-  drawEnemyShip(sx, sy, e) {
+  // PRIVATE
+  #drawEnemyShip(sx, sy, e) {
     const ctx = this.app.ctx;
-    const r = this.enemySize(e.type) * this.app.camera.zoom;
+    const r = this.#enemySize(e.type) * this.app.camera.zoom;
+    const hulls = {
+      pirate: [[0, -1], [0.42, -0.22], [0.95, 0.3], [0.45, 0.25], [0, 0.76], [-0.45, 0.25], [-0.95, 0.3], [-0.42, -0.22]],
+      gang: [[0, -1], [0.48, -0.42], [1, -0.18], [0.65, 0.15], [0.85, 0.55], [0.2, 0.42], [0, 0.85], [-0.2, 0.42], [-0.85, 0.55], [-0.65, 0.15], [-1, -0.18], [-0.48, -0.42]],
+      faction: [[0, -1], [0.3, -0.42], [1, -0.48], [0.63, 0.02], [0.88, 0.6], [0.2, 0.38], [0, 0.82], [-0.2, 0.38], [-0.88, 0.6], [-0.63, 0.02], [-1, -0.48], [-0.3, -0.42]],
+      dread: [[0, -1], [0.36, -0.6], [0.7, -0.45], [0.62, -0.05], [1, 0.32], [0.58, 0.48], [0.42, 0.85], [0, 0.64], [-0.42, 0.85], [-0.58, 0.48], [-1, 0.32], [-0.62, -0.05], [-0.7, -0.45], [-0.36, -0.6]],
+    };
+    const hull = hulls[e.type] || hulls.pirate;
     ctx.save();
     ctx.translate(sx, sy);
     ctx.rotate(pseudo(e.seed) * Math.PI * 2);
-    ctx.beginPath();
-    ctx.moveTo(0, -r);
-    ctx.lineTo(r * 0.8, r * 0.7);
-    ctx.lineTo(0, r * 0.3);
-    ctx.lineTo(-r * 0.8, r * 0.7);
-    ctx.closePath();
+    polygonPath(ctx, hull.map(([x, y]) => [x * r, y * r]));
     ctx.fillStyle = 'rgba(120, 20, 40, 0.9)';
     ctx.fill();
-    ctx.lineWidth = Math.max(1, 1.5 * this.app.camera.zoom);
+    ctx.strokeStyle = 'rgba(255, 115, 140, 0.48)';
+    ctx.lineWidth = Math.max(1, r * 0.08);
+    polygonPath(ctx, hull.slice(0, Math.ceil(hull.length / 2)).map(([x, y]) => [x * r, y * r]));
+    ctx.stroke();
+    polygonPath(ctx, [[0, -r * 0.72], [r * 0.28, -r * 0.05], [0, r * 0.48], [-r * 0.28, -r * 0.05]]);
+    ctx.fillStyle = 'rgba(255, 95, 125, 0.28)';
+    ctx.fill();
     ctx.strokeStyle = '#ff5c7a';
+    ctx.lineWidth = Math.max(1, 1.5 * this.app.camera.zoom);
+    regularPolygonPath(ctx, r * 0.14, 4, Math.PI / 4);
+    ctx.fillStyle = '#ff91a4';
+    ctx.fill();
     ctx.stroke();
     ctx.restore();
   }
 
-  drawEnemyStatus(sx, sy, e) {
+  // PRIVATE
+  #drawEnemyStatus(sx, sy, e) {
     const ctx = this.app.ctx;
     const zoom = this.app.camera.zoom;
-    const radius = this.enemySize(e.type) * zoom;
+    const radius = this.#enemySize(e.type) * zoom;
     const combat = this.app.state.combat;
     const liveCombat = combat && combat.enemyId === e.id ? combat : null;
     const enemyDef = this.app.catalog.enemies[e.type];
@@ -393,8 +551,8 @@ export class EnemyNode extends Node {
     ctx.shadowBlur = 3;
     ctx.fillText(name, sx, top, 150);
     ctx.shadowBlur = 0;
-    this.drawHealthBar(sx, top + 8, width, shieldMax > 0 ? shield / shieldMax : 0, '#4fd1ff');
-    this.drawHealthBar(sx, top + 14, width, hullMax > 0 ? hull / hullMax : 0, '#ff657a');
+    this.#drawHealthBar(sx, top + 8, width, shieldMax > 0 ? shield / shieldMax : 0, '#4fd1ff');
+    this.#drawHealthBar(sx, top + 14, width, hullMax > 0 ? hull / hullMax : 0, '#ff657a');
     ctx.shadowColor = '#000';
     ctx.shadowBlur = 3;
     ctx.font = `700 ${small}px sans-serif`;
@@ -406,7 +564,8 @@ export class EnemyNode extends Node {
     ctx.restore();
   }
 
-  drawHealthBar(cx, y, width, fraction, color) {
+  // PRIVATE
+  #drawHealthBar(cx, y, width, fraction, color) {
     const ctx = this.app.ctx;
     const x = cx - width / 2;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
@@ -420,6 +579,7 @@ export class EnemyNode extends Node {
 }
 
 class BackgroundNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const base = mixRgb({ r: 4, g: 6, b: 12 }, this.app.systemColor, 0.12);
@@ -444,12 +604,14 @@ class BackgroundNode extends Node {
 }
 
 class StarfieldNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.stars = [];
     this.generate();
   }
 
+  // PUBLIC
   generate() {
     this.stars = Array.from({ length: STAR_COUNT }, () => ({
       x: Math.random() * STAR_TILE,
@@ -459,6 +621,7 @@ class StarfieldNode extends Node {
     }));
   }
 
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -489,6 +652,7 @@ class StarfieldNode extends Node {
 }
 
 class GridNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -517,6 +681,7 @@ class GridNode extends Node {
 }
 
 class BoundsNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const camera = this.app.camera;
@@ -530,6 +695,7 @@ class BoundsNode extends Node {
 }
 
 class BackdropNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.add(new BackgroundNode());
@@ -538,12 +704,14 @@ class BackdropNode extends Node {
     this.add(new BoundsNode());
   }
 
+  // PUBLIC
   generateStars() {
     this.starfield.generate();
   }
 }
 
 class SystemNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.add(new StarNode())
@@ -555,6 +723,7 @@ class SystemNode extends Node {
 }
 
 class BeltGroupNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.add(new BeltNode());
@@ -562,6 +731,7 @@ class BeltGroupNode extends Node {
 }
 
 class CelestialGroupNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.add(new PlanetNode()).add(new MoonNode());
@@ -569,6 +739,7 @@ class CelestialGroupNode extends Node {
 }
 
 class ResourceGroupNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.add(new AsteroidNode());
@@ -576,6 +747,7 @@ class ResourceGroupNode extends Node {
 }
 
 class InfrastructureGroupNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.add(new StationNode()).add(new OutpostNode()).add(new GateNode());
@@ -583,6 +755,7 @@ class InfrastructureGroupNode extends Node {
 }
 
 class ActorsNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.add(new EnemyNode());
@@ -592,6 +765,7 @@ class ActorsNode extends Node {
 }
 
 class WorldEffectsNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.combat = this.add(new CombatNode());
@@ -600,6 +774,7 @@ class WorldEffectsNode extends Node {
 }
 
 export class WorldNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.backdrop = this.add(new BackdropNode(app));
@@ -610,10 +785,12 @@ export class WorldNode extends Node {
     this.ship = this.actors.ship;
   }
 
+  // PUBLIC
   genStars() {
     this.backdrop.generateStars();
   }
 
+  // PUBLIC
   captureDockBackground(excludedNode) {
     const canvas = document.createElement('canvas');
     canvas.width = this.app.canvas.width;

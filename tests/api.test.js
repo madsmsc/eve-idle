@@ -427,6 +427,30 @@ describe('HTTP API', () => {
     assert.equal(wd.data.state.minerals.iron, 40);
   });
 
+  test('POST /api/store-item and /api/retrieve-item move modules and blueprints through quantum storage', async () => {
+    const cur = srv.app.getState();
+    cur.loot.push({ id: 'stored-module', slotType: 'weapon', tier: 1 });
+    cur.blueprints.push({ id: 'stored-blueprint', kind: 'module', type: 'weapon', tier: 1 });
+    srv.app.setState(cur);
+
+    const storedModule = await api(srv.base, '/api/store-item', { kind: 'loot', id: 'stored-module' });
+    assert.equal(storedModule.status, 200);
+    assert.equal(storedModule.data.state.loot.length, 0);
+    assert.equal(storedModule.data.state.storage.loot[0].id, 'stored-module');
+
+    const storedBlueprint = await api(srv.base, '/api/store-item', { kind: 'blueprints', id: 'stored-blueprint' });
+    assert.equal(storedBlueprint.status, 200);
+    assert.equal(storedBlueprint.data.state.blueprints.length, 0);
+    assert.equal(storedBlueprint.data.state.storage.blueprints[0].id, 'stored-blueprint');
+
+    const retrievedModule = await api(srv.base, '/api/retrieve-item', { kind: 'loot', id: 'stored-module' });
+    assert.equal(retrievedModule.status, 200);
+    assert.equal(retrievedModule.data.state.loot[0].id, 'stored-module');
+    const retrievedBlueprint = await api(srv.base, '/api/retrieve-item', { kind: 'blueprints', id: 'stored-blueprint' });
+    assert.equal(retrievedBlueprint.status, 200);
+    assert.equal(retrievedBlueprint.data.state.blueprints[0].id, 'stored-blueprint');
+  });
+
   test('POST /api/deposit-all transfers cargo to storage without selling', async () => {
     const cur = srv.app.getState();
     const active = cur.ships.find((s) => s.id === cur.activeShipId);
@@ -441,6 +465,62 @@ describe('HTTP API', () => {
     assert.equal(r.data.state.storage.items.iron, 100);
     assert.equal(r.data.state.storage.items.bauxite, 25);
     assert.equal(r.data.state.isk, undefined);
+  });
+
+  test('POST /api/deposit-filtered stores only the selected cargo categories', async () => {
+    const cur = srv.app.getState();
+    const active = cur.ships.find((ship) => ship.id === cur.activeShipId);
+    active.cargo = { iron: 11, bauxite: 12, gadolinium: 0, megacyte: 0, scrap: 13, alloy: 14, circuits: 0, quantumCores: 0 };
+    cur.loot = [
+      { id: 'filtered-module', slotType: 'weapon', tier: 1 },
+    ];
+    cur.blueprints = [
+      { id: 'filtered-blueprint', kind: 'module', type: 'weapon', tier: 1 },
+    ];
+    cur.storage.items.iron = 0;
+    cur.storage.items.bauxite = 0;
+    cur.storage.items.scrap = 0;
+    cur.storage.items.alloy = 0;
+    cur.storage.loot = [];
+    cur.storage.blueprints = [];
+    srv.app.setState(cur);
+
+    let response = await api(srv.base, '/api/deposit-filtered', { filter: 'ore' });
+    assert.equal(response.status, 200);
+    assert.equal(response.data.state.materials.iron, 0);
+    assert.equal(response.data.state.materials.scrap, 13);
+    assert.equal(response.data.state.loot.length, 1);
+    assert.equal(response.data.state.storage.items.iron, 11);
+
+    response = await api(srv.base, '/api/deposit-filtered', { filter: 'components' });
+    assert.equal(response.status, 200);
+    assert.equal(response.data.state.materials.scrap, 0);
+    assert.equal(response.data.state.storage.items.alloy, 14);
+    assert.equal(response.data.state.loot.length, 1);
+
+    response = await api(srv.base, '/api/deposit-filtered', { filter: 'loot' });
+    assert.equal(response.status, 200);
+    assert.equal(response.data.state.loot.length, 0);
+    assert.equal(response.data.state.storage.loot[0].id, 'filtered-module');
+    assert.equal(response.data.state.blueprints.length, 1);
+
+    response = await api(srv.base, '/api/deposit-filtered', { filter: 'blueprints' });
+    assert.equal(response.status, 200);
+    assert.equal(response.data.state.blueprints.length, 0);
+    assert.equal(response.data.state.storage.blueprints[0].id, 'filtered-blueprint');
+
+    const next = srv.app.getState();
+    const nextActive = next.ships.find((ship) => ship.id === next.activeShipId);
+    nextActive.cargo.iron = 5;
+    next.loot.push({ id: 'all-module', slotType: 'weapon', tier: 1 });
+    next.blueprints.push({ id: 'all-blueprint', kind: 'module', type: 'weapon', tier: 1 });
+    srv.app.setState(next);
+    response = await api(srv.base, '/api/deposit-filtered', { filter: 'all' });
+    assert.equal(response.status, 200);
+    assert.equal(response.data.state.materials.iron, 0);
+    assert.equal(response.data.state.storage.items.iron, 16);
+    assert.ok(response.data.state.storage.loot.some((item) => item.id === 'all-module'));
+    assert.ok(response.data.state.storage.blueprints.some((item) => item.id === 'all-blueprint'));
   });
 
   test('POST /api/deposit and /api/withdraw reject when not docked (400)', async () => {

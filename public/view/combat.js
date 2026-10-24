@@ -6,12 +6,23 @@
 import { Node } from '../core/node.js';
 import { pseudo } from '../core/util.js';
 
+function polygonPath(ctx, points) {
+  ctx.beginPath();
+  points.forEach(([x, y], i) => {
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+}
+
 export class CombatNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.fx = { enemyId: null, enemyX: 0, enemyY: 0, battleStartPerf: 0, explosions: [] };
   }
 
+  // PUBLIC
   onServerState(previousShipPosition) {
     const state = this.app.state;
     const combat = state.combat;
@@ -51,17 +62,19 @@ export class CombatNode extends Node {
     }
   }
 
+  // PUBLIC
   update(dt) {
     const now = performance.now();
     this.fx.explosions = this.fx.explosions.filter((explosion) => now - explosion.at < 1100);
     return super.update(dt);
   }
 
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const state = this.app.state;
     const fx = this.fx;
-    for (const ex of fx.explosions) this.drawExplosion(ex, now);
+    for (const ex of fx.explosions) this.#drawExplosion(ex, now);
 
     const c = state.combat;
     if (!c) return super.render(now);
@@ -82,18 +95,18 @@ export class CombatNode extends Node {
       const a = orbitAng + (i / nDrones) * Math.PI * 2;
       const dx = cx + Math.cos(a) * orbitR;
       const dy = cy + Math.sin(a) * orbitR;
-      this.drawDrone(dx, dy, a + Math.PI / 2);
+      this.#drawDrone(dx, dy, a + Math.PI / 2);
       if (pseudo(i * 31 + Math.floor(now / 130)) > 0.3) {
-        this.drawLaser(dx, dy, ep.x, ep.y, now, i * 7 + 1, '#ffd24a', '#ffb020');
+        this.#drawLaser(dx, dy, ep.x, ep.y, now, i * 7 + 1, '#ffd24a', '#ffb020');
       }
     }
-    if (hasLaser) this.drawLaser(cx, cy, ep.x, ep.y, now, 42, '#ffd24a', '#ffb020');
+    if (hasLaser) this.#drawLaser(cx, cy, ep.x, ep.y, now, 42, '#ffd24a', '#ffb020');
     if (c.fightTime >= c.enemyRangeDelay && now % 900 < 150) {
-      this.drawLaser(ep.x, ep.y, cx, cy, now, 99, '#ff4657', '#ff1728');
+      this.#drawLaser(ep.x, ep.y, cx, cy, now, 99, '#ff4657', '#ff1728');
     }
-    this.drawRockets(cx, cy, ep.x, ep.y, now);
+    this.#drawRockets(cx, cy, ep.x, ep.y, now);
 
-    const er = this.enemySize(e.type) * this.app.camera.zoom;
+    const er = this.#enemySize(e.type) * this.app.camera.zoom;
     const flash = Math.max(0, Math.sin(now / 80));
     if (flash > 0.35) {
       ctx.save();
@@ -107,30 +120,43 @@ export class CombatNode extends Node {
     return super.render(now);
   }
 
-  enemySize(type) {
+  // PRIVATE
+  #enemySize(type) {
     return type === 'dread' ? 26 : type === 'faction' ? 20 : type === 'gang' ? 16 : 13;
   }
 
-  drawDrone(x, y, angle) {
+  // PRIVATE
+  #drawDrone(x, y, angle) {
     const ctx = this.app.ctx;
     const r = 7 * this.app.camera.zoom;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
-    ctx.beginPath();
-    ctx.moveTo(0, -r);
-    ctx.lineTo(r * 0.8, r * 0.7);
-    ctx.lineTo(-r * 0.8, r * 0.7);
-    ctx.closePath();
+    polygonPath(ctx, [
+      [0, -r],
+      [r * 0.34, -r * 0.18],
+      [r, r * 0.42],
+      [r * 0.3, r * 0.3],
+      [0, r * 0.85],
+      [-r * 0.3, r * 0.3],
+      [-r, r * 0.42],
+      [-r * 0.34, -r * 0.18],
+    ]);
     ctx.fillStyle = 'rgba(40, 180, 200, 0.9)';
     ctx.fill();
     ctx.lineWidth = 1;
     ctx.strokeStyle = '#7fe7f0';
     ctx.stroke();
+    polygonPath(ctx, [[0, -r * 0.62], [r * 0.24, -r * 0.02], [0, r * 0.42], [-r * 0.24, -r * 0.02]]);
+    ctx.fillStyle = 'rgba(205, 255, 255, 0.85)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(210, 255, 255, 0.8)';
+    ctx.stroke();
     ctx.restore();
   }
 
-  drawLaser(x1, y1, x2, y2, now, seed, color, glow) {
+  // PRIVATE
+  #drawLaser(x1, y1, x2, y2, now, seed, color, glow) {
     const ctx = this.app.ctx;
     const pulse = 0.5 + 0.5 * Math.sin(now / 60 + seed);
     ctx.save();
@@ -146,7 +172,8 @@ export class CombatNode extends Node {
     ctx.restore();
   }
 
-  drawRockets(cx, cy, ex, ey, now) {
+  // PRIVATE
+  #drawRockets(cx, cy, ex, ey, now) {
     const ctx = this.app.ctx;
     const zoom = this.app.camera.zoom;
     const period = 900;
@@ -167,7 +194,8 @@ export class CombatNode extends Node {
     }
   }
 
-  drawExplosion(ex, now) {
+  // PRIVATE
+  #drawExplosion(ex, now) {
     const ctx = this.app.ctx;
     const t = (now - ex.at) / 1100;
     if (t < 0 || t > 1) return;

@@ -12,7 +12,53 @@ const EVENT_LIFETIME_MS = 14000;
 const EVENT_FADE_AFTER_MS = 2000;
 const MAX_VISIBLE_EVENTS = 6;
 
+export function countAutomationEvents(log = []) {
+  const counts = new Map();
+  for (const event of log) {
+    const key = `${event.at}:${event.message}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+export function collectNewAutomationEvents(log = [], seenCounts = new Map()) {
+  const currentCounts = countAutomationEvents(log);
+  const fresh = [];
+  const processed = new Map();
+  for (const event of log.slice().reverse()) {
+    const key = `${event.at}:${event.message}`;
+    const count = (processed.get(key) || 0) + 1;
+    processed.set(key, count);
+    if (count > (seenCounts.get(key) || 0)) fresh.push(event);
+  }
+  return { currentCounts, fresh };
+}
+
+export function renderActivityLog(events, list, eventKey, now) {
+  const visible = events.filter((event) => now - event.at < EVENT_LIFETIME_MS);
+  const key = visible.map((event) => event.id).join(',');
+  if (key !== eventKey) {
+    list.innerHTML = '';
+    for (const event of visible) {
+      const line = document.createElement('li');
+      line.className = event.tone;
+      line.textContent = event.text;
+      line.dataset.id = event.id;
+      list.appendChild(line);
+    }
+  }
+  for (const line of list.children) {
+    const event = visible.find((item) => String(item.id) === line.dataset.id);
+    const age = event ? now - event.at : EVENT_LIFETIME_MS;
+    line.style.opacity = age < EVENT_FADE_AFTER_MS
+      ? 1
+      : Math.max(0, 1 - (age - EVENT_FADE_AFTER_MS) / (EVENT_LIFETIME_MS - EVENT_FADE_AFTER_MS));
+  }
+  return key;
+}
+
 export class HudNode extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.dialogueShownFor = null;
@@ -20,8 +66,9 @@ export class HudNode extends Node {
   }
 
   // Full panel rebuild, called when a fresh server state arrives.
+  // PUBLIC
   refreshPanels() {
-    this.renderMission();
+    this.#renderMission();
     const sysNameEl = document.getElementById('system-name');
     if (this.app.state.system) {
       sysNameEl.textContent = this.app.state.system.name;
@@ -32,11 +79,25 @@ export class HudNode extends Node {
       sysNameEl.style.color = '';
       sysNameEl.style.textShadow = '';
     }
-    this.collectEvents();
+    this.#collectEvents();
   }
 
+  // PUBLIC
+  update(dt) {
+    this.#refreshFast();
+    return super.update(dt);
+  }
+
+  // PUBLIC
+  pushEvent(text, tone) {
+    this.events = this.events || [];
+    this.events.unshift({ id: (this.eventId = (this.eventId || 0) + 1), text, tone, at: performance.now() });
+    if (this.events.length > MAX_VISIBLE_EVENTS) this.events.length = MAX_VISIBLE_EVENTS;
+  }
+
+  // PRIVATE
   // Turn new combat results, jumps and a full hold into short event-log lines.
-  collectEvents() {
+  #collectEvents() {
     const state = this.app.state;
     const log = state.combatLog || [];
     const newest = log.length ? log[0].at : 0;
@@ -44,7 +105,7 @@ export class HudNode extends Node {
       this.lastLogAt = newest;
       this.lastSystemId = state.system ? state.system.id : null;
       this.wasCargoFull = !!state.cargoFull;
-      this.seenAutomationEvents = this.countAutomationEvents(state.automationLog);
+      this.seenAutomationEvents = countAutomationEvents(state.automationLog);
       return;
     }
     const fresh = log.filter((e) => e.at > this.lastLogAt).reverse();
@@ -52,7 +113,7 @@ export class HudNode extends Node {
       if (e.disengaged) this.pushEvent(`Disengaged from ${e.enemy}`, 'warn');
       else if (e.won) {
         const loot = e.loot ? ` · loot: ${e.loot.slotType} T${e.loot.tier}` : '';
-        const blueprint = e.blueprint ? ` · blueprint: ${this.blueprintName(e.blueprint)}` : '';
+      const blueprint = e.blueprint ? ` · blueprint: ${this.#blueprintName(e.blueprint)}` : '';
         this.pushEvent(`Destroyed ${e.enemy} · +${fmt(e.scrap || 0)} Scrap${loot}${blueprint}`, 'good');
       } else this.pushEvent(`${e.ship} lost to ${e.enemy}`, 'bad');
     }
@@ -64,34 +125,18 @@ export class HudNode extends Node {
     this.lastSystemId = systemId;
     if (state.cargoFull && !this.wasCargoFull) this.pushEvent('Cargo hold full', 'warn');
     this.wasCargoFull = !!state.cargoFull;
-    this.collectAutomationEvents(state.automationLog);
+    this.#collectAutomationEvents(state.automationLog);
   }
 
-  countAutomationEvents(log = []) {
-    const counts = new Map();
-    for (const event of log) {
-      const key = `${event.at}:${event.message}`;
-      counts.set(key, (counts.get(key) || 0) + 1);
-    }
-    return counts;
-  }
-
-  collectAutomationEvents(log = []) {
-    const currentCounts = this.countAutomationEvents(log);
-    const seenCounts = this.seenAutomationEvents || new Map();
-    const fresh = [];
-    const processed = new Map();
-    for (const event of log.slice().reverse()) {
-      const key = `${event.at}:${event.message}`;
-      const count = (processed.get(key) || 0) + 1;
-      processed.set(key, count);
-      if (count > (seenCounts.get(key) || 0)) fresh.push(event);
-    }
+  // PRIVATE
+  #collectAutomationEvents(log = []) {
+    const { currentCounts, fresh } = collectNewAutomationEvents(log, this.seenAutomationEvents);
     for (const event of fresh) this.pushEvent(event.message, 'auto');
     this.seenAutomationEvents = currentCounts;
   }
 
-  blueprintName(blueprint) {
+  // PRIVATE
+  #blueprintName(blueprint) {
     if (blueprint.kind === 'module') {
       const module = this.app.catalog.modules[blueprint.type];
       return `${module ? module.name : blueprint.type} T${blueprint.tier}`;
@@ -100,46 +145,19 @@ export class HudNode extends Node {
     return `${ship ? ship.name : blueprint.type} ship`;
   }
 
-  pushEvent(text, tone) {
-    this.events = this.events || [];
-    this.events.unshift({ id: (this.eventId = (this.eventId || 0) + 1), text, tone, at: performance.now() });
-    if (this.events.length > MAX_VISIBLE_EVENTS) this.events.length = MAX_VISIBLE_EVENTS;
-  }
-
-  renderEventLog() {
+  // PRIVATE
+  #renderEventLog() {
     const list = document.querySelector('#context .ctx-log');
     const now = performance.now();
-    const visible = (this.events || []).filter((e) => now - e.at < EVENT_LIFETIME_MS);
-    const key = visible.map((e) => e.id).join(',');
-    if (key !== this.eventKey) {
-      this.eventKey = key;
-      list.innerHTML = '';
-      for (const e of visible) {
-        const li = document.createElement('li');
-        li.className = e.tone;
-        li.textContent = e.text;
-        li.dataset.id = e.id;
-        list.appendChild(li);
-      }
-    }
-    for (const li of list.children) {
-      const e = visible.find((x) => String(x.id) === li.dataset.id);
-      const age = e ? now - e.at : EVENT_LIFETIME_MS;
-      li.style.opacity = age < EVENT_FADE_AFTER_MS ? 1 : Math.max(0, 1 - (age - EVENT_FADE_AFTER_MS) / (EVENT_LIFETIME_MS - EVENT_FADE_AFTER_MS));
-    }
+    this.eventKey = renderActivityLog(this.events || [], list, this.eventKey, now);
   }
 
-  // Per-frame fast readouts (cheap DOM text updates).
-  update(dt) {
-    this.refreshFast();
-    return super.update(dt);
-  }
-
-  refreshFast() {
+  // PRIVATE
+  #refreshFast() {
     const state = this.app.state;
     document.querySelector('.hud-bl').classList.toggle('combat-active', !!state.combat);
-    this.renderContext();
-    this.renderEventLog();
+    this.#renderContext();
+    this.#renderEventLog();
 
     const active = state.activeShip;
     const status = document.getElementById('ship-status');
@@ -220,7 +238,8 @@ export class HudNode extends Node {
     }
   }
 
-  renderMission() {
+  // PRIVATE
+  #renderMission() {
     const tracker = document.getElementById('mission-tracker');
     const dlg = document.getElementById('mission-dialogue');
     const state = this.app.state;
@@ -252,7 +271,8 @@ export class HudNode extends Node {
   }
 
   // What the pilot is doing right now: a colored state plus a detail line.
-  getContext() {
+  // PRIVATE
+  #getContext() {
     const state = this.app.state;
     const player = this.app.player;
     const active = state.activeShip;
@@ -322,8 +342,9 @@ export class HudNode extends Node {
     return { label: 'Idle', color: CTX_COLORS.idle, detail: 'Select a destination to fly there' };
   }
 
-  renderContext() {
-    const ctx = this.getContext();
+  // PRIVATE
+  #renderContext() {
+    const ctx = this.#getContext();
     const box = document.getElementById('context');
     box.style.setProperty('--ctx-color', ctx.color);
     const label = box.querySelector('.ctx-label');

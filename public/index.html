@@ -81,6 +81,7 @@
     <div class="left-menu-group">
       <h2>Ship</h2>
       <button class="menu-card" data-menu="cargo" data-shortcut="I" data-testid="menu-cargo">Cargo</button>
+      <button class="menu-card" data-menu="fitting" data-station-menu data-testid="menu-fitting" disabled>Fitting</button>
       <button class="menu-card" data-menu="fleet" data-station-menu data-testid="menu-fleet" disabled>Fleet</button>
     </div>
     <div class="left-menu-group">
@@ -128,14 +129,14 @@
     <button id="tutorial-dismiss" class="hud-btn" data-testid="tutorial-dismiss" aria-label="Dismiss quick start">Got it</button>
   </aside>
 
-  <div id="offline-report" class="offline-report" data-testid="offline-report" role="dialog" aria-modal="true" hidden>
+  <dialog id="offline-report" class="offline-report" data-testid="offline-report" aria-labelledby="offline-report-title" hidden>
     <div class="offline-report-card">
-      <h2>While you were away</h2>
+      <h2 id="offline-report-title">While you were away</h2>
       <p id="offline-report-summary"></p>
       <div id="offline-report-detail"></div>
       <button id="offline-report-close" class="hud-btn" data-testid="offline-report-close">Continue</button>
     </div>
-  </div>
+  </dialog>
 
   <!-- Docking overlays station services on a blurred capture of the space scene. -->
   <div id="station-view" class="station-view" data-testid="station-view" hidden>
@@ -161,6 +162,27 @@
           <p class="sub" id="hangar-sp" data-testid="hangar-sp"></p>
           <div id="hangar-skills" class="hangar-skills" data-testid="hangar-skills"></div>
         </section>
+        <section data-panel="fitting">
+          <h3>Fitting</h3>
+          <div class="fitting-layout" data-testid="fitting-layout">
+            <section class="cargo-column ship-loadout" data-testid="ship-loadout" title="Current ship stats and fitted module overview.">
+              <h3>Ship loadout <span class="sub" id="inv-ship-name"></span></h3>
+              <div id="fit-stats" class="fit-stats" data-testid="inv-ship-stats"></div>
+              <button class="mini danger unequip-all" data-action="unequip-all" data-testid="unequip-all" aria-describedby="unequip-all-hint" disabled>Unequip all modules</button>
+              <p id="unequip-all-hint" class="sub unequip-all-hint" data-testid="unequip-all-hint" role="status"></p>
+            </section>
+            <section class="cargo-column fitting-column" data-testid="fitting-column" title="Modules currently fitted to this ship.">
+              <h3>Fitted slots</h3>
+              <p id="loadout-hint" class="sub loadout-hint" data-testid="loadout-hint"></p>
+              <div id="inv-fitting" class="loadout-groups" data-testid="inv-fitting"></div>
+            </section>
+            <section class="cargo-column fitting-items-column" data-testid="fitting-items-column" title="Modules in ship inventory available to equip or salvage.">
+              <h3>Available modules</h3>
+              <p class="sub">Equip modules carried by this ship. Store or retrieve modules at Quantum Storage.</p>
+              <div id="fitting-items" class="fitting-items" data-testid="fitting-items"></div>
+            </section>
+          </div>
+        </section>
         <section data-panel="achievements">
           <h3>Achievements</h3>
           <div id="hangar-achievements" data-testid="hangar-achievements"></div>
@@ -172,12 +194,24 @@
         </section>
         <section id="storage-panel" data-panel="storage" data-testid="storage-panel">
           <h3>Quantum Storage</h3>
-          <h3>Shared by all stations</h3>
-          <div id="inv-storage" class="inv-list" data-testid="inv-storage"></div>
+          <p class="sub storage-hint">Shared by all stations. Select an item to retrieve it to your ship.</p>
+          <div id="inv-storage" class="storage-layout" data-testid="inv-storage">
+            <div id="inv-storage-grid" class="inv-grid" data-testid="inv-storage-grid"></div>
+            <div id="inv-storage-detail" class="inv-detail" data-testid="inv-storage-detail"></div>
+          </div>
         </section>
         <section data-panel="market">
-          <h3>NPC Barter</h3>
-          <div id="hangar-market" class="hangar-market" data-testid="hangar-market"></div>
+          <h3>NPC Market</h3>
+          <div class="market-layout" data-testid="market-layout">
+            <section class="market-column">
+              <h3>Blueprints</h3>
+              <div id="market-blueprints" class="hangar-market" data-testid="market-blueprints"></div>
+            </section>
+            <section class="market-column">
+              <h3>Trade-up</h3>
+              <div id="market-trade-up" class="hangar-market" data-testid="market-trade-up"></div>
+            </section>
+          </div>
         </section>
         <section data-panel="industry">
           <h3>Industry</h3>
@@ -196,38 +230,30 @@
     </div>
   </div>
 
-  <!-- Each left-menu entry opens its own un-tabbed workspace. -->
+  <!-- Cargo is a single inventory panel; fitting is a station service above. -->
   <div id="menu-window" class="panel panel--left menu-window" data-testid="menu-window" hidden>
     <div class="panel-body menu-page-body">
       <section id="inventory" class="menu-page active" data-menu-page="cargo" data-testid="inventory">
         <div class="cargo-layout" data-testid="cargo-layout">
-          <section class="cargo-column ship-loadout" data-testid="ship-loadout">
-            <h3>Ship loadout <span class="sub" id="inv-ship-name"></span></h3>
-            <div id="fit-stats" class="fit-stats" data-testid="inv-ship-stats"></div>
-            <button class="mini danger unequip-all" data-action="unequip-all" data-testid="unequip-all" aria-describedby="unequip-all-hint" disabled>Unequip all modules</button>
-            <p id="unequip-all-hint" class="sub unequip-all-hint" data-testid="unequip-all-hint" role="status"></p>
-          </section>
-          <section class="cargo-column fitting-column" data-testid="fitting-column">
-            <h3>Fitting</h3>
-            <p id="loadout-hint" class="sub loadout-hint" data-testid="loadout-hint"></p>
-            <div id="inv-fitting" class="loadout-groups" data-testid="inv-fitting"></div>
-          </section>
           <section class="cargo-column inventory-column" data-testid="inventory-column">
-            <h3>Cargo <span class="sub" id="inv-cargo-usage"></span></h3>
-            <div class="cargo-filters" role="group" aria-label="Cargo item filter">
-              <button class="mini active" data-cargo-filter="all" data-testid="cargo-filter-all">All</button>
-              <button class="mini" data-cargo-filter="ore" data-testid="cargo-filter-ore">Ore</button>
-              <button class="mini" data-cargo-filter="components" data-testid="cargo-filter-components">Components</button>
-              <button class="mini" data-cargo-filter="loot" data-testid="cargo-filter-loot">Modules</button>
-              <button class="mini" data-cargo-filter="blueprints" data-testid="cargo-filter-blueprints">Blueprints</button>
+            <div class="cargo-heading">
+              <h3>Cargo</h3>
+              <div class="cargo-capacity">
+                <span class="sub" id="inv-cargo-usage"></span>
+                <div class="cargo-capacity-track" role="progressbar" aria-label="Cargo capacity" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-testid="cargo-capacity">
+                  <div id="inv-cargo-capacity-fill" class="cargo-capacity-fill"></div>
+                </div>
+              </div>
             </div>
-            <div class="fitting-presets" id="fitting-presets">
-              <select id="fitting-preset-select" aria-label="Saved fitting presets"></select>
-              <button class="mini" data-action="apply-fitting-preset" data-testid="apply-fitting-preset">Apply</button>
-              <button class="mini danger" data-action="delete-fitting-preset" data-testid="delete-fitting-preset">Delete</button>
-            </div>
-            <div class="inv-toolbar">
-              <button class="mini" data-action="deposit-all" data-testid="inv-deposit-all" disabled>Store all materials</button>
+            <div class="cargo-controls">
+              <div class="cargo-filters" role="group" aria-label="Cargo item filter">
+                <button class="mini active" data-cargo-filter="all" data-testid="cargo-filter-all">All</button>
+                <button class="mini" data-cargo-filter="ore" data-testid="cargo-filter-ore">Ore</button>
+                <button class="mini" data-cargo-filter="components" data-testid="cargo-filter-components">Components</button>
+                <button class="mini" data-cargo-filter="loot" data-testid="cargo-filter-loot">Modules</button>
+                <button class="mini" data-cargo-filter="blueprints" data-testid="cargo-filter-blueprints">Blueprints</button>
+              </div>
+              <button class="mini" data-action="deposit-filtered" data-testid="inv-deposit-filtered" disabled>Store filtered</button>
             </div>
             <div id="inv-grid" class="inv-grid" data-testid="inv-grid"></div>
             <div id="inv-detail" class="inv-detail" data-testid="inv-detail"></div>

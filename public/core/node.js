@@ -11,23 +11,27 @@
 // out on every server sync. Subclasses override update/render, do their own
 // work, then call super to recurse into their children (drawn on top).
 export class Node {
+  // PUBLIC
   constructor(app) {
     this.app = app;
     this.children = [];
     this.visible = true;
   }
 
+  // PUBLIC
   add(child) {
     if (!child.app) child.app = this.app;
     this.children.push(child);
     return child;
   }
 
+  // PUBLIC
   update(dt) {
     for (const child of this.children) child.update(dt);
     return this;
   }
 
+  // PUBLIC
   render(now) {
     if (!this.visible) return this;
     for (const child of this.children) {

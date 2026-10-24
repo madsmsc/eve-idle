@@ -121,6 +121,28 @@ test('renders the world, minimap and HUD', async ({ page }) => {
   expect(Math.hypot(st.activeShip.x - home.x, st.activeShip.y - home.y)).toBeLessThan(1);
 });
 
+test('offline report is modal above game UI and blocks game actions until continued', async ({ page }) => {
+  await page.evaluate(() => window.__eve.showOfflineReport({
+    elapsedSeconds: 7200,
+    capped: true,
+    mined: 42,
+    skillPoints: 1800,
+  }));
+
+  const report = page.getByTestId('offline-report');
+  await expect(report).toBeVisible();
+  expect(await report.evaluate((dialog) => dialog.matches(':modal'))).toBe(true);
+  await expect(page.getByTestId('offline-report-close')).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(report).toBeVisible();
+  await page.keyboard.press('i');
+  await expect(page.getByTestId('menu-window')).toBeVisible();
+
+  await page.getByTestId('offline-report-close').click();
+  await expect(report).toBeHidden();
+});
+
 test('space status bars persist, docked status is hidden, and shortcuts are labeled', async ({ page }) => {
   await expect(page.getByTestId('ship-status')).toBeHidden();
   await expect(page.locator('#controls-hint')).toHaveCount(0);
@@ -235,9 +257,10 @@ test('right-side Actions and Auto panels stay visible beside ship status', async
   await expect(page.getByTestId('overview-toggle')).toHaveText('X');
 });
 
-test('cargo combines loadout and inventory while storage remains separate', async ({ page }) => {
+test('cargo shows the hold alone and fitting is a separate ship menu', async ({ page }) => {
   await expect(page.getByTestId('menu-cargo')).toBeVisible();
-  await expect(page.getByTestId('menu-fitting')).toHaveCount(0);
+  await expect(page.getByTestId('menu-fitting')).toBeVisible();
+  await expect(page.getByTestId('menu-fitting')).toBeEnabled();
   await expect(page.getByTestId('menu-window')).toBeVisible();
   await expect(page.getByTestId('inventory')).toBeVisible();
   await expect(page.getByTestId('inventory')).toHaveAttribute('data-menu-page', 'cargo');
@@ -245,17 +268,46 @@ test('cargo combines loadout and inventory while storage remains separate', asyn
   await expect(page.getByTestId('menu-window-close')).toHaveCount(0);
   const cargoBackgrounds = await page.evaluate(() => ({
     workspace: getComputedStyle(document.getElementById('menu-window')).backgroundColor,
-    loadout: getComputedStyle(document.querySelector('.ship-loadout')).backgroundColor,
+    cargo: getComputedStyle(document.querySelector('.inventory-column')).backgroundColor,
   }));
   expect(cargoBackgrounds.workspace).toBe('rgba(0, 0, 0, 0)');
-  expect(cargoBackgrounds.loadout).not.toBe('rgba(0, 0, 0, 0)');
+  expect(cargoBackgrounds.cargo).not.toBe('rgba(0, 0, 0, 0)');
   await expect.poll(() => page.getByTestId('cargo-layout').evaluate((element) =>
     getComputedStyle(element).gridTemplateColumns.split(' ').length
-  )).toBe(3);
-  await expect(page.getByTestId('inv-fitting')).toBeVisible();
+  )).toBe(1);
+  await expect(page.getByTestId('inv-fitting')).toBeHidden();
   await expect(page.getByTestId('inv-grid')).toBeVisible();
+  await expect(page.getByTestId('inv-deposit-filtered')).toHaveText('Store filtered');
+  const capacity = page.getByTestId('cargo-capacity');
+  await expect(capacity).toHaveAttribute('role', 'progressbar');
+  const controls = await page.getByTestId('inventory-column').evaluate((column) => {
+    const row = column.querySelector('.cargo-controls');
+    const filters = row.querySelector('.cargo-filters');
+    const store = row.querySelector('[data-testid="inv-deposit-filtered"]');
+    return {
+      sameRow: filters.parentElement === row && store.parentElement === row,
+      storeOnRight: store.getBoundingClientRect().left > filters.getBoundingClientRect().left,
+    };
+  });
+  expect(controls).toEqual({ sameRow: true, storeOnRight: true });
+  await expect(capacity).toHaveAttribute('aria-valuenow', '0');
+  await page.evaluate(() => {
+    window.__eve.state.cargoUsed = 250;
+    window.__eve.state.cargoCapacity = 1000;
+    document.querySelector('[data-cargo-filter="ore"]').click();
+  });
+  await expect(capacity).toHaveAttribute('aria-valuenow', '25');
+  await expect(page.locator('#inv-cargo-capacity-fill')).toHaveAttribute('style', 'width: 25%;');
   await page.getByTestId('cargo-filter-loot').click();
   await expect(page.getByTestId('cargo-filter-loot')).toHaveClass(/active/);
+  await page.getByTestId('menu-fitting').click();
+  await expect(page.getByTestId('fitting-layout')).toBeVisible();
+  await expect(page.getByTestId('inv-fitting')).toBeVisible();
+  await expect(page.getByTestId('fitting-items')).toBeVisible();
+  await expect(page.getByTestId('fit-slot-weapon-0')).toBeVisible();
+  await page.getByTestId('menu-fitting').click();
+  await expect(page.getByTestId('fitting-layout')).toBeHidden();
+  await page.getByTestId('menu-cargo').click();
   await page.getByTestId('menu-storage').click();
   await expect(page.getByTestId('storage-panel')).toBeVisible();
   await expect(page.getByTestId('inventory')).toBeHidden();
@@ -266,7 +318,7 @@ test('cargo combines loadout and inventory while storage remains separate', asyn
   await expect(page.getByTestId('hangar')).toBeVisible();
 });
 
-test('inventory stacks ore without a slot cap and scrolls when item count grows', async ({ page }) => {
+test('inventory stacks ore and expands to fit more items without an inner scrollbar', async ({ page }) => {
   const metrics = await page.evaluate(() => {
     window.__eve.state.loot = Array.from({ length: 100 }, (_, index) => ({
       id: `overflow-${index}`,
@@ -278,13 +330,17 @@ test('inventory stacks ore without a slot cap and scrolls when item count grows'
     const grid = document.getElementById('inv-grid');
     return {
       count: grid.querySelectorAll('.inv-cell').length,
+      cellWidth: grid.querySelector('.inv-cell').getBoundingClientRect().width,
+      cellHeight: grid.querySelector('.inv-cell').getBoundingClientRect().height,
       scrollable: grid.scrollHeight > grid.clientHeight,
       overflowY: getComputedStyle(grid).overflowY,
     };
   });
   expect(metrics.count).toBeGreaterThanOrEqual(100);
-  expect(metrics.scrollable).toBe(true);
-  expect(metrics.overflowY).toBe('auto');
+  expect(metrics.cellWidth).toBeLessThanOrEqual(52);
+  expect(metrics.cellHeight).toBeLessThanOrEqual(52);
+  expect(metrics.scrollable).toBe(false);
+  expect(metrics.overflowY).toBe('visible');
 });
 
 test('manual keys no longer pilot the ship', async ({ page }) => {
@@ -575,7 +631,8 @@ test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship'
   expect(s.combatLog[0].disengaged).toBe(true);
 });
 
-test('cargo fitting column is read-only; inventory equips modules and ship loadout unequips all', async ({ page }) => {
+test('fitting lists equippable modules and ship loadout unequips all', async ({ page }) => {
+  await page.getByTestId('menu-fitting').click();
   await expect(page.getByTestId('inv-fitting')).toBeVisible();
   await expect(page.getByTestId('save-fitting-preset')).toHaveCount(0);
   await expect(page.locator('#fitting-presets')).toBeHidden();
@@ -591,6 +648,17 @@ test('cargo fitting column is read-only; inventory equips modules and ship loado
 
   await page.getByTestId('menu-market').click();
   await page.getByTestId('buy-blueprint-weapon-t1').click();
+  const blueprintId = (await getState(page)).blueprints[0].id;
+  await page.getByTestId('menu-cargo').click();
+  await page.getByTestId('cargo-filter-blueprints').click();
+  await page.getByTestId(`inv-cell-${blueprintId}`).click();
+  await page.getByTestId(`inv-store-blueprint-${blueprintId}`).click();
+  await expect(async () => {
+    const state = await getState(page);
+    expect(state.storage.blueprints.some((item) => item.id === blueprintId)).toBe(true);
+  }).toPass({ timeout: 5000 });
+  await page.getByTestId('menu-storage').click();
+  await page.getByTestId(`inv-retrieve-blueprint-${blueprintId}`).click();
   await page.getByTestId('menu-industry').click();
   await page.getByTestId('craft-weapon-t1').click();
   await expect(async () => {
@@ -598,13 +666,20 @@ test('cargo fitting column is read-only; inventory equips modules and ship loado
     expect(state.loot).toHaveLength(1);
     expect(state.loot[0].slotType).toBe('weapon');
   }).toPass({ timeout: 5000 });
-
-  await page.getByTestId('menu-cargo').click();
   const lootId = (await getState(page)).loot[0].id;
+  await page.getByTestId('menu-cargo').click();
   await page.getByTestId('cargo-filter-loot').click();
   await page.getByTestId(`inv-cell-${lootId}`).click();
-  await expect(page.getByTestId(`inv-equip-${lootId}`)).toBeEnabled();
-  await page.getByTestId(`inv-equip-${lootId}`).click();
+  await page.getByTestId(`inv-store-loot-${lootId}`).click();
+  await expect(async () => {
+    const state = await getState(page);
+    expect(state.storage.loot.some((item) => item.id === lootId)).toBe(true);
+  }).toPass({ timeout: 5000 });
+  await page.getByTestId('menu-storage').click();
+  await page.getByTestId(`inv-retrieve-loot-${lootId}`).click();
+  await page.getByTestId('menu-fitting').click();
+  await expect(page.getByTestId(`fitting-equip-${lootId}`)).toBeEnabled();
+  await page.getByTestId(`fitting-equip-${lootId}`).click();
   await expect(async () => {
     const state = await getState(page);
     expect(state.activeShip.fitting.weapon[0]).toBe(1);
@@ -809,6 +884,8 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   const mineral = Object.keys(mined.minerals).find((k) => mined.minerals[k] > 0);
   expect(mineral).toBeTruthy();
   const deposited = mined.minerals[mineral];
+  const storedBefore = mined.storage.items[mineral] || 0;
+  const storedAfterDeposit = storedBefore + deposited;
 
   // The hold is a grid of squares: select the ore stack, then deposit it all.
   await expect(page.getByTestId(`inv-cell-${mineral}`)).toBeVisible();
@@ -817,7 +894,7 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   await page.evaluate((k) => document.querySelector(`[data-testid="inv-deposit-${k}-all"]`).click(), mineral);
   await expect(async () => {
     const s = await getState(page);
-    expect(s.storage.minerals[mineral]).toBe(deposited);
+    expect(s.storage.items[mineral]).toBe(storedAfterDeposit);
     expect(s.minerals[mineral]).toBe(0);
   }).toPass({ timeout: 5000 });
 
@@ -825,48 +902,62 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   await page.keyboard.press('q');
   await expect(page.getByTestId('storage-panel')).toBeVisible();
   await expect(page.getByTestId('inventory')).toBeHidden();
+  await page.getByTestId(`inv-storage-cell-${mineral}`).click();
   const takeBtn = deposited >= 100 ? '100' : 'all';
-  const taken = Math.min(100, deposited);
+  const taken = takeBtn === '100' ? Math.min(100, storedAfterDeposit) : storedAfterDeposit;
   await page.waitForSelector(`[data-testid="inv-withdraw-${mineral}-${takeBtn}"]`, { timeout: 5000 });
   await page.evaluate(({ k, btn }) => document.querySelector(`[data-testid="inv-withdraw-${k}-${btn}"]`).click(), { k: mineral, btn: takeBtn });
   await expect(async () => {
     const s = await getState(page);
-    expect(s.storage.minerals[mineral]).toBe(deposited - taken);
+    expect(s.storage.items[mineral]).toBe(storedAfterDeposit - taken);
     expect(s.minerals[mineral]).toBe(taken);
-  }).toPass({ timeout: 5000 });
-
-  // Mineral selling moved from the hangar Cargo tab to the cargo inventory.
-  await page.keyboard.press('i');
-  await expect(page.getByTestId('inventory')).toBeVisible();
-  await expect(page.getByTestId(`inv-cell-${mineral}`)).toBeVisible();
-  const sellAllButton = page.getByTestId(`inv-sell-${mineral}-all`);
-  if (!(await sellAllButton.count())) {
-    await page.getByTestId(`inv-cell-${mineral}`).click();
-  }
-  await expect(sellAllButton).toBeEnabled();
-  const iskBefore = (await getState(page)).isk;
-  await page.getByTestId(`inv-sell-${mineral}-all`).click();
-  await expect(async () => {
-    const s = await getState(page);
-    expect(s.minerals[mineral]).toBe(0);
-    expect(s.isk).toBeGreaterThan(iskBefore);
   }).toPass({ timeout: 5000 });
 });
 
-test('cargo loadout retains ship stats and the item grid', async ({ page }) => {
+test('cargo contains items while fitting retains ship stats and loadout', async ({ page }) => {
   await expect(page.getByTestId('inventory')).toBeVisible();
   const cells = await page.getByTestId('inv-grid').locator('.inv-cell').count();
   expect(cells).toBeGreaterThanOrEqual(24);
+  await expect(page.getByTestId('inv-fitting')).toBeHidden();
+  await page.getByTestId('menu-fitting').click();
   await expect(page.getByTestId('inv-fitting')).toBeVisible();
   await expect(page.getByTestId('inv-ship-stats')).toContainText(/Mining/);
   await expect(page.getByTestId('inv-ship-stats')).toContainText(/Speed/);
   await expect(page.getByTestId('inv-ship-stats')).toContainText(/Shield/);
   await expect(page.getByTestId('inv-ship-stats')).toContainText(/Hull/);
   await expect(page.getByTestId('inv-fitting')).toContainText('Weapon');
+  const fittingBackgrounds = await page.locator('.hangar-body > section[data-panel="fitting"]').evaluate((panel) => ({
+    panel: getComputedStyle(panel).backgroundColor,
+    subpanel: getComputedStyle(panel.querySelector('.cargo-column')).backgroundColor,
+  }));
+  expect(fittingBackgrounds.panel).toBe('rgba(0, 0, 0, 0)');
+  expect(fittingBackgrounds.subpanel).not.toBe('rgba(0, 0, 0, 0)');
+  const fittingColumns = await page.getByTestId('fitting-layout').evaluate((layout) => {
+    const bounds = (selector) => {
+      const { x, width } = layout.querySelector(selector).getBoundingClientRect();
+      return { x, width };
+    };
+    return {
+      fitted: bounds('[data-testid="fitting-column"]'),
+      available: bounds('[data-testid="fitting-items-column"]'),
+      ship: bounds('[data-testid="ship-loadout"]'),
+      slotHeight: parseFloat(getComputedStyle(layout.querySelector('.loadout-slot')).minHeight),
+    };
+  });
+  expect(fittingColumns.ship.x).toBeGreaterThan(fittingColumns.available.x);
+  expect(fittingColumns.ship.width).toBeLessThan(fittingColumns.fitted.width);
+  expect(fittingColumns.slotHeight).toBeLessThanOrEqual(27);
 
   await page.keyboard.press('q');
   await expect(page.getByTestId('storage-panel')).toBeVisible();
   await expect(page.getByTestId('inventory')).toBeHidden();
+  await expect(page.getByTestId('inv-storage-grid')).toBeVisible();
+  const storedOre = page.getByTestId('inv-storage-cell-iron');
+  await expect(storedOre).toBeVisible();
+  await expect(storedOre).toHaveAttribute('title', /Iron.*Quantum Storage.*Select/);
+  await storedOre.click();
+  await expect(page.getByTestId('inv-storage-detail')).toContainText(/Iron/);
+  await expect(page.getByTestId('inv-withdraw-iron-all')).toHaveAttribute('title', /Withdraw all/);
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('storage-panel')).toBeHidden();
 });
@@ -892,17 +983,33 @@ test('reset returns to a fresh game', async ({ page }) => {
 test('market: buy and fit a mining drone control module', async ({ page }) => {
   await page.getByTestId('menu-market').click();
   await expect(page.getByTestId('hangar')).toBeVisible();
-  await page.getByTestId('buy-module-miningDrone-t1').click();
+  await expect(page.getByTestId('market-layout')).toBeVisible();
+  const marketBackgrounds = await page.locator('.hangar-body > section[data-panel="market"]').evaluate((panel) => ({
+    panel: getComputedStyle(panel).backgroundColor,
+    subpanel: getComputedStyle(panel.querySelector('.market-column')).backgroundColor,
+  }));
+  expect(marketBackgrounds.panel).toBe('rgba(0, 0, 0, 0)');
+  expect(marketBackgrounds.subpanel).not.toBe('rgba(0, 0, 0, 0)');
+  await expect(page.getByTestId('market-blueprints')).toBeVisible();
+  await expect(page.getByTestId('market-trade-up')).toBeVisible();
+  await expect.poll(() => page.getByTestId('market-layout').evaluate((element) =>
+    getComputedStyle(element).gridTemplateColumns.split(' ').length
+  )).toBe(2);
+  await page.getByTestId('buy-blueprint-miningDrone-t1').click();
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.blueprints.some((blueprint) => blueprint.type === 'miningDrone' && blueprint.tier === 1)).toBe(true);
+  }).toPass({ timeout: 5000 });
+  await page.getByTestId('menu-industry').click();
+  await page.getByTestId('craft-miningDrone-t1').click();
   await expect(async () => {
     const s = await getState(page);
     expect(s.loot).toHaveLength(1);
     expect(s.loot[0].slotType).toBe('miningDrone');
-    expect(s.isk).toBe(8500); // 10000 - 1500
   }).toPass({ timeout: 5000 });
   const state = await getState(page);
-  await page.getByTestId('menu-cargo').click();
-  await page.getByTestId(`inv-cell-${state.loot[0].id}`).click();
-  await page.getByTestId(`inv-equip-${state.loot[0].id}`).click();
+  await page.getByTestId('menu-fitting').click();
+  await page.getByTestId(`fitting-equip-${state.loot[0].id}`).click();
   await expect(async () => {
     const s = await getState(page);
     expect(s.activeShip.fitting.miningDrone[0]).toBe(1);

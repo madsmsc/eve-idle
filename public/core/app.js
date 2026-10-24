@@ -14,6 +14,7 @@ import { UINode } from '../ui/ui.js';
 const SYNC_MS = 400;
 
 export class App {
+  // PUBLIC
   constructor({ canvas, ctx, minimap, mctx }) {
     this.canvas = canvas;
     this.ctx = ctx;
@@ -64,23 +65,18 @@ export class App {
     this.frame = this.frame.bind(this);
   }
 
+  // PUBLIC
   toast(msg, isError) {
     this.overlays.toast(msg, isError);
   }
 
-  applySystemColor() {
-    const hex =
-      (this.state && this.state.world && this.state.world.color) ||
-      (this.state && this.state.system && this.state.system.color) ||
-      null;
-    if (hex) this.systemColor = hexToRgb(hex);
-  }
-
+  // PUBLIC
   resize() {
     this.canvas.width = window.innerWidth;
     this.canvas.height = window.innerHeight;
   }
 
+  // PUBLIC
   async boot() {
     this.resize();
     this.world.genStars();
@@ -88,64 +84,15 @@ export class App {
       const cat = await api('/api/catalog');
       this.catalog = cat;
       this.constants = cat.constants;
-      this.initModeMenu();
+      this.#initModeMenu();
     } catch (e) {
       this.toast('Failed to load: ' + e.message, true);
     }
   }
 
-  initModeMenu() {
-    const menu = document.getElementById('mode-menu');
-    menu.querySelectorAll('.mode-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        try {
-          const st = await api('/api/mode', { mode: btn.dataset.mode });
-          menu.hidden = true;
-          this.state = st.state;
-          this.finishBoot();
-          if (st.offlineReport) this.overlays.showOfflineReport(st.offlineReport);
-        } catch (e) {
-          this.toast(e.message, true);
-        }
-      });
-    });
-  }
-
-  finishBoot() {
-    this.applySystemColor();
-    this.player.dockTargetId = this.state.dockTargetId || null;
-    this.autoPilotMode = this.state.autoPilotMode || null;
-    this.autoPilot = !!this.autoPilotMode;
-    this.#refreshAutoPilotButton();
-    const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
-    if (active) {
-      this.player.snap(active.x, active.y);
-      this.player.setServerState(active, this.state.navigation);
-    }
-    this.input = new Input(this);
-    this.input.wire();
-    this.ui.refreshPanels();
-    if (this.state.docked) this.dockBackground = this.world.captureDockBackground(this.ship);
-    this.syncDockedView();
-    this.showFirstTimeTutorial();
-    this.lastFrame = performance.now();
-    requestAnimationFrame(this.frame);
-  }
-
-  showFirstTimeTutorial() {
-    const hint = document.getElementById('tutorial-hint');
-    const key = 'eve-idle-demo-tutorial-dismissed';
-    if (this.state.mode !== 'demo' || localStorage.getItem(key) === 'true') return;
-    hint.hidden = false;
-    document.getElementById('tutorial-dismiss').addEventListener('click', () => {
-      localStorage.setItem(key, 'true');
-      hint.hidden = true;
-    }, { once: true });
-  }
-
-
   // ---- server actions ----
 
+  // PUBLIC
   async doAction(action, payload) {
     this.actionVersion++;
     this.pendingActions++;
@@ -161,6 +108,7 @@ export class App {
     }
   }
 
+  // PUBLIC
   onServerState(newState) {
     if (this.docking) {
       // Keep presenting the ship as in space until the cutscene finishes.
@@ -180,7 +128,7 @@ export class App {
     this.autoPilotMode = newState.autoPilotMode || null;
     this.autoPilot = !!this.autoPilotMode;
     this.#refreshAutoPilotButton();
-    this.applySystemColor();
+    this.#applySystemColor();
     const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
     if (active) {
       const jumped =
@@ -201,11 +149,13 @@ export class App {
   }
 
   // Docked stations overlay services on a ship-free capture of the world.
+  // PUBLIC
   syncDockedView() {
     this.ui.syncDockedView();
   }
 
   // Launch at the server-authoritative position outside the station.
+  // PUBLIC
   async launch({ keepAutoPilot = false } = {}) {
     if (this.autoPilot && !keepAutoPilot) await this.doAction('autopilot', { mode: null });
     this.player.suppressAutoRecall = true;
@@ -219,47 +169,40 @@ export class App {
     return launched;
   }
 
-  async sync() {
-    if (!this.state || !this.state.activeShip || this.syncInFlight || this.pendingActions) return;
-    this.syncInFlight = true;
-    const actionVersion = this.actionVersion;
-    try {
-      const data = await api('/api/tick', {});
-      if (actionVersion === this.actionVersion) this.onServerState(data.state);
-    } catch (e) {
-      /* transient; keep going */
-    } finally {
-      this.syncInFlight = false;
-    }
-  }
-
   // The ship node owns the ship's movement and combat actions; these are thin
   // wiring delegators so input, the test hook and autopilot can keep talking to
   // the app while the logic lives in the scene graph (ShipNode).
+  // PUBLIC
   doWarp(targetId, opts) {
     return this.ship.doWarp(targetId, opts);
   }
 
+  // PUBLIC
   navigateToNearest(kind) {
     return this.ship.navigateToNearest(kind);
   }
 
+  // PUBLIC
   navigate(targetId, coordinates, opts) {
     return this.ship.navigate(targetId, coordinates, opts);
   }
 
+  // PUBLIC
   doGateJump() {
     return this.ship.doGateJump();
   }
 
+  // PUBLIC
   doEngage() {
     return this.ship.doEngage();
   }
 
+  // PUBLIC
   doCombatAction(action) {
     return this.ship.doCombatAction(action);
   }
 
+  // PUBLIC
   toggleHangar(force) {
     if (force === false) {
       this.closeMenu();
@@ -272,14 +215,17 @@ export class App {
     }
   }
 
+  // PUBLIC
   openMenu(name, force) {
     this.ui.openMenu(name, force);
   }
 
+  // PUBLIC
   closeMenu() {
     this.ui.closeMenu();
   }
 
+  // PUBLIC
   toggleOverview(force) {
     this.overviewVisible = force !== undefined ? !!force : !this.overviewVisible;
     const map = document.getElementById('minimap');
@@ -291,41 +237,39 @@ export class App {
     button.setAttribute('aria-expanded', String(this.overviewVisible));
   }
 
+  // PUBLIC
   toggleInventory(force) {
     this.ui.inventory.setFilter('all');
     this.openMenu('cargo', force);
   }
 
+  // PUBLIC
   toggleLoot(force) {
     this.ui.inventory.setFilter('loot');
     this.openMenu('cargo', force === undefined ? true : force);
   }
 
+  // PUBLIC
   toggleStorage(force) {
     this.openMenu('storage', force);
   }
 
   // ---- autopilot ----
 
+  // PUBLIC
   setAutoPilotMode(mode) {
     const currentMode = this.state.autoPilotMode || null;
     return this.doAction('autopilot', { mode: currentMode === mode ? null : mode });
   }
 
+  // PUBLIC
   setAutoPilot(on) {
     return this.doAction('autopilot', { mode: on ? 'mine' : null });
   }
 
-  #refreshAutoPilotButton() {
-    document.querySelectorAll('[data-auto-mode]').forEach((button) => {
-      const selected = button.dataset.autoMode === this.autoPilotMode;
-      button.classList.toggle('auto-mode-selected', selected);
-      button.setAttribute('aria-pressed', String(selected));
-    });
-  }
-
   // ---- loop ----
 
+  // PUBLIC
   frame(now) {
     const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
@@ -349,13 +293,14 @@ export class App {
       }
       if (now - this.lastSync > SYNC_MS && !this.warpPending && !this.undocking) {
         this.lastSync = now;
-        this.sync();
+        this.#sync();
       }
     }
     if (perf) perf.frame.push(performance.now() - frameStart);
     requestAnimationFrame(this.frame);
   }
 
+  // PUBLIC
   resetPerfMetrics() {
     if (!this.perfMetrics) return;
     this.perfMetrics.frameIntervals.length = 0;
@@ -366,9 +311,95 @@ export class App {
     this.perfMetrics.lastFrame = null;
   }
 
+  // PUBLIC
   getPerfSnapshot() {
     if (!this.perfMetrics) return null;
     const { lastFrame, ...samples } = this.perfMetrics;
     return Object.fromEntries(Object.entries(samples).map(([key, values]) => [key, values.slice()]));
+  }
+
+  // PRIVATE
+  #applySystemColor() {
+    const hex =
+      (this.state && this.state.world && this.state.world.color) ||
+      (this.state && this.state.system && this.state.system.color) ||
+      null;
+    if (hex) this.systemColor = hexToRgb(hex);
+  }
+
+  // PRIVATE
+  #initModeMenu() {
+    const menu = document.getElementById('mode-menu');
+    menu.querySelectorAll('.mode-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          const st = await api('/api/mode', { mode: btn.dataset.mode });
+          menu.hidden = true;
+          this.state = st.state;
+          this.#finishBoot();
+          if (st.offlineReport) this.overlays.showOfflineReport(st.offlineReport);
+        } catch (e) {
+          this.toast(e.message, true);
+        }
+      });
+    });
+  }
+
+  // PRIVATE
+  #finishBoot() {
+    this.#applySystemColor();
+    this.player.dockTargetId = this.state.dockTargetId || null;
+    this.autoPilotMode = this.state.autoPilotMode || null;
+    this.autoPilot = !!this.autoPilotMode;
+    this.#refreshAutoPilotButton();
+    const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
+    if (active) {
+      this.player.snap(active.x, active.y);
+      this.player.setServerState(active, this.state.navigation);
+    }
+    this.input = new Input(this);
+    this.input.wire();
+    this.ui.refreshPanels();
+    if (this.state.docked) this.dockBackground = this.world.captureDockBackground(this.ship);
+    this.syncDockedView();
+    this.#showFirstTimeTutorial();
+    this.lastFrame = performance.now();
+    requestAnimationFrame(this.frame);
+  }
+
+  // PRIVATE
+  #showFirstTimeTutorial() {
+    const hint = document.getElementById('tutorial-hint');
+    const key = 'eve-idle-demo-tutorial-dismissed';
+    if (this.state.mode !== 'demo' || localStorage.getItem(key) === 'true') return;
+    hint.hidden = false;
+    document.getElementById('tutorial-dismiss').addEventListener('click', () => {
+      localStorage.setItem(key, 'true');
+      hint.hidden = true;
+    }, { once: true });
+  }
+
+  // PRIVATE
+  #refreshAutoPilotButton() {
+    document.querySelectorAll('[data-auto-mode]').forEach((button) => {
+      const selected = button.dataset.autoMode === this.autoPilotMode;
+      button.classList.toggle('auto-mode-selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+  }
+
+  // PRIVATE
+  async #sync() {
+    if (!this.state || !this.state.activeShip || this.syncInFlight || this.pendingActions) return;
+    this.syncInFlight = true;
+    const actionVersion = this.actionVersion;
+    try {
+      const data = await api('/api/tick', {});
+      if (actionVersion === this.actionVersion) this.onServerState(data.state);
+    } catch (e) {
+      /* transient; keep going */
+    } finally {
+      this.syncInFlight = false;
+    }
   }
 }

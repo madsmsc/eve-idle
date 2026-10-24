@@ -9,20 +9,22 @@
 import { Node } from '../core/node.js';
 
 export class EffectsNode extends Node {
+  // PUBLIC
   render(now) {
     const ctx = this.app.ctx;
     const w = this.app.canvas.width;
     const h = this.app.canvas.height;
     const cx = w / 2;
     const cy = h / 2;
-    if (this.app.warpFx) this.drawWarpTunnel(ctx, now, cx, cy, w, h);
-    if (this.app.gateFx) this.drawGate(ctx, now, cx, cy, w, h);
+    if (this.app.warpFx) this.#drawWarpTunnel(ctx, now, cx, cy, w, h);
+    if (this.app.gateFx) this.#drawGate(ctx, now, cx, cy, w, h);
     return super.render(now);
   }
 
+  // PRIVATE
   // The standard warp: a bright flash that collapses toward the viewer plus
   // streaks racing outward from the centre, fading over ~650ms.
-  drawWarpTunnel(ctx, now, cx, cy, w, h) {
+  #drawWarpTunnel(ctx, now, cx, cy, w, h) {
     const t = (now - this.app.warpFx) / 650;
     if (t >= 1) {
       this.app.warpFx = 0;
@@ -51,10 +53,11 @@ export class EffectsNode extends Node {
     ctx.restore();
   }
 
+  // PRIVATE
   // The jump-gate: teal light columns spreading apart (the gate "opening") over
   // an expanding ring, layered on top of the warp tunnel. Distinctly vertical
   // and green, so jumping never looks like plain warping.
-  drawGate(ctx, now, cx, cy, w, h) {
+  #drawGate(ctx, now, cx, cy, w, h) {
     const t = (now - this.app.gateFx) / 900;
     if (t >= 1) {
       this.app.gateFx = 0;

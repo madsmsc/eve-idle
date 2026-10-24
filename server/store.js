@@ -8,11 +8,13 @@ const fs = require('fs');
 const path = require('path');
 
 class Store {
+  // PUBLIC
   constructor(filePath) {
     this.filePath = filePath;
   }
 
   // Returns the parsed state, or null if no save exists yet.
+  // PUBLIC
   load() {
     let raw;
     try {
@@ -25,6 +27,7 @@ class Store {
     return JSON.parse(raw);
   }
 
+  // PUBLIC
   save(state) {
     const dir = path.dirname(this.filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

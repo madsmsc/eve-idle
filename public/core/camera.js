@@ -5,6 +5,7 @@
 import { clamp } from './util.js';
 
 export class Camera {
+  // PUBLIC
   constructor(app) {
     this.app = app;
     this.zoom = 1.0;
@@ -13,6 +14,7 @@ export class Camera {
     this.shakeY = 0;
   }
 
+  // PUBLIC
   update(dt) {
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 3);
@@ -30,10 +32,12 @@ export class Camera {
     }
   }
 
+  // PUBLIC
   addShake(amount) {
     this.shake = Math.min(2, this.shake + amount);
   }
 
+  // PUBLIC
   worldToScreen(wx, wy) {
     const player = this.app.player;
     return {
@@ -42,6 +46,7 @@ export class Camera {
     };
   }
 
+  // PUBLIC
   screenToWorld(sx, sy) {
     const player = this.app.player;
     return {
@@ -50,6 +55,7 @@ export class Camera {
     };
   }
 
+  // PUBLIC
   getViewBounds() {
     const hw = this.app.canvas.width / 2 / this.zoom;
     const hh = this.app.canvas.height / 2 / this.zoom;
@@ -58,6 +64,7 @@ export class Camera {
   }
 
   // Zoom the view around a factor step, clamped to [0.4, 2.2].
+  // PUBLIC
   scale(factor) {
     this.zoom = clamp(this.zoom * factor, 0.4, 2.2);
   }

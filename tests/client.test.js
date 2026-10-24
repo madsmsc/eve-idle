@@ -169,7 +169,7 @@ describe('UI panel refresh', () => {
 
 describe('HUD activity log', () => {
   test('shows newest events first, fades old events, and removes expired events', async () => {
-    const { HudNode } = await import('../public/ui/hud.js');
+    const { HudNode, renderActivityLog } = await import('../public/ui/hud.js');
     const previousDocument = global.document;
     const list = {
       children: [],
@@ -188,18 +188,18 @@ describe('HUD activity log', () => {
     try {
       const hud = new HudNode({});
       hud.pushEvent('Older event', '');
-      hud.renderEventLog();
+      let eventKey = renderActivityLog(hud.events, list, '', performance.now());
       hud.pushEvent('Newer event', '');
-      hud.renderEventLog();
+      eventKey = renderActivityLog(hud.events, list, eventKey, performance.now());
 
       assert.deepEqual(list.children.map((line) => line.textContent), ['Newer event', 'Older event']);
 
       hud.events.find((event) => event.text === 'Older event').at -= 2500;
-      hud.renderEventLog();
+      eventKey = renderActivityLog(hud.events, list, eventKey, performance.now());
       assert.ok(Number.parseFloat(list.children[1].style.opacity) < 1);
 
       hud.events.find((event) => event.text === 'Older event').at -= 12000;
-      hud.renderEventLog();
+      renderActivityLog(hud.events, list, eventKey, performance.now());
       assert.deepEqual(list.children.map((line) => line.textContent), ['Newer event']);
     } finally {
       global.document = previousDocument;
@@ -207,17 +207,13 @@ describe('HUD activity log', () => {
   });
 
   test('adds new autopilot messages to the shared activity log', async () => {
-    const { HudNode } = await import('../public/ui/hud.js');
-    const hud = new HudNode({});
-    hud.seenAutomationEvents = hud.countAutomationEvents([{ at: 100, message: 'Old event' }]);
-
-    hud.collectAutomationEvents([
+    const { collectNewAutomationEvents } = await import('../public/ui/hud.js');
+    const { fresh } = collectNewAutomationEvents([
       { at: 200, message: 'Latest event' },
       { at: 100, message: 'Old event' },
-    ]);
+    ], new Map([['100:Old event', 1]]));
 
-    assert.equal(hud.events[0].text, 'Latest event');
-    assert.equal(hud.events[0].tone, 'auto');
+    assert.deepEqual(fresh.map((event) => event.message), ['Latest event']);
   });
 });
 
@@ -405,10 +401,14 @@ describe('Ship destination indicator', () => {
     const ctx = {
       save() {},
       restore() {},
+      translate() {},
+      rotate() {},
       setLineDash() {},
       beginPath() {},
       moveTo() {},
       lineTo() {},
+      closePath() {},
+      fill() {},
       arc() { calls.arcs++; },
       stroke() { calls.strokes++; },
     };
@@ -416,15 +416,16 @@ describe('Ship destination indicator', () => {
     const app = {
       ctx,
       canvas: { width: 800, height: 600 },
-      camera: { worldToScreen: () => ({ x: 500, y: 400 }) },
-      player: { destination: { x: enemy.x, y: enemy.y } },
-      state: { world: { enemies: [enemy] } },
+      camera: { zoom: 1, worldToScreen: () => ({ x: 500, y: 400 }) },
+      constants: { maxSpeed: 1000 },
+      player: { destination: { x: enemy.x, y: enemy.y }, heading: 0, vx: 0, vy: 0 },
+      state: { docked: false, world: { enemies: [enemy] } },
       targetEnemyId: enemy.id,
     };
 
-    new ShipNode(app).drawDestination(0);
+    new ShipNode(app).render(0);
 
-    assert.deepEqual(calls, { arcs: 0, strokes: 0 });
+    assert.equal(calls.arcs, 1, 'only the ship cockpit is drawn; no target destination arc');
   });
 
   test('keeps the destination indicator for non-target navigation', async () => {
@@ -433,25 +434,30 @@ describe('Ship destination indicator', () => {
     const ctx = {
       save() {},
       restore() {},
+      translate() {},
+      rotate() {},
       setLineDash() {},
       beginPath() {},
       moveTo() {},
       lineTo() {},
+      closePath() {},
+      fill() {},
       arc() { arcs++; },
       stroke() {},
     };
     const app = {
       ctx,
       canvas: { width: 800, height: 600 },
-      camera: { worldToScreen: () => ({ x: 500, y: 400 }) },
-      player: { destination: { x: 300, y: 400 } },
-      state: { world: { enemies: [] } },
+      camera: { zoom: 1, worldToScreen: () => ({ x: 500, y: 400 }) },
+      constants: { maxSpeed: 1000 },
+      player: { destination: { x: 300, y: 400 }, heading: 0, vx: 0, vy: 0 },
+      state: { docked: false, world: { enemies: [] } },
       targetEnemyId: null,
     };
 
-    new ShipNode(app).drawDestination(0);
+    new ShipNode(app).render(0);
 
-    assert.equal(arcs, 1);
+    assert.equal(arcs, 2, 'destination and ship cockpit are both drawn');
   });
 });
 
@@ -653,7 +659,7 @@ describe('Player server-authoritative motion', () => {
 
 describe('Inventory grid stacks', () => {
   test('materials use one stack and grid capacity grows with loot items', async () => {
-    const { InventoryNode } = await import('../public/ui/inventory.js');
+    const { buildInventoryCells } = await import('../public/ui/inventory.js');
     const app = {
       state: {
         materials: { iron: 1000000 },
@@ -666,11 +672,31 @@ describe('Inventory grid stacks', () => {
       },
       catalog: { minerals: { iron: {} }, components: {} },
     };
-    const inventory = new InventoryNode(app);
-    const { cells, total } = inventory.buildCells();
+    const { cells, total } = buildInventoryCells(app.state, app.catalog, 'all');
     assert.equal(cells.filter((cell) => cell.kind === 'material').length, 1);
     assert.equal(cells[0].count, 1000000);
     assert.equal(cells.filter((cell) => cell.kind === 'loot').length, 30);
-    assert.equal(total, 36);
+    assert.equal(total, 31);
+  });
+
+  test('quantum storage stacks materials and represents modules and blueprints as item slots', async () => {
+    const { buildStorageCells } = await import('../public/ui/inventory.js');
+    const storage = {
+      items: { iron: 12 },
+      loot: [{ id: 'module-1', slotType: 'weapon', tier: 1 }],
+      blueprints: [{ id: 'blueprint-1', kind: 'module', type: 'weapon', tier: 1 }],
+    };
+    const catalog = {
+      minerals: { iron: {} },
+      components: {},
+    };
+    const { cells, total } = buildStorageCells(storage, catalog);
+    assert.deepEqual(cells.map((cell) => cell.select), [
+      'storage:item:iron',
+      'storage:loot:module-1',
+      'storage:blueprint:blueprint-1',
+    ]);
+    assert.equal(cells[0].count, 12);
+    assert.equal(total, 26);
   });
 });

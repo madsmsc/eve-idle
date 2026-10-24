@@ -7,6 +7,7 @@ import { dist } from './util.js';
 const MAX_POSITION_PREDICTION_SECONDS = 0.75;
 
 export class Player extends Node {
+  // PUBLIC
   constructor(app) {
     super(app);
     this.x = 0;
@@ -20,6 +21,7 @@ export class Player extends Node {
     this.docking = this.add(new DockingNode(app));
   }
 
+  // PUBLIC
   setServerState(ship, navigation) {
     if (!ship) return;
     const velocityX = ship.vx || 0;
@@ -44,6 +46,7 @@ export class Player extends Node {
     this.dockTargetId = navigation ? navigation.dockTargetId : null;
   }
 
+  // PUBLIC
   snap(x, y) {
     this.x = x;
     this.y = y;
@@ -54,6 +57,7 @@ export class Player extends Node {
     this.serverTargetAge = 0;
   }
 
+  // PUBLIC
   startUndock() {
     const ship = this.app.state.activeShip;
     if (!ship) throw new Error('Cannot undock without an active ship');
@@ -62,6 +66,7 @@ export class Player extends Node {
     this.app.undocking = false;
   }
 
+  // PUBLIC
   update(dt) {
     if (this.serverTarget && !this.app.docking) {
       const previousX = this.x;
@@ -87,6 +92,7 @@ export class Player extends Node {
     return super.update(dt);
   }
 
+  // PUBLIC
   poiLabel(x, y) {
     const world = this.app.state.world;
     const candidates = [
@@ -109,6 +115,7 @@ export class Player extends Node {
 }
 
 class DockingNode extends Node {
+  // PUBLIC
   begin(newState) {
     const station = newState.world.stations.find((item) => item.name === newState.dockedStation);
     if (!station) return false;
@@ -125,18 +132,21 @@ class DockingNode extends Node {
     return true;
   }
 
+  // PUBLIC
   setFade(on) {
     const element = document.getElementById('dock-fade');
     element.classList.toggle('on', on);
     element.classList.toggle('out', !on);
   }
 
+  // PUBLIC
   update(dt) {
     const dock = this.app.docking;
     if (dock) this.#updateTransition(dt, dock);
     return super.update(dt);
   }
 
+  // PRIVATE
   #updateTransition(dt, dock) {
     const player = this.app.player;
     const station = dock.station;
@@ -164,6 +174,7 @@ class DockingNode extends Node {
     if (dock.fading && dock.elapsed - dock.fadeStart >= 1) this.#finish(dock);
   }
 
+  // PRIVATE
   #finish(dock) {
     this.app.docking = null;
     this.app.player.snap(dock.station.x, dock.station.y);

@@ -20,20 +20,21 @@ and a full cargo hold recalls it to a station to store its materials.
   Manage ships, modules, fittings, skills, inventory, industry, achievements,
   and agent contracts there. Skill points are shown in Skills; battle victories
   and ship losses are shown in Killboard. NPCs at every station exchange three items of a
-  tier for one of the next tier. NPCs sell basic Tier I module blueprints;
+  tier for one of the next tier. The Market separates NPC blueprints from the
+  ore/component trade-up exchanges. NPCs sell basic Tier I module blueprints;
   higher-tier module and ship blueprints drop as rat loot. Blueprints are
   consumed to manufacture ships or modules; the shipyard progression tree shows
   skill prerequisites, blueprint status, and material requirements for every
   hull. Launch leaves the ship floating outside the
   station; it does not steer back automatically, even if the hold is full.
-  Cargo is organized into ship loadout, fitting, and inventory columns. Fitting
-  is a read-only view; equip modules from selected Cargo items, and use the
-  Ship loadout action to return fitted modules to Cargo.
-- Press I (or Cargo) to see the ship's grouped module loadout above its item grid.
-  Quantum storage is a separate station service: it is shared across stations
-  and safe from ship loss. Blueprints and modules are inventory items. Equip
-  or remove modules while docked; larger ship tiers have more
-  total fitting slots while hulls keep their role-specific slot layouts.
+  Cargo shows the ship's inventory; store materials, modules, and blueprints in
+  Quantum Storage while docked. The separate Fitting menu shows the active
+  ship's loadout and available modules, including modules held in storage.
+  Equip or remove modules while docked; larger ship tiers have more total
+  fitting slots while hulls keep their role-specific slot layouts.
+- Press I (or Cargo) to view the cargo hold. Quantum Storage is shared across
+  stations and safe from ship loss; retrieve stored items while docked. Use the
+  cargo filters with Store filtered to transfer only the visible item types.
 - Rats drop a small amount of Scrap and may drop modules or higher-tier
   blueprints. The target readout estimates combat difficulty from your fitted
   ship and the target's stats; it is a guide, not a guarantee. Salvage unwanted
@@ -170,12 +171,5 @@ tests/        Unit, API, client, and Playwright E2E tests
 
 ## TODOs
 
-### actions (parallel)
+### actions and questions
 
-more interesting geometric shapes for the in-space elements.
-
-### questions
-
-
-
-what are the 5 biggest files (most lines)? i would like to make sure files are mostly classes and split down reasonbly, so they aren't too big and have too much responsibility. also make sure methods are generally small and well-named. many smaller well-named methods is better then few complex ones. please try to follow "clean code" principles.
