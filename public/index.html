@@ -24,7 +24,6 @@
     <div class="hud-tl">
       <div id="system-name" class="system-name" data-testid="system-name"></div>
       <div id="security" class="hud-line security" data-testid="security"></div>
-      <div id="faction" class="hud-line faction" data-testid="faction"></div>
     </div>
 
     <div class="hud-tr">
@@ -79,21 +78,20 @@
       <h2>Ship</h2>
       <button class="menu-card" data-menu="cargo" data-shortcut="I" data-testid="menu-cargo">Cargo</button>
       <button class="menu-card" data-menu="fitting" data-shortcut="F" data-testid="menu-fitting">Fitting</button>
-      <button class="menu-card" data-menu="storage" data-shortcut="Q" data-testid="menu-storage">Storage</button>
       <button class="menu-card" data-menu="fleet" data-station-menu data-testid="menu-fleet" disabled>Fleet</button>
-      <button class="menu-card" data-menu="shipyard" data-station-menu data-testid="menu-shipyard" disabled>Shipyard</button>
     </div>
     <div class="left-menu-group">
       <h2>Pilot</h2>
       <button class="menu-card" data-menu="pilot" data-shortcut="C" data-testid="menu-pilot">Pilot</button>
       <button class="menu-card" data-menu="skills" data-station-menu data-testid="menu-skills" disabled>Skills</button>
       <button class="menu-card" data-menu="achievements" data-station-menu data-testid="menu-achievements" disabled>Achieve</button>
-      <button class="menu-card" data-menu="factions" data-station-menu data-testid="menu-factions" disabled>Factions</button>
     </div>
     <div class="left-menu-group">
       <h2>Services</h2>
+      <button class="menu-card" data-menu="storage" data-shortcut="Q" data-station-menu data-testid="menu-storage" disabled>Storage</button>
+      <button class="menu-card" data-menu="market" data-station-menu data-testid="menu-market" disabled>Market</button>
+      <button class="menu-card" data-menu="shipyard" data-station-menu data-testid="menu-shipyard" disabled>Shipyard</button>
       <button class="menu-card" data-menu="missions" data-station-menu data-testid="menu-missions" disabled>Missions</button>
-      <button class="menu-card" data-menu="drones" data-station-menu data-testid="menu-drones" disabled>Drone Bay</button>
       <button class="menu-card" data-menu="industry" data-station-menu data-testid="menu-industry" disabled>Industry</button>
       <button class="menu-card" data-menu="killboard" data-station-menu data-testid="menu-killboard" disabled>Killboard</button>
     </div>
@@ -123,7 +121,7 @@
   <aside id="tutorial-hint" class="tutorial-hint" data-testid="tutorial-hint" role="status" hidden>
     <div>
       <strong>Quick start</strong>
-      <p>Launch to enter space, then select a destination on the map or in the world. Your ship flies there. Belts mine automatically; a full hold returns to a station. Dock for ships, fittings, skills, and industry.</p>
+      <p>Launch to enter space, then select a destination on the map or in the world. Your ship flies there. Belts mine automatically; a full hold returns to a station. Dock to fit modules, store materials, and access ships, skills, and industry.</p>
     </div>
     <button id="tutorial-dismiss" class="hud-btn" data-testid="tutorial-dismiss" aria-label="Dismiss quick start">Got it</button>
   </aside>
@@ -171,13 +169,14 @@
           <h3>Agent Missions <span class="sub" id="agent-mission-cooldown"></span></h3>
           <div id="hangar-agent-missions" data-testid="hangar-agent-missions"></div>
         </section>
-        <section data-panel="factions">
-          <h3>Factions <span class="sub">standing &amp; ambush risk</span></h3>
-          <div id="hangar-factions" class="hangar-factions" data-testid="hangar-factions"></div>
+        <section id="storage-panel" data-panel="storage" data-testid="storage-panel">
+          <h3>Quantum Storage</h3>
+          <h3>Shared by all stations</h3>
+          <div id="inv-storage" class="inv-list" data-testid="inv-storage"></div>
         </section>
-        <section data-panel="drones">
-          <h3>Drone Bay <span class="sub" id="drone-bay-count"></span></h3>
-          <div id="hangar-drones" class="hangar-drones" data-testid="hangar-drones"></div>
+        <section data-panel="market">
+          <h3>NPC Barter</h3>
+          <div id="hangar-market" class="hangar-market" data-testid="hangar-market"></div>
         </section>
         <section data-panel="industry">
           <h3>Industry <span class="sub">craft modules from ore</span></h3>
@@ -207,10 +206,12 @@
         <div class="cargo-filters" role="group" aria-label="Cargo item filter">
           <button class="mini active" data-cargo-filter="all" data-testid="cargo-filter-all">All</button>
           <button class="mini" data-cargo-filter="ore" data-testid="cargo-filter-ore">Ore</button>
+          <button class="mini" data-cargo-filter="components" data-testid="cargo-filter-components">Components</button>
           <button class="mini" data-cargo-filter="loot" data-testid="cargo-filter-loot">Modules</button>
+          <button class="mini" data-cargo-filter="blueprints" data-testid="cargo-filter-blueprints">Blueprints</button>
         </div>
         <div class="inv-toolbar">
-          <button class="mini" data-action="sell-all" data-testid="inv-sell-all" disabled>Sell all</button>
+          <button class="mini" data-action="deposit-all" data-testid="inv-deposit-all" disabled>Store all materials</button>
         </div>
         <div id="inv-grid" class="inv-grid" data-testid="inv-grid"></div>
         <div id="inv-detail" class="inv-detail" data-testid="inv-detail"></div>
@@ -231,17 +232,9 @@
         <div id="inv-fitting" class="inv-list" data-testid="inv-fitting"></div>
       </section>
 
-      <section id="storage-panel" class="menu-page" data-menu-page="storage" data-testid="storage-panel" hidden>
-        <h3>Quantum Storage</h3>
-        <h3>Shared by all stations</h3>
-        <div id="inv-storage" class="inv-list" data-testid="inv-storage"></div>
-      </section>
-
       <section id="character-sheet" class="menu-page" data-menu-page="pilot" data-testid="character-sheet" hidden>
         <h3>Pilot</h3>
         <div id="character-pilot" class="character-pilot" data-testid="character-pilot"></div>
-        <h3>Faction Standing</h3>
-        <div id="character-factions" class="character-factions" data-testid="character-factions"></div>
       </section>
     </div>
   </div>

@@ -1,10 +1,10 @@
 # EVE Idle
 
 A small idle game rendered as a 2D top-down world. Fly to asteroid belts to
-mine, stations to trade, and hostile ships to fight. Use your earnings to buy
-ships, fit modules, and train skills and drones. A ship's stats are its base
+mine, stations to barter, and hostile ships to fight. Trade ore and components
+for blueprints, then manufacture ships and modules. A ship's stats are its base
 stats plus its equipped modules. A parked ship keeps mining while you are away,
-and a full cargo hold recalls it to a station to sell.
+and a full cargo hold recalls it to a station to store its materials.
 
 ## How to play
 
@@ -15,26 +15,32 @@ and a full cargo hold recalls it to a station to sell.
   gate is reachable by clicking it (or its dot on the overview map), so systems
   stay large and open instead of being split into small "pockets".
 - Engage nearby enemies to fight. Use shield boost, weapon overload, or
-  disengage. Ship loss costs your cargo; insurance covers part of the ship's
-  purchase price.
+  disengage. Ship loss destroys the ship's cargo.
 - Docking replaces the world and flight HUD with full-screen station services.
-  Manage ships, modules, fittings, skills, drones, loot, industry, achievements,
-  and agent contracts there. Launch leaves the ship floating outside the
+  Manage ships, modules, fittings, skills, inventory, industry, achievements,
+  and agent contracts there. NPCs at every station exchange three items of a
+  tier for one of the next tier. NPCs sell basic Tier I module blueprints;
+  higher-tier module and ship blueprints drop as rat loot. Blueprints are
+  consumed to manufacture ships or modules; the shipyard progression tree shows
+  skill prerequisites, blueprint status, and material requirements for every
+  hull. Launch leaves the ship floating outside the
   station; it does not steer back automatically, even if the hold is full.
-  Module tier changes have a cost or refund. Selling loot and refining modules
-  require docking.
-- Press C (or the Char button) any time to open the character sheet and see
-  your standing with every faction, not just the active system's. Press I (or
-  Inventory) to see the ship's contents plus **quantum storage** — a single
-  warehouse every station shares, so ore deposited at one dock can be
-  withdrawn at any other (and survives ship loss).
-- Each system has its own security level, faction, and market prices. Faction
-  standing affects prices and gate ambush risk. Drones add mining or combat
-  support. Modules and ships can be crafted from ore while docked.
+  Fitting consumes a module from inventory; un-fitting returns it.
+- Press C (or the Char button) any time to open the character sheet. Press I
+  (or Inventory) to see ship cargo plus **quantum storage** — a shared
+  warehouse for ore and components, accessible at every station and safe from
+  ship loss. Blueprints and modules are also inventory items.
+- Rats drop a small amount of Scrap and may drop modules or higher-tier
+  blueprints. The target readout estimates combat difficulty from your fitted
+  ship and the target's stats; it is a guide, not a guarantee. Salvage unwanted
+  modules into components; ore and components each have their own 3:1 tier
+  exchange ladder. There is no currency balance or faction standing system.
+- Skill points accrue continuously in real time, whether or not you are logged
+  in. Offline skill-point accrual is not capped; mining and combat catch-up are.
 - Systems have two asteroid belts with larger rock fields, two outposts with
   clustered pirate groups, and navigational sites spaced apart. The HUD shows
   cargo used versus capacity while mining; base mining yield is halved.
-- Auto repeats the mining loop: mine, recall when full, sell, and return to a
+- Auto repeats the mining loop: mine, recall when full, store materials, and return to a
   belt. Tutorial hints introduce DEMO play; an offline report summarizes gains
   after a break.
 
@@ -153,6 +159,6 @@ more interesting geometric shapes for the in-space elements.
 
 ### questions
 
-how much else could reasonbly be moved from the front-end to the back-end? i would prefer if the front-end was as thin as possible. all values and calculations should be fetched from the server.
+
 
 what are the 5 biggest files (most lines)? i would like to make sure files are mostly classes and split down reasonbly, so they aren't too big and have too much responsibility. also make sure methods are generally small and well-named. many smaller well-named methods is better then few complex ones. please try to follow "clean code" principles.

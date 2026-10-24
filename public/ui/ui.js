@@ -10,7 +10,7 @@ import { CharacterNode } from './character.js';
 import { InventoryNode } from './inventory.js';
 import { OverlaysNode } from './overlays.js';
 
-const STATION_MENUS = ['fleet', 'shipyard', 'skills', 'achievements', 'factions', 'missions', 'drones', 'industry', 'killboard'];
+const STATION_MENUS = ['fleet', 'shipyard', 'storage', 'market', 'skills', 'achievements', 'missions', 'industry', 'killboard'];
 
 class MenuGroupNode extends Node {
   constructor(app) {
@@ -58,10 +58,18 @@ export class UINode extends Node {
     const docked = app.state && app.state.docked;
     const wasDocked = document.body.classList.contains('docked');
     if (docked && !wasDocked) {
-      app.menuPageOpen = false;
-      app.activeMenu = 'fleet';
-      document.getElementById('menu-window').hidden = true;
-      document.body.classList.remove('menu-window-open');
+      app.menuPageOpen = true;
+      app.activeMenu = 'cargo';
+      document.getElementById('menu-window').hidden = false;
+      document.body.classList.add('menu-window-open');
+      document.getElementById('menu-window-title').textContent =
+        document.querySelector('.menu-card[data-menu="cargo"]').textContent.trim();
+      document.querySelectorAll('.menu-page').forEach((page) => {
+        const selected = page.dataset.menuPage === 'cargo';
+        page.classList.toggle('active', selected);
+        page.hidden = !selected;
+      });
+      this.inventory.refresh();
     } else if (!docked && wasDocked) {
       app.menuPageOpen = false;
       app.activeMenu = 'cargo';
@@ -93,7 +101,7 @@ export class UINode extends Node {
 
   openMenu(name, force) {
     const app = this.app;
-    const shipMenus = ['cargo', 'fitting', 'storage', 'pilot'];
+    const shipMenus = ['cargo', 'fitting', 'pilot'];
     const stationMenus = STATION_MENUS;
     if (!shipMenus.includes(name) && !stationMenus.includes(name)) throw new Error(`Unknown menu: ${name}`);
     if (stationMenus.includes(name) && !(app.state && app.state.docked)) {
@@ -119,7 +127,7 @@ export class UINode extends Node {
       item.hidden = !selected;
     });
     const button = document.querySelector(`.menu-card[data-menu="${name}"]`);
-    document.getElementById('menu-window-title').textContent = button.querySelector('strong').textContent;
+    document.getElementById('menu-window-title').textContent = button.textContent.trim();
     document.querySelectorAll('.menu-card').forEach((item) => {
       const selected = item.dataset.menu === name;
       item.classList.toggle('active', selected);

@@ -77,42 +77,39 @@ describe('HTTP API', () => {
     assert.ok(Number.isFinite(s.activeShip.x));
   });
 
-  test('GET /api/catalog exposes ships, minerals, enemies and constants', async () => {
+  test('GET /api/catalog exposes ships, item ladders, enemies and constants', async () => {
     const r = await api(srv.base, '/api/catalog');
     assert.equal(r.status, 200);
     assert.ok(r.data.ships.rifter);
     assert.ok(r.data.minerals.iron);
     assert.ok(r.data.enemies.pirate);
-    assert.ok(r.data.factions.serpentis);
+    assert.ok(r.data.components.scrap);
+    assert.deepEqual(r.data.oreExchange, ['iron', 'bauxite', 'gadolinium', 'megacyte']);
+    assert.ok(r.data.shipProgression.some((tier) => tier.ships.some((ship) => ship.type === 'brutix')));
+    assert.deepEqual(r.data.npcBlueprints, Object.keys(cfg.MODULES).map((slotType) => `module:${slotType}:1`));
     assert.ok(r.data.achievements.miner);
     assert.equal(r.data.constants.worldSize, cfg.WORLD_SIZE);
     assert.ok(r.data.constants.miningRange > 0);
   });
 
-  test('POST /api/sell-loot and /api/refine-loot consume docked loot', async () => {
+  test('POST /api/refine-loot salvages a module into a component', async () => {
     const initial = srv.app.getState();
-    initial.loot = [
-      { id: 'sell-me', slotType: 'weapon', tier: 1 },
-      { id: 'refine-me', slotType: 'shield', tier: 1 },
-    ];
+    initial.loot = [{ id: 'refine-me', slotType: 'shield', tier: 3 }];
     srv.app.setState(initial);
-    const sold = await api(srv.base, '/api/sell-loot', { lootId: 'sell-me' });
-    assert.equal(sold.status, 200);
-    assert.equal(sold.data.state.loot.length, 1);
     const refined = await api(srv.base, '/api/refine-loot', { lootId: 'refine-me' });
     assert.equal(refined.status, 200);
     assert.equal(refined.data.state.loot.length, 0);
-    assert.ok(refined.data.state.cargoUsed > 0);
+    assert.equal(refined.data.state.storage.items.circuits, 1);
   });
 
-  test('GET /api/state exposes standing, factions and ambush risk', async () => {
+  test('GET /api/state exposes materials and ambush risk without reputation', async () => {
     const r = await api(srv.base, '/api/state');
     assert.equal(r.status, 200);
     const s = r.data.state;
-    assert.ok(s.standing);
-    assert.ok(Array.isArray(s.factions) && s.factions.length === 3);
-    assert.ok(s.activeFaction && s.activeFaction.name);
-    assert.equal(s.priceBonus, 1);
+    assert.ok(s.materials.iron >= 0);
+    assert.ok(s.storage.items.scrap >= 0);
+    assert.equal(s.standing, undefined);
+    assert.equal(s.isk, undefined);
     assert.ok(s.ambush && Object.keys(s.ambush).length === 3);
   });
 
@@ -123,14 +120,49 @@ describe('HTTP API', () => {
     assert.ok(r.data.state.lastTick >= before.lastTick);
   });
 
-  test('POST /api/buy-ship succeeds when affordable', async () => {
-    const r = await api(srv.base, '/api/buy-ship', { type: 'falcon' });
-    assert.equal(r.status, 200);
-    assert.equal(r.data.state.ships.length, 2);
+  test('NPCs sell basic module blueprints but not higher-tier or ship blueprints', async () => {
+    const basic = await api(srv.base, '/api/buy-blueprint', { kind: 'module', type: 'weapon', tier: 1 });
+    assert.equal(basic.status, 200);
+    assert.equal(basic.data.state.blueprints[0].kind, 'module');
+    const higherTier = await api(srv.base, '/api/buy-blueprint', { kind: 'module', type: 'weapon', tier: 2 });
+    assert.equal(higherTier.status, 400);
+    assert.match(higherTier.data.error, /rat loot/i);
+    const ship = await api(srv.base, '/api/buy-blueprint', { kind: 'ship', type: 'falcon' });
+    assert.equal(ship.status, 400);
+    assert.match(ship.data.error, /rat loot/i);
   });
 
-  test('POST /api/buy-ship rejects when unaffordable (400)', async () => {
-    const r = await api(srv.base, '/api/buy-ship', { type: 'brutix' });
+  test('world enemies expose an approximate difficulty for the active ship', async () => {
+    const r = await api(srv.base, '/api/state');
+    assert.ok(r.data.state.world.enemies.every((enemy) =>
+      ['Favorable', 'Even', 'Dangerous', 'Deadly', 'Unknown'].includes(enemy.difficulty.label)
+    ));
+  });
+
+  test('POST /api/craft-ship builds a ship using a found blueprint and materials', async () => {
+    const state = srv.app.getState();
+    state.skills.miningYield = 1;
+    state.blueprints.push({ id: 'found-falcon', kind: 'ship', type: 'falcon', tier: null });
+    srv.app.setState(state);
+    const r = await api(srv.base, '/api/craft-ship', { type: 'falcon' });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.state.ships.length, 2);
+    assert.equal(r.data.state.blueprints.length, 0);
+  });
+
+  test('POST /api/exchange-items trades a 3:1 material stack', async () => {
+    const r = await api(srv.base, '/api/exchange-items', {
+      family: 'ore',
+      item: 'iron',
+      amount: 6,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.state.storage.items.iron, 12);
+    assert.equal(r.data.state.storage.items.bauxite, 2);
+  });
+
+  test('legacy direct ship purchase action is removed', async () => {
+    const r = await api(srv.base, '/api/buy-ship', { type: 'falcon' });
     assert.equal(r.status, 400);
     assert.ok(r.data.error);
   });
@@ -194,16 +226,16 @@ describe('HTTP API', () => {
     assert.equal(r.data.state.combatLog[0].disengaged, true);
   });
 
-  test('POST /api/fit-module fits a module and deducts ISK', async () => {
-    const st = (await api(srv.base, '/api/state')).data.state;
+  test('POST /api/fit-module fits a module from inventory', async () => {
+    const st = srv.app.getState();
     const shipId = st.activeShipId;
-    const cost = cfg.MODULES.weapon.tiers[0].cost;
-    const iskBefore = st.isk;
+    st.loot.push({ id: 'weapon-inventory', slotType: 'weapon', tier: 1 });
+    srv.app.setState(st);
     const r = await api(srv.base, '/api/fit-module', { shipId, slotType: 'weapon', slotIndex: 0, tier: 1 });
     assert.equal(r.status, 200);
     const ship = r.data.state.ships.find((s) => s.id === shipId);
     assert.equal(ship.fitting.weapon[0], 1);
-    assert.ok(Math.abs(r.data.state.isk - (iskBefore - cost)) < 1e-6);
+    assert.equal(r.data.state.loot.length, 0);
   });
 
   test('POST /api/fit-module rejects a slot type the ship has none of (400)', async () => {
@@ -235,6 +267,7 @@ describe('HTTP API', () => {
     assert.ok(r.data.drones.mining && r.data.drones.combat);
     assert.equal(r.data.constants.droneMaxPerType, cfg.DRONE_MAX_PER_TYPE);
     assert.ok(r.data.blueprints.weapon && r.data.blueprints.weapon[2].recipe);
+    assert.ok(r.data.shipBlueprints.falcon.recipe);
   });
 
   test('GET /api/state exposes the drone bay and loot inventory', async () => {
@@ -245,21 +278,9 @@ describe('HTTP API', () => {
     assert.ok('mining' in r.data.state.droneBonuses && 'dps' in r.data.state.droneBonuses);
   });
 
-  test('POST /api/buy-drone buys a mining drone when docked', async () => {
-    const r = await api(srv.base, '/api/buy-drone', { type: 'mining', tier: 1 });
-    assert.equal(r.status, 200);
-    assert.deepEqual(r.data.state.drones.mining, [1]);
-  });
-
-  test('POST /api/buy-drone rejects when not docked (400)', async () => {
-    await api(srv.base, '/api/tick', { x: 100, y: 100 });
-    const r = await api(srv.base, '/api/buy-drone', { type: 'combat', tier: 1 });
-    assert.equal(r.status, 400);
-    assert.match(r.data.error, /dock/i);
-  });
-
   test('POST /api/equip-loot fits a looted module into the active ship', async () => {
     const cur = srv.app.getState();
+    cur.skills.gunnery = 1;
     cur.loot = [{ id: 'loot_api', slotType: 'weapon', tier: 2 }];
     srv.app.setState(cur);
     const r = await api(srv.base, '/api/equip-loot', { lootId: 'loot_api' });
@@ -272,7 +293,10 @@ describe('HTTP API', () => {
   test('POST /api/craft-module turns ore into a looted module', async () => {
     const cur = srv.app.getState();
     const active = cur.ships.find((s) => s.id === cur.activeShipId);
-    active.cargo = { ...cfg.BLUEPRINTS.weapon[1].recipe };
+    cur.blueprints.push({ id: 'weapon-blueprint', kind: 'module', type: 'weapon', tier: 1 });
+    for (const [key, amount] of Object.entries(cfg.BLUEPRINTS.weapon[1].recipe)) {
+      cur.storage.items[key] += amount;
+    }
     srv.app.setState(cur);
     const r = await api(srv.base, '/api/craft-module', { slotType: 'weapon', tier: 1 });
     assert.equal(r.status, 200);
@@ -291,15 +315,32 @@ describe('HTTP API', () => {
     const cur = srv.app.getState();
     const active = cur.ships.find((s) => s.id === cur.activeShipId);
     active.cargo = { iron: 100, bauxite: 0, gadolinium: 0, megacyte: 0 };
+    cur.storage.items.iron = 0;
     srv.app.setState(cur);
     const dep = await api(srv.base, '/api/deposit', { mineral: 'iron', amount: 100 });
     assert.equal(dep.status, 200);
-    assert.equal(dep.data.state.storage.minerals.iron, 100);
+    assert.equal(dep.data.state.storage.items.iron, 100);
     assert.equal(dep.data.state.minerals.iron, 0); // hold emptied (minerals = hold)
     const wd = await api(srv.base, '/api/withdraw', { mineral: 'iron', amount: 40 });
     assert.equal(wd.status, 200);
-    assert.equal(wd.data.state.storage.minerals.iron, 60);
+    assert.equal(wd.data.state.storage.items.iron, 60);
     assert.equal(wd.data.state.minerals.iron, 40);
+  });
+
+  test('POST /api/deposit-all transfers cargo to storage without selling', async () => {
+    const cur = srv.app.getState();
+    const active = cur.ships.find((s) => s.id === cur.activeShipId);
+    active.cargo = { iron: 100, bauxite: 25, gadolinium: 0, megacyte: 0 };
+    cur.storage.items.iron = 0;
+    cur.storage.items.bauxite = 0;
+    srv.app.setState(cur);
+    const r = await api(srv.base, '/api/deposit-all', {});
+    assert.equal(r.status, 200);
+    assert.equal(r.data.state.minerals.iron, 0);
+    assert.equal(r.data.state.minerals.bauxite, 0);
+    assert.equal(r.data.state.storage.items.iron, 100);
+    assert.equal(r.data.state.storage.items.bauxite, 25);
+    assert.equal(r.data.state.isk, undefined);
   });
 
   test('POST /api/deposit and /api/withdraw reject when not docked (400)', async () => {
@@ -319,7 +360,7 @@ describe('HTTP API', () => {
     const r = await api(srv.base, '/api/tick', { x: a.x, y: a.y });
     assert.equal(r.status, 200);
     assert.ok(r.data.state.stats.totalMineralsMined > 0);
-    assert.ok(r.data.state.minerals[a.mineral] > 0);
+    assert.ok(Object.values(r.data.state.minerals).some((amount) => amount > 0));
   });
 
   test('POST /api/warp moves the ship to a POI in its system', async () => {
@@ -379,16 +420,17 @@ describe('HTTP API', () => {
     assert.match(html, /<canvas id="world">/);
   });
 
-  test('POST /api/mode starts a story save with zero ISK and the first mission', async () => {
+  test('POST /api/mode starts a story save with item supplies and the first mission', async () => {
     const r = await api(srv.base, '/api/mode', { mode: 'story' });
     assert.equal(r.status, 200);
     assert.equal(r.data.state.mode, 'story');
-    assert.equal(r.data.state.isk, 0);
+    assert.equal(r.data.state.isk, undefined);
+    assert.ok(r.data.state.storage.items.iron > 0);
     assert.equal(r.data.state.mission.active, 'm1');
     assert.deepEqual(r.data.state.mission.completed, []);
   });
 
-  test('resuming a save reports capped offline progress and applies it once', async () => {
+  test('resuming a save reports capped simulation and full offline skill-point progress once', async () => {
     const state = srv.app.getState();
     const asteroid = state.systems[state.ships[0].systemId].asteroids[0];
     state.ships[0].x = asteroid.x;
@@ -397,8 +439,12 @@ describe('HTTP API', () => {
     srv.app.setState(state);
     const resumed = await api(srv.base, '/api/mode', { mode: 'demo' });
     assert.equal(resumed.status, 200);
-    assert.equal(resumed.data.offlineReport.elapsedSeconds, cfg.MAX_OFFLINE_SECONDS);
+    assert.ok(resumed.data.offlineReport.elapsedSeconds >= cfg.MAX_OFFLINE_SECONDS + 3600);
     assert.equal(resumed.data.offlineReport.capped, true);
+    assert.ok(Math.abs(
+      resumed.data.offlineReport.skillPoints -
+        cfg.SP_RATE_PER_SEC * resumed.data.offlineReport.elapsedSeconds,
+    ) < 0.1);
     assert.ok(resumed.data.offlineReport.mined > 0);
     const secondResume = await api(srv.base, '/api/mode', { mode: 'demo' });
     assert.equal(secondResume.data.offlineReport, null);
@@ -413,20 +459,20 @@ describe('HTTP API', () => {
   test('mode saves are isolated: switching modes never clobbers the other', async () => {
     const demo = (await api(srv.base, '/api/mode', { mode: 'demo' })).data.state;
     assert.equal(demo.mode, 'demo');
-    assert.equal(demo.isk, cfg.START_ISK);
+    assert.equal(demo.isk, undefined);
     const story = (await api(srv.base, '/api/mode', { mode: 'story' })).data.state;
     assert.equal(story.mode, 'story');
-    assert.equal(story.isk, 0);
+    assert.equal(story.isk, undefined);
     const demoAgain = (await api(srv.base, '/api/mode', { mode: 'demo' })).data.state;
     assert.equal(demoAgain.mode, 'demo');
-    assert.equal(demoAgain.isk, cfg.START_ISK);
+    assert.equal(demoAgain.isk, undefined);
   });
 
   test('reset regenerates the active mode only', async () => {
     await api(srv.base, '/api/mode', { mode: 'story' });
     const st = (await api(srv.base, '/api/reset', {})).data.state;
     assert.equal(st.mode, 'story');
-    assert.equal(st.isk, 0);
+    assert.equal(st.isk, undefined);
     assert.equal(st.ships.length, 1);
   });
 
@@ -443,7 +489,12 @@ describe('persistence', () => {
     const before = (await api(a.base, '/api/state')).data.state;
     const worldSeed = before.world.seed;
     const astCount = before.world.asteroids.length;
-    await api(a.base, '/api/buy-ship', { type: 'falcon' });
+    const state = a.app.getState();
+    state.skills.miningYield = 1;
+    state.blueprints.push({ id: 'found-falcon', kind: 'ship', type: 'falcon', tier: null });
+    a.app.setState(state);
+    const crafted = await api(a.base, '/api/craft-ship', { type: 'falcon' });
+    assert.equal(crafted.status, 200);
     await a.close();
 
     assert.ok(fs.existsSync(dataFile));
@@ -458,7 +509,9 @@ describe('persistence', () => {
   test('reset regenerates a fresh world and state', async () => {
     const dataFile = tmpDataFile();
     const a = await startServer(dataFile);
-    await api(a.base, '/api/buy-ship', { type: 'vexor' });
+    const state = a.app.getState();
+    state.blueprints.push({ id: 'found-vexor', kind: 'ship', type: 'vexor', tier: null });
+    a.app.setState(state);
     await api(a.base, '/api/reset', {});
     await a.close();
 

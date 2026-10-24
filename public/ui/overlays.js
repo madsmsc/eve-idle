@@ -12,14 +12,17 @@ export class OverlaysNode extends Node {
     const hours = Math.floor(report.elapsedSeconds / 3600);
     const minutes = Math.floor((report.elapsedSeconds % 3600) / 60);
     const duration = hours ? `${hours}h ${minutes}m` : `${minutes}m`;
-    summary.textContent = `Away for ${duration}${report.capped ? ' (gains capped)' : ''}`;
+    summary.textContent = `Away for ${duration}${report.capped ? ' (mining and combat catch-up capped)' : ''}`;
     const lines = [];
     if (report.mined > 0) lines.push(`Ore mined: ${fmt(report.mined)}`);
     if (report.oreByType) {
       const parts = Object.entries(report.oreByType).map(([k, v]) => `${k} ${fmt(v)}`);
       if (parts.length) lines.push(`  ${parts.join(', ')}`);
     }
-    if (report.isk > 0) lines.push(`Credits earned: ${fmt(report.isk)} cr`);
+    if (report.items) {
+      const items = Object.entries(report.items).map(([key, amount]) => `${key} ${fmt(amount)}`);
+      if (items.length) lines.push(`Items gained: ${items.join(', ')}`);
+    }
     if (report.kills > 0) lines.push(`Rats killed: ${fmt(report.kills)}`);
     if (report.beltsCompleted > 0) lines.push(`Belts completed: ${fmt(report.beltsCompleted)}`);
     if (report.distance > 0) lines.push(`Distance traveled: ${fmt(report.distance)} u`);
@@ -39,7 +42,6 @@ export class OverlaysNode extends Node {
     const lines = [`${mail.ship} lost to ${mail.enemy}`];
     if (mail.system) lines.push(`in ${mail.system}`);
     if (mail.cargoLost > 0) lines.push(`${mail.cargoLost} units of cargo lost`);
-    if (mail.insurance > 0) lines.push(`insurance paid ${fmt(mail.insurance)} ISK`);
     detail.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
     el.hidden = false;
     if (this.app.deathTimer) clearTimeout(this.app.deathTimer);

@@ -261,7 +261,8 @@ class MiningDroneNode extends Node {
   render(now) {
     const ctx = this.app.ctx;
     const state = this.app.state;
-    const n = state.drones && state.drones.mining ? state.drones.mining.length : 0;
+    const miningDroneSlots = (state.activeShip && state.activeShip.fitting && state.activeShip.fitting.miningDrone) || [];
+    const n = miningDroneSlots.filter((tier) => tier > 0).length;
     if (!n || state.combat) return super.render(now);
     const a = this.app.player.nearestAsteroid();
     if (!a) return super.render(now);

@@ -82,12 +82,32 @@ function serveStatic(req, res, pathname) {
 // Saves are stored per mode in a single container file: { demo, story }. Each
 // mode keeps its own progress, so switching modes never clobbers the other.
 function normalizeStore(loaded) {
-  const migrate = (state) => game.isValidState(state) ? game.migrateWorldLayout(state) : null;
+  const migrate = (state) => {
+    const current = game.migrateEconomy(state);
+    return game.isValidState(current) ? game.migrateWorldLayout(current) : null;
+  };
   if (loaded && typeof loaded === 'object' && (loaded.demo || loaded.story || loaded.__slots)) {
     return { demo: migrate(loaded.demo), story: migrate(loaded.story) };
   }
   // Legacy single-state save: treat as the demo slot (STATE_VERSION-gated).
   return { demo: migrate(loaded), story: null };
+}
+
+function materialTotals(state) {
+  const totals = Object.fromEntries([
+    ...Object.keys(game.MINERALS),
+    ...Object.keys(game.COMPONENTS),
+  ].map((key) => [key, 0]));
+  for (const ship of state.ships || []) {
+    for (const [key, amount] of Object.entries(ship.cargo || {})) {
+      if (key in totals) totals[key] += amount || 0;
+    }
+  }
+  const stored = state.storage && (state.storage.items || state.storage.minerals);
+  for (const [key, amount] of Object.entries(stored || {})) {
+    if (key in totals) totals[key] += amount || 0;
+  }
+  return totals;
 }
 
 function createApp({ dataFile } = {}) {
@@ -119,20 +139,6 @@ function createApp({ dataFile } = {}) {
     switch (action) {
       case 'tick': {
         state = game.tick(state, now, payload);
-        persist();
-        return { state };
-      }
-      case 'buy-ship': {
-        const r = game.buyShip(state, payload.type);
-        if (r.error) return r;
-        state = r.state;
-        persist();
-        return { state };
-      }
-      case 'sell-ship': {
-        const r = game.sellShip(state, payload.shipId);
-        if (r.error) return r;
-        state = r.state;
         persist();
         return { state };
       }
@@ -178,8 +184,15 @@ function createApp({ dataFile } = {}) {
         persist();
         return { state };
       }
-      case 'buy-drone': {
-        const r = game.buyDrone(state, payload.type, payload.tier);
+      case 'buy-blueprint': {
+        const r = game.buyBlueprint(state, payload.kind, payload.type, payload.tier);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'exchange-items': {
+        const r = game.exchangeItems(state, payload.family, payload.item, payload.amount);
         if (r.error) return r;
         state = r.state;
         persist();
@@ -187,13 +200,6 @@ function createApp({ dataFile } = {}) {
       }
       case 'equip-loot': {
         const r = game.equipLoot(state, payload.lootId);
-        if (r.error) return r;
-        state = r.state;
-        persist();
-        return { state };
-      }
-      case 'sell-loot': {
-        const r = game.sellLoot(state, payload.lootId);
         if (r.error) return r;
         state = r.state;
         persist();
@@ -220,22 +226,15 @@ function createApp({ dataFile } = {}) {
         persist();
         return { state };
       }
-      case 'sell-minerals': {
-        const r = game.sellMinerals(state, payload.mineral, payload.amount);
-        if (r.error) return r;
-        state = r.state;
-        persist();
-        return { state };
-      }
-      case 'sell-all': {
-        const r = game.sellAll(state);
-        if (r.error) return r;
-        state = r.state;
-        persist();
-        return { state };
-      }
       case 'deposit': {
         const r = game.deposit(state, payload.mineral, payload.amount);
+        if (r.error) return r;
+        state = r.state;
+        persist();
+        return { state };
+      }
+      case 'deposit-all': {
+        const r = game.depositAll(state);
         if (r.error) return r;
         state = r.state;
         persist();
@@ -319,12 +318,17 @@ function createApp({ dataFile } = {}) {
           achievements: game.ACHIEVEMENTS,
           agentMissions: game.AGENT_MISSIONS,
           minerals: game.MINERALS,
+          components: game.COMPONENTS,
+          oreExchange: game.ORE_EXCHANGE,
+          componentExchange: game.COMPONENT_EXCHANGE,
+          blueprintCosts: game.BLUEPRINT_COSTS,
+          npcBlueprints: game.NPC_BLUEPRINTS,
           enemies: game.ENEMIES,
           enemyTiers: game.ENEMY_TIERS,
-          factions: game.FACTIONS,
           drones: game.DRONES,
           blueprints: game.BLUEPRINTS,
           shipBlueprints: game.SHIP_BLUEPRINTS,
+          shipProgression: game.SHIP_PROGRESSION,
           constants: {
             worldSize: cfg.WORLD_SIZE,
             miningRange: cfg.MINING_RANGE,
@@ -358,24 +362,30 @@ function createApp({ dataFile } = {}) {
           const actualSeconds = Math.max(0, Math.floor((Date.now() - saved.lastTick) / 1000));
           if (actualSeconds >= 60) {
             const before = saved.stats || {};
-            const seconds = Math.min(actualSeconds, cfg.MAX_OFFLINE_SECONDS);
+            const itemsBefore = materialTotals(saved);
             const caughtUp = game.tick(saved, Date.now(), null);
             const after = caughtUp.stats || {};
+            const itemsAfter = materialTotals(caughtUp);
+            const items = {};
+            for (const [key, amount] of Object.entries(itemsAfter)) {
+              const delta = amount - (itemsBefore[key] || 0);
+              if (delta > 0) items[key] = delta;
+            }
             const oreByType = {};
             for (const [k, v] of Object.entries(after.oreMinedByType || {})) {
               const delta = v - ((before.oreMinedByType || {})[k] || 0);
               if (delta > 0) oreByType[k] = delta;
             }
             offlineReport = {
-              elapsedSeconds: seconds,
+              elapsedSeconds: actualSeconds,
               capped: actualSeconds > cfg.MAX_OFFLINE_SECONDS,
               mined: Math.max(0, (after.totalMineralsMined || 0) - (before.totalMineralsMined || 0)),
-              isk: Math.max(0, (after.totalIskEarned || 0) - (before.totalIskEarned || 0)),
               kills: Math.max(0, (after.combatsWon || 0) - (before.combatsWon || 0)),
               skillPoints: Math.max(0, (after.totalSpEarned || 0) - (before.totalSpEarned || 0)),
               distance: Math.max(0, (after.distanceTraveled || 0) - (before.distanceTraveled || 0)),
               beltsCompleted: Math.max(0, (after.beltsCompleted || 0) - (before.beltsCompleted || 0)),
               oreByType,
+              items,
             };
             saves[payload.mode] = caughtUp;
           }

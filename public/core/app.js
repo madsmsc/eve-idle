@@ -189,7 +189,8 @@ export class App {
     const prevCargo = Object.values(prev.minerals || {}).reduce((s, v) => s + v, 0);
     const curCargo = Object.values(cur.minerals || {}).reduce((s, v) => s + v, 0);
     if (curCargo > prevCargo) events.push(`mined ${Math.round(curCargo - prevCargo)} ore`);
-    if (cur.isk > prev.isk) events.push(`earned ${Math.round(cur.isk - prev.isk)} cr`);
+    const scrapGained = (cur.materials.scrap || 0) - (prev.materials.scrap || 0);
+    if (scrapGained > 0) events.push(`collected ${Math.round(scrapGained)} Scrap`);
     if (cur.combat === null && prev.combat !== null) {
       events.push(prev.combat.won ? 'rat killed' : 'combat lost');
     }
@@ -207,7 +208,7 @@ export class App {
       this.autoLog.unshift({ t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), msg });
       if (this.autoLog.length > 20) this.autoLog.pop();
     }
-    this._prevAutoState = { minerals: { ...cur.minerals }, isk: cur.isk, combat: cur.combat, world: { asteroids: cur.world.asteroids, belts: cur.world.belts }, system: cur.system };
+    this._prevAutoState = { minerals: { ...cur.minerals }, materials: { ...cur.materials }, combat: cur.combat, world: { asteroids: cur.world.asteroids, belts: cur.world.belts }, system: cur.system };
   }
 
   // Docked stations overlay services on a ship-free capture of the world.
@@ -215,7 +216,7 @@ export class App {
     this.ui.syncDockedView();
   }
 
-  // Undock into nearby space without steering the ship back to the station.
+  // Launch at the server-authoritative position outside the station.
   async launch({ keepAutoPilot = false } = {}) {
     const station =
       this.state.world.stations.find((s) => s.name === this.state.dockedStation) ||
@@ -223,7 +224,7 @@ export class App {
     if (!station) return;
     if (this.autoPilot && !keepAutoPilot) this.toggleAutoPilot();
     this.player.suppressAutoRecall = true;
-    // Fade to black, then reappear at the station itself and fly out of it.
+    // Fade to black while the server places the ship just outside dock range.
     this.player.docking.setFade(true);
     await new Promise((resolve) => setTimeout(resolve, 900));
     const launched = await this.ship.doWarp(null, {
@@ -232,7 +233,7 @@ export class App {
       silent: true,
       noFx: true,
     });
-    if (launched) this.player.startUndock(station);
+    if (launched) this.player.startUndock();
     else this.player.suppressAutoRecall = false;
     this.player.docking.setFade(false);
     return launched;
@@ -348,23 +349,22 @@ export class App {
     if (this.autoPilot) {
       this.lastAutoTick = 0;
       this.autoLog = [];
-      this._prevAutoState = { minerals: { ...this.state.minerals }, isk: this.state.isk, combat: this.state.combat, world: { asteroids: this.state.world.asteroids, belts: this.state.world.belts }, system: this.state.system };
+      this._prevAutoState = { minerals: { ...this.state.minerals }, materials: { ...this.state.materials }, combat: this.state.combat, world: { asteroids: this.state.world.asteroids, belts: this.state.world.belts }, system: this.state.system };
       const w = this.state.world;
-      const prices = w.prices || {};
       const oreBelts = new Set(w.asteroids.filter((a) => a.amount > 0).map((a) => a.beltId));
       const beltCount = oreBelts.size;
       let totalOre = 0;
-      let totalValue = 0;
+      const oreTypes = new Set();
       for (const a of w.asteroids) {
         if (a.amount <= 0) continue;
         totalOre += a.amount;
-        totalValue += a.amount * (prices[a.mineral] || 0);
+        oreTypes.add(a.mineral);
       }
       const ship = this.state.activeShip;
       const playerHP = ship ? (ship.shield + ship.hull) : 0;
       const safeRats = w.enemies.filter((e) => e.alive && (e.shield + e.hull) < playerHP * 0.5).length;
       const parts = [];
-      if (next !== 'hunt') parts.push(`${beltCount} belt(s) [${Math.round(totalOre)} ore ~${Math.round(totalValue)} cr]`);
+      if (next !== 'hunt') parts.push(`${beltCount} belt(s) [${Math.round(totalOre)} ore across ${oreTypes.size} types]`);
       if (next !== 'mine') parts.push(`${safeRats} safe rat(s)`);
       this.toast(`Auto [${next.replace('_', '+')}]: ${parts.join(', ') || 'nothing to do'}`);
     } else {

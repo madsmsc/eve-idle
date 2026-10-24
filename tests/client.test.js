@@ -410,6 +410,29 @@ describe('Player auto-recall', () => {
   });
 });
 
+describe('Player undocking', () => {
+  test('launch uses the server launch position and accepts destinations immediately', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const app = {
+      constants: { worldSize: 8000, dockRange: 260 },
+      state: { activeShip: { x: 1260, y: 1000 } },
+      undocking: true,
+    };
+    const player = new Player(app);
+    player.x = 1000;
+    player.y = 1000;
+    player.undock = { t: 1 };
+
+    player.startUndock();
+    assert.equal(player.x, 1260);
+    assert.equal(player.y, 1000);
+    assert.equal(app.undocking, false);
+    assert.equal(player.undock, null);
+    player.setDestination(3000, 2500);
+    assert.deepEqual(player.destination, { x: 3000, y: 2500 });
+  });
+});
+
 describe('Player target orbit', () => {
   test('slowly orbits a selected rat during and outside combat', async () => {
     const { Player } = await import('../public/core/player.js');
@@ -525,11 +548,11 @@ describe('Player target orbit', () => {
 });
 
 describe('Inventory grid stacks', () => {
-  test('ore uses one unlimited stack and grid capacity grows with loot items', async () => {
+  test('materials use one stack and grid capacity grows with loot items', async () => {
     const { InventoryNode } = await import('../public/ui/inventory.js');
     const app = {
       state: {
-        minerals: { iron: 1000000 },
+        materials: { iron: 1000000 },
         loot: Array.from({ length: 30 }, (_, index) => ({
           id: `loot-${index}`,
           name: `Module ${index}`,
@@ -537,11 +560,11 @@ describe('Inventory grid stacks', () => {
           tier: 1,
         })),
       },
-      catalog: { minerals: { iron: {} } },
+      catalog: { minerals: { iron: {} }, components: {} },
     };
     const inventory = new InventoryNode(app);
     const { cells, total } = inventory.buildCells();
-    assert.equal(cells.filter((cell) => cell.kind === 'ore').length, 1);
+    assert.equal(cells.filter((cell) => cell.kind === 'material').length, 1);
     assert.equal(cells[0].count, 1000000);
     assert.equal(cells.filter((cell) => cell.kind === 'loot').length, 30);
     assert.equal(total, 36);

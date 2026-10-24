@@ -133,10 +133,7 @@ export class Input {
       const el = ev.target.closest('[data-action]');
       if (!el) return;
       const a = el.dataset.action;
-      if (a === 'sell-all') app.doAction('sell-all', {});
-      else if (a === 'buy-ship') app.doAction('buy-ship', { type: el.dataset.type });
-      else if (a === 'set-active') app.doAction('set-active', { shipId: el.dataset.id });
-      else if (a === 'sell-ship') app.doAction('sell-ship', { shipId: el.dataset.id });
+      if (a === 'set-active') app.doAction('set-active', { shipId: el.dataset.id });
       else if (a === 'fit-module') app.doAction('fit-module', { shipId: el.dataset.ship, slotType: el.dataset.slot, slotIndex: Number(el.dataset.index), tier: Number(el.dataset.tier) });
       else if (a === 'save-fitting-preset') app.doAction('save-fitting-preset', { name: document.getElementById('fitting-preset-name').value });
       else if (a === 'apply-fitting-preset' || a === 'delete-fitting-preset') {
@@ -144,9 +141,9 @@ export class Input {
         if (name) app.doAction(a, { name });
       }
       else if (a === 'train-skill') app.doAction('train-skill', { skill: el.dataset.skill });
-      else if (a === 'buy-drone') app.doAction('buy-drone', { type: el.dataset.type, tier: Number(el.dataset.tier) });
+      else if (a === 'buy-blueprint') app.doAction('buy-blueprint', { kind: el.dataset.kind, type: el.dataset.type, tier: el.dataset.tier ? Number(el.dataset.tier) : null });
+      else if (a === 'exchange-items') app.doAction('exchange-items', { family: el.dataset.family, item: el.dataset.item, amount: Number(el.dataset.amount) });
       else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
-      else if (a === 'sell-loot') app.doAction('sell-loot', { lootId: el.dataset.loot });
       else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
       else if (a === 'craft-module') app.doAction('craft-module', { slotType: el.dataset.slot, tier: Number(el.dataset.tier) });
       else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type });
@@ -171,12 +168,10 @@ export class Input {
       const el = ev.target.closest('button[data-action]');
       if (!el || el.disabled) return;
       const a = el.dataset.action;
-      if (a === 'deposit') app.doAction('deposit', { mineral: el.dataset.mineral, amount: el.dataset.amount });
+      if (a === 'deposit-all') app.doAction('deposit-all', {});
+      else if (a === 'deposit') app.doAction('deposit', { mineral: el.dataset.mineral, amount: el.dataset.amount });
       else if (a === 'withdraw') app.doAction('withdraw', { mineral: el.dataset.mineral, amount: el.dataset.amount });
       else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
-      else if (a === 'sell-mineral') app.doAction('sell-minerals', { mineral: el.dataset.mineral, amount: el.dataset.amount });
-      else if (a === 'sell-all') app.doAction('sell-all', {});
-      else if (a === 'sell-loot') app.doAction('sell-loot', { lootId: el.dataset.loot });
       else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
     };
     document.getElementById('inventory').addEventListener('click', onInventoryClick);

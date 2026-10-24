@@ -80,6 +80,20 @@ describe('world generation', () => {
     }
   });
 
+  test('a market module is added to inventory and can be fitted in its dedicated slot', () => {
+    const s = fresh();
+    const tier = cfg.MODULES.miningDrone.tiers[0];
+    const purchased = game.buyModule(s, 'miningDrone', 1);
+    assert.ok(!purchased.error, purchased.error);
+    assert.equal(purchased.state.isk, s.isk - tier.cost);
+    assert.equal(purchased.state.ships[0].fitting.miningDrone[0], 0);
+    assert.equal(purchased.state.loot[0].slotType, 'miningDrone');
+    const fitted = game.equipLoot(purchased.state, purchased.state.loot[0].id);
+    assert.ok(!fitted.error, fitted.error);
+    assert.equal(fitted.state.ships[0].fitting.miningDrone[0], 1);
+    assert.equal(game.moduleBonus(fitted.state.ships[0], 'miningDrone'), tier.bonus);
+  });
+
   test('every system has gates that link to other systems', () => {
     const s = fresh();
     for (const sys of Object.values(s.systems)) {
@@ -91,6 +105,17 @@ describe('world generation', () => {
         assert.ok(g.y >= 0 && g.y <= cfg.WORLD_SIZE);
       }
     }
+  });
+
+  test('depositAll moves every mineral to storage without selling it', () => {
+    const s = withCargo(fresh(), { iron: 150, bauxite: 60 });
+    const r = game.depositAll(s);
+    assert.ok(!r.error, r.error);
+    assert.equal(r.state.ships[0].cargo.iron, 0);
+    assert.equal(r.state.ships[0].cargo.bauxite, 0);
+    assert.equal(r.state.storage.minerals.iron, 150);
+    assert.equal(r.state.storage.minerals.bauxite, 60);
+    assert.equal(r.state.isk, s.isk);
   });
 
   test('gates are paired symmetrically (jumping back returns to the origin gate)', () => {
@@ -174,6 +199,10 @@ describe('world generation', () => {
     const state = game.createInitialState(T0, 42, 'story');
     const originalIsk = state.isk;
     state.ships[0].cargo.iron = 17;
+    state.drones = {
+      mining: Array(5).fill(3),
+      combat: Array(5).fill(3),
+    };
     for (const system of Object.values(state.systems)) {
       delete system.outposts;
       system.belts.pop();
@@ -185,6 +214,9 @@ describe('world generation', () => {
     assert.equal(state.isk, originalIsk);
     assert.equal(state.ships[0].cargo.iron, 17);
     assert.equal(state.mission.active, 'm1');
+    assert.equal(state.ships[0].fitting.miningDrone[0], 4);
+    assert.equal(state.ships[0].fitting.combatDrone[0], 4);
+    assert.deepEqual(state.drones, game.emptyDroneBay());
     for (const [id, system] of Object.entries(state.systems)) {
       assert.equal(system.outposts.length, 2);
       assert.equal(system.belts.length, 2);
@@ -417,7 +449,7 @@ describe('missions', () => {
     assert.deepEqual(s2.mission.completed, ['m6']);
     assert.equal(s2.mission.active, 'm7');
     assert.equal(s2.isk, before + cfg.MISSIONS.m6.completion.isk);
-    assert.ok((s2.drones.mining || []).some((d) => d.type === 'mining' && d.tier === 1), 'mining drone granted');
+    assert.equal(s2.ships[0].fitting.miningDrone[0], 1, 'Mining Drone Control module fitted');
   });
 });
 
@@ -1036,6 +1068,17 @@ describe('fitting slots', () => {
     const after = game.engage(s2, e2.id, T0).state.combat.playerDps;
     assert.ok(after > before, 'fitted weapon raises DPS');
     assert.ok(Math.abs((after - before) - cfg.MODULES.weapon.tiers[2].bonus) < 1e-6);
+  });
+
+  test('a combat drone control module raises ship DPS in a fight', () => {
+    const s = fresh();
+    const e = sys(s).enemies[0];
+    s.ships[0].x = e.x;
+    s.ships[0].y = e.y;
+    const fitted = game.fitModule(s, shipId(s), 'combatDrone', 0, 1).state;
+    const combat = game.engage(fitted, e.id, T0).state.combat;
+    const expected = cfg.SHIPS.rifter.dps + cfg.MODULES.combatDrone.tiers[0].bonus;
+    assert.equal(combat.playerDps, expected);
   });
 
   test('a shield module raises the ship shield in a fight', () => {

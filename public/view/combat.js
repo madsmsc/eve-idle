@@ -71,7 +71,9 @@ export class CombatNode extends Node {
     const cx = this.app.canvas.width / 2;
     const cy = this.app.canvas.height / 2;
 
-    const combatDrones = state.drones && state.drones.combat ? state.drones.combat.length : 0;
+    const combatDrones = state.activeShip
+      ? (state.activeShip.fitting.combatDrone || []).filter((tier) => tier > 0).length
+      : 0;
     const nDrones = Math.min(combatDrones, 6);
     const hasLaser = !!(state.activeShip && (state.activeShip.fitting.weapon || []).some((t) => t > 0));
     const orbitR = 48 * this.app.camera.zoom;

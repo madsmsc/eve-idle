@@ -12,7 +12,7 @@ const MIN_CELLS = 24;
 export class InventoryNode extends Node {
   constructor(app) {
     super(app);
-    this.selected = null; // 'ore:<mineral>' | 'loot:<id>'
+    this.selected = null;
     this.filter = 'all';
     this.statsTimer = 0;
   }
@@ -39,7 +39,7 @@ export class InventoryNode extends Node {
   }
 
   setFilter(filter) {
-    if (!['all', 'ore', 'loot'].includes(filter)) throw new Error(`Unknown cargo filter: ${filter}`);
+    if (!['all', 'ore', 'components', 'loot', 'blueprints'].includes(filter)) throw new Error(`Unknown cargo filter: ${filter}`);
     this.filter = filter;
     document.querySelectorAll('[data-cargo-filter]').forEach((button) => {
       button.classList.toggle('active', button.dataset.cargoFilter === filter);
@@ -56,7 +56,6 @@ export class InventoryNode extends Node {
     const shield = state.combat ? state.combat.shipShield : ship.shield;
     const hull = state.combat ? state.combat.shipHull : ship.hull;
     const speed = player ? Math.hypot(player.vx, player.vy) : 0;
-    const drones = state.drones || { mining: [], combat: [] };
     const rows = [
       ['⛏ Mining', `${ship.mining.toFixed(1)}/s`],
       ['⚔ DPS', fmt(ship.dps)],
@@ -65,9 +64,6 @@ export class InventoryNode extends Node {
       ['🛡 Shield', `${Math.ceil(shield)} / ${fmt(ship.shield)}`],
       ['🧱 Hull', `${Math.ceil(hull)} / ${fmt(ship.hull)}`],
     ];
-    if (drones.mining.length + drones.combat.length) {
-      rows.push(['🤖 Drones', `${drones.mining.length}⛏ / ${drones.combat.length}⚔`]);
-    }
     for (const [label, value] of rows) {
       const stat = document.createElement('div');
       stat.className = 'char-stat';
@@ -107,7 +103,8 @@ export class InventoryNode extends Node {
         const buttons = [0, 1, 2, 3, 4].map((tier) => {
           const label = tier === 4 ? 'Faction' : ROMAN[tier];
           const active = t === tier ? ' active' : '';
-          return `<button class="mini fit-btn${active}" data-action="fit-module" data-ship="${ship.id}" data-slot="${slotType}" data-index="${i}" data-tier="${tier}" data-testid="fit-${slotType}-${i}-t${tier}" ${state.docked ? '' : 'disabled'}>${label}</button>`;
+          const available = tier === 0 || tier === t || (state.loot || []).some((item) => item.slotType === slotType && item.tier === tier);
+          return `<button class="mini fit-btn${active}" data-action="fit-module" data-ship="${ship.id}" data-slot="${slotType}" data-index="${i}" data-tier="${tier}" data-testid="fit-${slotType}-${i}-t${tier}" ${state.docked && available ? '' : 'disabled'}>${label}</button>`;
         }).join('');
         const row = document.createElement('div');
         row.className = 'row';
@@ -115,37 +112,32 @@ export class InventoryNode extends Node {
         el.appendChild(row);
       }
     }
-    const drones = state.drones || { mining: [], combat: [] };
-    for (const droneType of Object.keys(catalog.drones || {})) {
-      const def = catalog.drones[droneType];
-      const owned = drones[droneType] || [];
-      if (!owned.length) continue;
-      for (let i = 0; i < owned.length; i++) {
-        const tier = owned[i];
-        const tierName = def.tiers[tier - 1] ? `Tier ${ROMAN[tier] || tier}` : `Tier ${tier}`;
-        const bonus = def.tiers[tier - 1] ? def.tiers[tier - 1].bonus : 0;
-        const row = document.createElement('div');
-        row.className = 'row';
-        row.innerHTML = `<span class="label">${def.name} <span class="sub">${tierName} (+${bonus})</span></span><span class="actions"><span class="sub">drone</span></span>`;
-        el.appendChild(row);
-      }
-    }
   }
 
-  // Ore stacks first (one square per mineral), then looted modules, then
-  // empty squares up to a full row of the grid.
+  // Material stacks and itemized blueprints share the inventory grid.
   buildCells() {
     const { state, catalog } = this.app;
     const cells = [];
-    if (this.filter !== 'loot') {
+    if (['all', 'ore'].includes(this.filter)) {
       for (const key of Object.keys(catalog.minerals)) {
-        const amt = Math.floor(state.minerals[key] || 0);
-        if (amt > 0) cells.push({ kind: 'ore', key, select: `ore:${key}`, count: amt });
+        const amt = Math.floor(state.materials[key] || 0);
+        if (amt > 0) cells.push({ kind: 'material', key, select: `item:${key}`, count: amt });
       }
     }
-    if (this.filter !== 'ore') {
+    if (['all', 'components'].includes(this.filter)) {
+      for (const key of Object.keys(catalog.components)) {
+        const amt = Math.floor(state.materials[key] || 0);
+        if (amt > 0) cells.push({ kind: 'material', key, select: `item:${key}`, count: amt });
+      }
+    }
+    if (['all', 'loot'].includes(this.filter)) {
       for (const l of state.loot || []) {
         cells.push({ kind: 'loot', key: l.id, select: `loot:${l.id}`, loot: l });
+      }
+    }
+    if (['all', 'blueprints'].includes(this.filter)) {
+      for (const blueprint of state.blueprints || []) {
+        cells.push({ kind: 'blueprint', key: blueprint.id, select: `blueprint:${blueprint.id}`, blueprint });
       }
     }
     const total = Math.max(MIN_CELLS, cells.length);
@@ -159,8 +151,8 @@ export class InventoryNode extends Node {
     usage.textContent = `${fmt(state.cargoUsed)}/${fmt(state.cargoCapacity)}${state.cargoFull ? ' (FULL)' : ''}`;
     const { cells, total } = this.buildCells();
     if (this.selected && !cells.some((c) => c.select === this.selected)) this.selected = null;
-    const sellAll = document.querySelector('[data-testid="inv-sell-all"]');
-    sellAll.disabled = !state.docked || state.cargoUsed <= 0;
+    const storeAll = document.querySelector('[data-testid="inv-deposit-all"]');
+    storeAll.disabled = !state.docked || state.cargoUsed <= 0;
 
     grid.innerHTML = '';
     grid.style.gridTemplateColumns = `repeat(${COLUMNS}, 1fr)`;
@@ -169,20 +161,29 @@ export class InventoryNode extends Node {
       const div = document.createElement('div');
       if (!c) {
         div.className = 'inv-cell empty';
-      } else if (c.kind === 'ore') {
-        const def = catalog.minerals[c.key];
-        div.className = 'inv-cell ore';
-        div.style.setProperty('--cell-color', def.color);
-        div.title = `${def.name} ×${fmt(state.minerals[c.key])}`;
-        div.innerHTML = `<span class="cell-name">${def.name.slice(0, 4)}</span><span class="cell-count">${fmt(c.count)}</span>`;
+      } else if (c.kind === 'material') {
+        const def = catalog.minerals[c.key] || catalog.components[c.key];
+        div.className = `inv-cell ${catalog.minerals[c.key] ? 'ore' : 'module'}`;
+        if (def.color) div.style.setProperty('--cell-color', def.color);
+        div.title = `${def.name} ×${fmt(c.count)}`;
+        div.innerHTML = `<span class="cell-name">${def.name.slice(0, 6)}</span><span class="cell-count">${fmt(c.count)}</span>`;
         div.dataset.testid = `inv-cell-${c.key}`;
-      } else {
+      } else if (c.kind === 'loot') {
         const l = c.loot;
         const mod = catalog.modules[l.slotType];
         div.className = 'inv-cell module';
         div.title = `${l.name} · Tier ${ROMAN[l.tier] || l.tier}`;
         div.innerHTML = `<span class="cell-name">${(mod ? mod.name : l.slotType).slice(0, 6)}</span><span class="cell-count">${ROMAN[l.tier] || l.tier}</span>`;
         div.dataset.testid = `inv-cell-${l.id}`;
+      } else {
+        const blueprint = c.blueprint;
+        const name = blueprint.kind === 'module'
+          ? catalog.blueprints[blueprint.type][blueprint.tier].name
+          : catalog.shipBlueprints[blueprint.type].name;
+        div.className = 'inv-cell module';
+        div.title = `${name} Blueprint`;
+        div.innerHTML = `<span class="cell-name">${name.slice(0, 6)}</span><span class="cell-count">BP</span>`;
+        div.dataset.testid = `inv-cell-${blueprint.id}`;
       }
       if (c) {
         div.dataset.cell = c.select;
@@ -209,37 +210,51 @@ export class InventoryNode extends Node {
       return;
     }
     const [kind, id] = this.selected.split(':');
-    if (kind === 'ore') {
-      const def = catalog.minerals[id];
-      const amt = state.minerals[id] || 0;
-      const price = (state.world && state.world.prices && state.world.prices[id]) || def.price;
+    if (kind === 'item') {
+      const def = catalog.minerals[id] || catalog.components[id];
+      const amt = (state.materials && state.materials[id]) || 0;
       const row = document.createElement('div');
       row.className = 'row';
       row.innerHTML = `
-        <span class="label"><span class="dot" style="width:9px;height:9px;border-radius:50%;background:${def.color};display:inline-block"></span>${def.name} <span class="sub">${fmt(amt)} · ${price} ISK/u</span></span>
+        <span class="label">${def.name} <span class="sub">${fmt(amt)} in ship cargo</span></span>
         <span class="actions">
-          <button class="mini" data-action="sell-mineral" data-mineral="${id}" data-amount="100" data-testid="inv-sell-${id}-100" ${docked && amt > 0 ? '' : 'disabled'}>Sell 100</button>
-          <button class="mini" data-action="sell-mineral" data-mineral="${id}" data-amount="all" data-testid="inv-sell-${id}-all" ${docked && amt > 0 ? '' : 'disabled'}>Sell all</button>
           <button class="mini" data-action="deposit" data-mineral="${id}" data-amount="100" data-testid="inv-deposit-${id}-100" ${docked && amt > 0 ? '' : 'disabled'}>Deposit 100</button>
           <button class="mini" data-action="deposit" data-mineral="${id}" data-amount="all" data-testid="inv-deposit-${id}-all" ${docked && amt > 0 ? '' : 'disabled'}>All</button>
         </span>`;
       el.appendChild(row);
-      if (!docked) note('Dock at a station to deposit cargo into quantum storage.');
+      if (!docked) note('Dock at any station to store or exchange materials.');
       return;
     }
-    const loot = (state.loot || []).find((l) => l.id === id);
-    if (!loot) return;
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.innerHTML = `
-      <span class="label">${loot.name} <span class="sub">Tier ${ROMAN[loot.tier] || loot.tier}</span></span>
-      <span class="actions">
-        <button class="mini" data-action="equip-loot" data-loot="${loot.id}" data-testid="inv-equip-${loot.id}" ${docked ? '' : 'disabled'}>Equip</button>
-        <button class="mini" data-action="sell-loot" data-loot="${loot.id}" data-testid="inv-sell-loot-${loot.id}" ${docked ? '' : 'disabled'}>Sell</button>
-        <button class="mini" data-action="refine-loot" data-loot="${loot.id}" data-testid="inv-refine-loot-${loot.id}" ${docked ? '' : 'disabled'}>Refine</button>
-      </span>`;
-    el.appendChild(row);
-    if (!docked) note('Dock at a station to equip this module.');
+    if (kind === 'loot') {
+      const loot = (state.loot || []).find((item) => item.id === id);
+      if (!loot) return;
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `
+        <span class="label">${loot.name} <span class="sub">Tier ${ROMAN[loot.tier] || loot.tier}</span></span>
+        <span class="actions">
+          <button class="mini" data-action="equip-loot" data-loot="${loot.id}" data-testid="inv-equip-${loot.id}" ${docked ? '' : 'disabled'}>Equip</button>
+          <button class="mini" data-action="refine-loot" data-loot="${loot.id}" data-testid="inv-refine-loot-${loot.id}" ${docked ? '' : 'disabled'}>Salvage</button>
+        </span>`;
+      el.appendChild(row);
+      if (!docked) note('Dock at a station to equip or salvage this module.');
+      return;
+    }
+    if (kind === 'blueprint') {
+      const blueprint = (state.blueprints || []).find((item) => item.id === id);
+      if (!blueprint) return;
+      const action = blueprint.kind === 'module' ? 'craft-module' : 'craft-ship';
+      const def = blueprint.kind === 'module'
+        ? catalog.blueprints[blueprint.type][blueprint.tier]
+        : catalog.shipBlueprints[blueprint.type];
+      const recipe = def.recipe;
+      const label = blueprint.kind === 'module' ? `${def.name} Blueprint` : `${def.name} Blueprint`;
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `<span class="label">${label}<span class="sub">Manufacturing: ${Object.entries(recipe).map(([key, amount]) => `${amount} ${(catalog.minerals[key] || catalog.components[key]).name}`).join(' + ')}</span></span><span class="actions"><button class="mini" data-action="${action}" data-slot="${blueprint.type}" data-tier="${blueprint.tier}" data-type="${blueprint.type}" ${docked ? '' : 'disabled'}>Manufacture</button></span>`;
+      el.appendChild(row);
+      return;
+    }
   }
 
   renderStorage() {
@@ -247,7 +262,7 @@ export class InventoryNode extends Node {
     const docked = !!state.docked;
     const el = document.getElementById('inv-storage');
     el.innerHTML = '';
-    const stored = (state.storage && state.storage.minerals) || {};
+    const stored = (state.storage && state.storage.items) || {};
     const total = Object.values(stored).reduce((a, b) => a + b, 0);
     if (!docked) {
       const note = document.createElement('div');
@@ -259,18 +274,19 @@ export class InventoryNode extends Node {
     if (total <= 0) {
       const note = document.createElement('div');
       note.className = 'row';
-      note.innerHTML = '<span class="sub">Storage is empty. Deposit ore from the Inventory to keep it safe between trips.</span>';
+      note.innerHTML = '<span class="sub">Storage is empty. Store ore and components here to keep them safe between trips.</span>';
       el.appendChild(note);
       return;
     }
-    for (const key of Object.keys(this.app.catalog.minerals)) {
-      const def = this.app.catalog.minerals[key];
+    const definitions = { ...this.app.catalog.minerals, ...this.app.catalog.components };
+    for (const key of Object.keys(definitions)) {
+      const def = definitions[key];
       const amt = stored[key] || 0;
       if (amt <= 0) continue;
       const row = document.createElement('div');
       row.className = 'row';
       row.innerHTML = `
-        <span class="label"><span class="dot" style="width:9px;height:9px;border-radius:50%;background:${def.color};display:inline-block"></span>${def.name} <span class="sub">${fmt(amt)}</span></span>
+        <span class="label">${def.name} <span class="sub">${fmt(amt)}</span></span>
         <span class="actions">
           <button class="mini" data-action="withdraw" data-mineral="${key}" data-amount="100" data-testid="inv-withdraw-${key}-100">Withdraw 100</button>
           <button class="mini" data-action="withdraw" data-mineral="${key}" data-amount="all" data-testid="inv-withdraw-${key}-all">All</button>

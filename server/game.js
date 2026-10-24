@@ -14,34 +14,31 @@ const {
   MODULES,
   SHIP_BLUEPRINTS,
   MINERALS,
+  COMPONENTS,
+  ORE_EXCHANGE,
+  COMPONENT_EXCHANGE,
+  BLUEPRINT_COSTS,
+  NPC_BLUEPRINTS,
+  BLUEPRINT_DROP_CHANCE,
+  BLUEPRINT_DROP_POOLS,
+  SHIP_PROGRESSION,
   ENEMIES,
   ENEMY_TIERS,
   spawnTable,
-  START_ISK,  START_STORY_ISK,
   MODES,
   MAX_OFFLINE_SECONDS,
-  INSURANCE_FRACTION,
-  SHIELD_BOOST_COST,
+  SHIELD_BOOST_ITEM,
   SHIELD_BOOST_COOLDOWN,
-  OVERLOAD_COST,
+  OVERLOAD_ITEM,
   OVERLOAD_DPS_MULT,
   OVERLOAD_DURATION,
   OVERLOAD_COOLDOWN,
   SKILLS,
   SP_RATE_PER_SEC,
-  SP_PER_KILL,
   ACHIEVEMENTS,
   AGENT_MISSIONS,
   AGENT_MISSION_COOLDOWN_MS,
-  FACTIONS,
-  SYSTEM_FACTION,
-  STANDING_MIN,
-  STANDING_MAX,
-  STANDING_PER_KILL,
-  STANDING_PER_DEATH,
-  STANDING_PRICE_MOD,
   AMBUSH_BASE_CHANCE,
-  AMBUSH_STANDING_MOD,
   AMBUSH_MIN_CHANCE,
   AMBUSH_MAX_CHANCE,
   DRONES,
@@ -99,8 +96,8 @@ function advanceAgentMission(state, type, amount, enemyType) {
   current.status = 'complete';
   current.completedAt = Date.now();
   state.agentMissionCompletedAt = current.completedAt;
-  state.isk += def.reward;
-  state.stats.totalIskEarned = (state.stats.totalIskEarned || 0) + def.reward;
+  const missionDef = AGENT_MISSIONS.find((mission) => mission.key === current.key);
+  addStoredItems(state, missionDef && missionDef.rewardItems);
   state.stats.agentMissionsCompleted = (state.stats.agentMissionsCompleted || 0) + 1;
 }
 
@@ -129,7 +126,7 @@ function clone(s) {
 // fitted module, multiplied by trained skills. There is no level/upgrade system:
 // ships are what they are, and modules (or better ships) are how you get stronger.
 function shipMining(ship, mults, drone = 0) {
-  return (SHIPS[ship.type].mining + moduleBonus(ship, 'mining') + drone) *
+  return (SHIPS[ship.type].mining + moduleBonus(ship, 'mining') + moduleBonus(ship, 'miningDrone') + drone) *
     (mults ? mults.mining : 1) * MINING_RATE_MULTIPLIER;
 }
 function miningRange(ship) {
@@ -139,7 +136,7 @@ function shipCombat(ship) {
   return SHIPS[ship.type].combat;
 }
 function shipDps(ship, mults, drone = 0) {
-  return (SHIPS[ship.type].dps + moduleBonus(ship, 'weapon') + drone) * (mults ? mults.dps : 1);
+  return (SHIPS[ship.type].dps + moduleBonus(ship, 'weapon') + moduleBonus(ship, 'combatDrone') + drone) * (mults ? mults.dps : 1);
 }
 function shipShield(ship, mults) {
   return (SHIPS[ship.type].shield + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1);
@@ -175,7 +172,7 @@ function emptyFitting(type) {
 // The combined multiplier each trained skill applies to a stat. Skills are
 // player-level, so the same multipliers apply to every ship.
 function skillMults(state) {
-  const m = { mining: 1, cargo: 1, dps: 1, shield: 1, hull: 1, reward: 1 };
+  const m = { mining: 1, cargo: 1, dps: 1, shield: 1, hull: 1 };
   const skills = state.skills || {};
   for (const key of Object.keys(SKILLS)) {
     const def = SKILLS[key];
@@ -221,6 +218,7 @@ function saveFittingPreset(state, name) {
 
 function applyFittingPreset(state, name) {
   const s = clone(state);
+  if (!Array.isArray(s.loot)) s.loot = [];
   const ship = s.ships.find((item) => item.id === s.activeShipId);
   if (!ship) return { error: 'No active ship' };
   if (shipInCombat(s, ship.id)) return { error: 'Cannot change fittings during combat' };
@@ -228,21 +226,48 @@ function applyFittingPreset(state, name) {
   if (!preset) return { error: 'Fitting preset not found for this ship' };
   if (preset.shipType !== ship.type) return { error: 'Fitting preset is for a different ship type' };
   const slots = SHIPS[ship.type].slots;
-  let priceDelta = 0;
   for (const [slotType, count] of Object.entries(slots)) {
     const mod = MODULES[slotType];
-    const current = (ship.fitting && ship.fitting[slotType]) || [];
     const next = preset.fitting[slotType];
     if (!Array.isArray(next) || next.length !== count) return { error: 'Fitting preset is invalid' };
     for (let i = 0; i < count; i++) {
       const tier = next[i];
       if (!Number.isInteger(tier) || tier < 0 || tier > mod.tiers.length) return { error: 'Fitting preset is invalid' };
-      const oldTier = current[i] || 0;
-      priceDelta += (tier ? mod.tiers[tier - 1].cost : 0) - (oldTier ? mod.tiers[oldTier - 1].cost : 0);
     }
   }
-  if (priceDelta > s.isk) return { error: `Not enough ISK (need ${priceDelta}, have ${Math.floor(s.isk)})` };
-  s.isk -= priceDelta;
+  const requiredModules = {};
+  for (const [slotType, count] of Object.entries(slots)) {
+    const before = (ship.fitting && ship.fitting[slotType]) || [];
+    const after = preset.fitting[slotType];
+    for (let i = 0; i < count; i++) {
+      const tier = after[i] || 0;
+      if (tier !== (before[i] || 0) && tier > 0) {
+        const key = `${slotType}:${tier}`;
+        requiredModules[key] = (requiredModules[key] || 0) + 1;
+      }
+    }
+  }
+  for (const [key, count] of Object.entries(requiredModules)) {
+    const [slotType, tier] = key.split(':');
+    if (moduleSkillError(s, slotType, Number(tier))) return { error: moduleSkillError(s, slotType, Number(tier)) };
+    const have = (s.loot || []).filter((item) => item.slotType === slotType && item.tier === Number(tier)).length;
+    if (have < count) return { error: `Not enough ${MODULES[slotType].name} Tier ${tier} modules in inventory` };
+  }
+  for (const [slotType, count] of Object.entries(slots)) {
+    const before = (ship.fitting && ship.fitting[slotType]) || [];
+    const after = preset.fitting[slotType];
+    for (let i = 0; i < count; i++) {
+      const oldTier = before[i] || 0;
+      const nextTier = after[i] || 0;
+      if (nextTier !== oldTier && nextTier > 0) {
+        const idx = s.loot.findIndex((item) => item.slotType === slotType && item.tier === nextTier);
+        s.loot.splice(idx, 1);
+      }
+      if (nextTier !== oldTier && oldTier > 0) {
+        s.loot.push({ id: nextId(), slotType, tier: oldTier });
+      }
+    }
+  }
   ship.fitting = clone(preset.fitting);
   return { state: s };
 }
@@ -263,10 +288,15 @@ function craftShip(state, type) {
   const active = s.ships.find((sh) => sh.id === s.activeShipId);
   const sys = activeSystem(s);
   if (!active || !sys) return { error: 'No active ship' };
-  for (const [mineral, amount] of Object.entries(blueprint.recipe)) {
-    if ((active.cargo[mineral] || 0) < amount) return { error: `Need ${amount} ${MINERALS[mineral].name} to craft` };
-  }
-  for (const [mineral, amount] of Object.entries(blueprint.recipe)) active.cargo[mineral] -= amount;
+  const skillError = shipSkillError(s, type);
+  if (skillError) return { error: skillError };
+  const blueprintIndex = (s.blueprints || []).findIndex((item) =>
+    item.kind === 'ship' && item.type === type
+  );
+  if (blueprintIndex < 0) return { error: `You need a ${blueprint.name} blueprint` };
+  if (!hasMaterials(s, blueprint.recipe)) return { error: `Need ore and components to build ${blueprint.name}` };
+  consumeMaterials(s, blueprint.recipe);
+  s.blueprints.splice(blueprintIndex, 1);
   const ship = {
     id: nextId(),
     type,
@@ -296,30 +326,77 @@ function emptyDroneBay() {
 function droneBonus(state, droneType) {
   const def = DRONES[droneType];
   const bay = state && state.drones && state.drones[droneType];
+  const active = state && state.ships && state.ships.find((ship) => ship.id === state.activeShipId);
+  const fittedSlot = droneType === 'mining' ? 'miningDrone' : 'combatDrone';
+  if (active && active.fitting && active.fitting[fittedSlot] && active.fitting[fittedSlot].some((tier) => tier > 0)) return 0;
   if (!def || !Array.isArray(bay)) return 0;
   return bay.reduce((sum, t) => sum + (t > 0 ? def.tiers[t - 1].bonus : 0), 0);
 }
-// Buy a drone of the given type and tier and add it to the bay. Drones are
-// player-level: they apply to whichever ship you are flying and survive death.
-function buyDrone(state, droneType, tier) {
-  const def = DRONES[droneType];
-  if (!def) return { error: `Unknown drone type: ${droneType}` };
-  if (!Number.isInteger(tier) || tier < 1 || tier > def.tiers.length) {
-    return { error: `Invalid drone tier: ${tier}` };
+function buyBlueprint(state, kind, type, tier = null) {
+  if (kind !== 'module' && kind !== 'ship') return { error: `Unknown blueprint type: ${kind}` };
+  const key = kind === 'module' ? `module:${type}:${tier}` : `ship:${type}`;
+  const recipe = BLUEPRINT_COSTS[key];
+  if (!recipe) return { error: `Unknown ${kind} blueprint: ${type}` };
+  if (!NPC_BLUEPRINTS.includes(key)) {
+    return { error: 'This blueprint is not sold by NPCs; higher-tier blueprints are found as rat loot' };
   }
-  if (!isDocked(state)) return { error: 'Dock at a station to trade' };
+  if (kind === 'module' && (!Number.isInteger(tier) || !MODULES[type].tiers[tier - 1])) {
+    return { error: `Invalid module tier: ${tier}` };
+  }
+  if (!isDocked(state)) return { error: 'Dock at any station to trade blueprints' };
   const s = clone(state);
-  if (!s.drones) s.drones = emptyDroneBay();
-  if (s.drones[droneType].length >= DRONE_MAX_PER_TYPE) {
-    return { error: `Drone bay full (max ${DRONE_MAX_PER_TYPE} ${def.name}s)` };
-  }
-  const cost = def.tiers[tier - 1].cost;
-  if (s.isk < cost) {
-    return { error: `Not enough ISK (need ${cost}, have ${Math.floor(s.isk)})` };
-  }
-  s.isk -= cost;
-  s.drones[droneType].push(tier);
+  if (!consumeMaterials(s, recipe)) return { error: 'Not enough ore and components for this blueprint' };
+  if (!Array.isArray(s.blueprints)) s.blueprints = [];
+  s.blueprints.push({ id: nextId(), kind, type, tier });
   return { state: s };
+}
+
+function exchangeItems(state, family, item, amount) {
+  const ladder = family === 'ore' ? ORE_EXCHANGE : family === 'components' ? COMPONENT_EXCHANGE : null;
+  if (!ladder) return { error: `Unknown exchange family: ${family}` };
+  const index = ladder.indexOf(item);
+  if (index < 0 || index === ladder.length - 1) return { error: 'That item cannot be exchanged upward' };
+  const count = Number(amount);
+  if (!Number.isInteger(count) || count < 3 || count % 3 !== 0) {
+    return { error: 'Exchange quantity must be a positive multiple of 3' };
+  }
+  if (!isDocked(state)) return { error: 'Dock at any station to exchange items' };
+  const s = clone(state);
+  if (!consumeMaterials(s, { [item]: count })) return { error: `Not enough ${materialDefinition(item).name}` };
+  addStoredItems(s, { [ladder[index + 1]]: count / 3 });
+  return { state: s };
+}
+
+function moduleSkillKey(slotType) {
+  return {
+    weapon: 'gunnery',
+    shield: 'shieldUpgrades',
+    armor: 'hullUpgrades',
+    mining: 'miningYield',
+    cargo: 'cargoManagement',
+    range: 'gunnery',
+    miningDrone: 'miningYield',
+    combatDrone: 'gunnery',
+  }[slotType];
+}
+
+function moduleSkillError(state, slotType, tier) {
+  const skill = moduleSkillKey(slotType);
+  const required = Math.max(0, tier - 1);
+  const current = (state.skills && state.skills[skill]) || 0;
+  return current < required ? `Requires ${SKILLS[skill].name} level ${required}` : null;
+}
+
+function shipSkillError(state, type) {
+  const progression = SHIP_PROGRESSION.flatMap((tier) => tier.ships).find((ship) => ship.type === type);
+  if (!progression) return null;
+  for (const requirement of progression.skills) {
+    const current = (state.skills && state.skills[requirement.skill]) || 0;
+    if (current < requirement.level) {
+      return `Requires ${SKILLS[requirement.skill].name} level ${requirement.level}`;
+    }
+  }
+  return null;
 }
 
 // ---- loot drops ----
@@ -340,7 +417,10 @@ function equipLoot(state, lootId) {
   if (!slots[loot.slotType] || slots[loot.slotType] <= 0) {
     return { error: `Active ship has no ${mod.name} slots` };
   }
+  const skillError = moduleSkillError(s, loot.slotType, loot.tier);
+  if (skillError) return { error: skillError };
   if (!ship.fitting) ship.fitting = emptyFitting(ship.type);
+  if (!Array.isArray(s.loot)) s.loot = [];
   const arr = ship.fitting[loot.slotType];
   const free = arr.findIndex((t) => !t);
   if (free === -1) {
@@ -348,21 +428,6 @@ function equipLoot(state, lootId) {
   }
   arr[free] = loot.tier;
   s.loot.splice(idx, 1);
-  return { state: s };
-}
-
-function sellLoot(state, lootId) {
-  if (!isDocked(state)) return { error: 'Dock at a station to trade' };
-  const s = clone(state);
-  const idx = (s.loot || []).findIndex((item) => item && item.id === lootId);
-  if (idx === -1) return { error: 'Loot not found' };
-  const loot = s.loot[idx];
-  const mod = MODULES[loot.slotType];
-  if (!mod || !mod.tiers[loot.tier - 1]) return { error: 'Invalid loot module' };
-  const value = Math.floor(mod.tiers[loot.tier - 1].cost * 0.5);
-  s.loot.splice(idx, 1);
-  s.isk += value;
-  s.stats.totalIskEarned = (s.stats.totalIskEarned || 0) + value;
   return { state: s };
 }
 
@@ -375,39 +440,30 @@ function refineLoot(state, lootId) {
   if (!MODULES[loot.slotType] || !BLUEPRINTS[loot.slotType] || !BLUEPRINTS[loot.slotType][loot.tier]) {
     return { error: 'Invalid loot module' };
   }
-  const active = s.ships.find((ship) => ship.id === s.activeShipId);
-  if (!active) return { error: 'No active ship' };
-  const recipe = BLUEPRINTS[loot.slotType][loot.tier].recipe;
-  const recovered = Object.fromEntries(Object.entries(recipe).map(([key, amount]) => [key, Math.max(1, Math.floor(amount / 2))]));
-  const recoveredVolume = Object.values(recovered).reduce((total, amount) => total + amount, 0);
-  if (cargoUsed(s) + recoveredVolume > cargoCapacity(s)) return { error: 'Not enough cargo space to refine this module' };
-  for (const [key, amount] of Object.entries(recovered)) active.cargo[key] = (active.cargo[key] || 0) + amount;
+  const component = COMPONENT_EXCHANGE[loot.tier - 1];
+  if (!component) return { error: 'Invalid module tier' };
+  addStoredItems(s, { [component]: 1 });
   s.loot.splice(idx, 1);
+  s.stats.modulesSalvaged = (s.stats.modulesSalvaged || 0) + 1;
   return { state: s };
 }
 
-// Craft a module from raw minerals (see BLUEPRINTS). The ore is taken from the
-// active ship's cargo hold (you must dock and haul the ore there), and the
-// finished module goes into your loot inventory ready to equip. Crafting costs
-// ~75% of the module's ISK price in mineral value, so it beats buying when you
-// have the ore on hand.
 function craftModule(state, slotType, tier) {
   const mod = MODULES[slotType];
   if (!mod) return { error: `Unknown module type: ${slotType}` };
   if (!mod.tiers[tier - 1]) return { error: `Invalid tier: ${tier}` };
   if (!isDocked(state)) return { error: 'Dock at a station to craft' };
   const s = clone(state);
-  const active = s.ships.find((sh) => sh.id === s.activeShipId);
-  if (!active) return { error: 'No active ship' };
+  const skillError = moduleSkillError(s, slotType, tier);
+  if (skillError) return { error: skillError };
   const bp = BLUEPRINTS[slotType][tier];
-  for (const mKey of Object.keys(bp.recipe)) {
-    if ((active.cargo[mKey] || 0) < bp.recipe[mKey]) {
-      return { error: `Need ${bp.recipe[mKey]} ${MINERALS[mKey].name} to craft` };
-    }
-  }
-  for (const mKey of Object.keys(bp.recipe)) {
-    active.cargo[mKey] -= bp.recipe[mKey];
-  }
+  const blueprintIndex = (s.blueprints || []).findIndex((item) =>
+    item.kind === 'module' && item.type === slotType && item.tier === tier
+  );
+  if (blueprintIndex < 0) return { error: `You need a ${bp.name} blueprint` };
+  if (!hasMaterials(s, bp.recipe)) return { error: `Need ore and components to craft ${bp.name}` };
+  consumeMaterials(s, bp.recipe);
+  s.blueprints.splice(blueprintIndex, 1);
   if (!Array.isArray(s.loot)) s.loot = [];
   s.loot.push({ id: nextId(), slotType, tier });
   s.stats.modulesCrafted = (s.stats.modulesCrafted || 0) + 1;
@@ -423,48 +479,58 @@ function craftModule(state, slotType, tier) {
   return { state: s };
 }
 
-// ---- faction standing ----
-// A fresh, all-neutral standing (one entry per faction).
-function emptyStanding() {
-  return Object.fromEntries(Object.keys(FACTIONS).map((k) => [k, 0]));
-}
-// The faction that controls a given system (or null).
-function factionForSystem(systemId) {
-  return SYSTEM_FACTION[systemId] || null;
-}
-// Your standing with the faction that controls `systemId` (0 if unknown).
-function standingFor(state, systemId) {
-  const f = factionForSystem(systemId);
-  if (!f || !state.standing) return 0;
-  return state.standing[f] || 0;
-}
-// The market price multiplier for a system, from your standing with its faction.
-function priceBonus(standing) {
-  return 1 + standing * STANDING_PRICE_MOD;
-}
-// The effective (standing-adjusted) market prices for a system.
-function effectivePrices(systemId, standing, security = 0.5) {
-  const base = systemPrices(systemId, security);
-  const mult = priceBonus(standing);
-  const out = {};
-  for (const key of Object.keys(base)) out[key] = Math.max(1, Math.round(base[key] * mult));
-  return out;
-}
 function shipInCombat(state, shipId) {
   return !!(state.combat && state.combat.shipId === shipId);
 }
 // A fresh, empty cargo hold (one key per mineral).
 function emptyCargo() {
-  return Object.fromEntries(Object.keys(MINERALS).map((k) => [k, 0]));
+  return emptyMaterials();
 }
 // Quantum storage: a single player-level warehouse shared by every station in
 // every system. It lives on the state (not per-system), so any station lets you
 // deposit or withdraw the same contents. Unlike the active ship's hold, storage
 // survives ship loss.
 function emptyStorage() {
-  return { minerals: emptyCargo() };
+  return { items: emptyMaterials() };
 }
-// Total minerals carried in the active ship's cargo hold.
+function emptyMaterials() {
+  return Object.fromEntries([...Object.keys(MINERALS), ...Object.keys(COMPONENTS)].map((key) => [key, 0]));
+}
+function materialDefinition(key) {
+  return MINERALS[key] || COMPONENTS[key] || null;
+}
+function addStoredItems(state, items = {}) {
+  if (!state.storage) state.storage = emptyStorage();
+  if (!state.storage.items) state.storage.items = emptyMaterials();
+  for (const [key, amount] of Object.entries(items)) {
+    if (materialDefinition(key) && Number.isFinite(amount) && amount > 0) {
+      state.storage.items[key] = (state.storage.items[key] || 0) + amount;
+    }
+  }
+}
+function availableMaterials(state, key) {
+  if (!materialDefinition(key)) return 0;
+  const active = state.ships.find((ship) => ship.id === state.activeShipId);
+  const cargoAmount = active && active.cargo ? active.cargo[key] || 0 : 0;
+  const stored = state.storage && (state.storage.items || state.storage.minerals);
+  return cargoAmount + (stored ? stored[key] || 0 : 0);
+}
+function hasMaterials(state, recipe) {
+  return Object.entries(recipe).every(([key, amount]) => availableMaterials(state, key) >= amount);
+}
+function consumeMaterials(state, recipe) {
+  if (!hasMaterials(state, recipe)) return false;
+  const active = state.ships.find((ship) => ship.id === state.activeShipId);
+  if (!state.storage) state.storage = emptyStorage();
+  if (!state.storage.items) state.storage.items = { ...emptyMaterials(), ...(state.storage.minerals || {}) };
+  for (const [key, amount] of Object.entries(recipe)) {
+    const fromCargo = Math.min(active && active.cargo ? active.cargo[key] || 0 : 0, amount);
+    if (fromCargo > 0) active.cargo[key] -= fromCargo;
+    state.storage.items[key] = (state.storage.items[key] || 0) - (amount - fromCargo);
+  }
+  return true;
+}
+// Total materials carried in the active ship's cargo hold.
 function cargoUsed(state) {
   const active = state.ships.find((sh) => sh.id === state.activeShipId);
   return active ? Object.values(active.cargo).reduce((a, b) => a + b, 0) : 0;
@@ -504,10 +570,51 @@ function enemyCombatStats(enemy) {
     shield: def ? def.shield * m : 0,
     hull: def ? def.hull * m : 0,
     dps: def ? def.dps * m : 0,
-    reward: def ? def.iskReward * m : 0,
     rangeDelay: enemy.rangeDelay || 0,
   };
 }
+
+function estimateCombatDifficulty(state, ship, enemy) {
+  const enemyStats = enemyCombatStats(enemy);
+  const mults = skillMults(state);
+  const playerDurability = shipShield(ship, mults) + shipHull(ship, mults);
+  const playerDps = shipDps(ship, mults, droneBonus(state, 'combat'));
+  if (playerDps <= 0) return { key: 'unknown', label: 'Unknown', ratio: null };
+
+  const timeToKill = (enemyStats.shield + enemyStats.hull) / playerDps;
+  const timeToLose = enemyStats.dps > 0
+    ? enemyStats.rangeDelay + moduleBonus(ship, 'range') + playerDurability / enemyStats.dps
+    : Infinity;
+  const ratio = timeToLose / timeToKill;
+  if (ratio >= 1.5) return { key: 'favorable', label: 'Favorable', ratio };
+  if (ratio >= 0.85) return { key: 'even', label: 'Even', ratio };
+  if (ratio >= 0.55) return { key: 'dangerous', label: 'Dangerous', ratio };
+  return { key: 'deadly', label: 'Deadly', ratio };
+}
+
+function rollBlueprintDrop(state, enemy, rng) {
+  const chance = BLUEPRINT_DROP_CHANCE[enemy.type] || 0;
+  const pool = BLUEPRINT_DROP_POOLS[enemy.tier];
+  if (!pool || chance <= 0 || rng() >= chance) return null;
+
+  const choices = [
+    ...pool.moduleTiers.map((tier) => ({ kind: 'module', tier })),
+    ...pool.ships.map((type) => ({ kind: 'ship', type })),
+  ];
+  const choice = choices[Math.min(choices.length - 1, Math.floor(rng() * choices.length))];
+  const blueprint = choice.kind === 'module'
+    ? {
+        id: nextId(),
+        kind: 'module',
+        type: Object.keys(MODULES)[Math.min(Object.keys(MODULES).length - 1, Math.floor(rng() * Object.keys(MODULES).length))],
+        tier: choice.tier,
+      }
+    : { id: nextId(), kind: 'ship', type: choice.type, tier: null };
+  if (!Array.isArray(state.blueprints)) state.blueprints = [];
+  state.blueprints.push(blueprint);
+  return blueprint;
+}
+
 // Roll a rat (type + tier) from the spawn table allowed at `security`.
 function rollRat(security, rng) {
   const table = spawnTable(security);
@@ -611,21 +718,6 @@ function hashStr(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
   return h >>> 0;
-}
-
-// Each system has its own stable market: a per-mineral price derived from the
-// base price and a deterministic multiplier in [0.5, 2.0]. The spread between
-// systems is what makes hauling profitable (mine cheap, ship to a dear market).
-function systemPrices(systemId, security = 0.5) {
-  const prices = {};
-  const securityModifier = 1 + (0.5 - security) * 0.4;
-  for (const key of Object.keys(MINERALS)) {
-    const base = MINERALS[key].price;
-    const h = hashStr(`${systemId}:${key}`);
-    const mult = 0.5 + (h / 4294967295) * 1.5;
-    prices[key] = Math.max(1, Math.round(base * mult * securityModifier));
-  }
-  return prices;
 }
 
 // Generate a single star system's POIs. `profile` controls its character.
@@ -791,7 +883,6 @@ function generateWorld(seed, profile) {
     asteroids,
     enemies,
     gates: [],
-    prices: systemPrices(profile.id, profile.security),
     seed,
   };
 }
@@ -838,6 +929,34 @@ function generateSystems(seed) {
 
 function migrateWorldLayout(state) {
   if (!isValidState(state)) return state;
+  const legacyDrones = state.drones || emptyDroneBay();
+  for (const ship of state.ships) {
+    const fitting = emptyFitting(ship.type);
+    for (const [slotType, tiers] of Object.entries(ship.fitting || {})) {
+      if (fitting[slotType]) {
+        for (let i = 0; i < fitting[slotType].length; i++) {
+          fitting[slotType][i] = Array.isArray(tiers) && Number.isInteger(tiers[i]) ? tiers[i] : 0;
+        }
+      }
+    }
+    ship.fitting = fitting;
+  }
+  const active = state.ships.find((ship) => ship.id === state.activeShipId);
+  if (active) {
+    for (const [droneType, slotType] of [['mining', 'miningDrone'], ['combat', 'combatDrone']]) {
+      const amount = (Array.isArray(legacyDrones[droneType]) ? legacyDrones[droneType] : []).reduce((sum, tier) => {
+        const level = typeof tier === 'number' ? tier : tier.tier;
+        return sum + (DRONES[droneType].tiers[level - 1]?.bonus || 0);
+      }, 0);
+      if (amount > 0 && !active.fitting[slotType].some((tier) => tier > 0)) {
+        const tiers = MODULES[slotType].tiers;
+        const best = tiers.reduce((closest, item, index) =>
+          Math.abs(item.bonus - amount) < Math.abs(tiers[closest].bonus - amount) ? index : closest, 0);
+        active.fitting[slotType][0] = best + 1;
+      }
+    }
+  }
+  state.drones = emptyDroneBay();
   const systems = Object.values(state.systems);
   const currentLayout = systems.every((sys) =>
     sys.outposts && sys.outposts.length === 2 &&
@@ -893,7 +1012,6 @@ function migrateWorldLayout(state) {
 
     Object.assign(oldSystem, nextSystem, {
       security: oldSystem.security,
-      prices: oldSystem.prices || nextSystem.prices,
     });
   }
   for (const ship of state.ships) {
@@ -924,7 +1042,6 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
   const st = {
     version: STATE_VERSION,
     mode: MODES.includes(mode) ? mode : 'demo',
-    isk: mode === 'story' ? START_STORY_ISK : START_ISK,
     mission: { active: mode === 'story' ? 'm1' : null, step: 0, flags: {}, completed: [] },
     agentMission: null,
     agentMissionCompletedAt: 0,
@@ -936,9 +1053,9 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
     combatLog: [],
     skillPoints: 0,
     skills: emptySkills(),
-    standing: emptyStanding(),
     drones: emptyDroneBay(),
     loot: [],
+    blueprints: [],
     storage: emptyStorage(),
     fittingPresets: [],
     stats: {
@@ -948,9 +1065,9 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
       combatsLost: 0,
       shipsLost: 0,
       shipsBought: 0,
-      totalIskEarned: 0,
       totalSpEarned: 0,
       modulesCrafted: 0,
+      modulesSalvaged: 0,
       shipsCrafted: 0,
       missionsCompleted: 0,
       agentMissionsCompleted: 0,
@@ -959,8 +1076,43 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
       oreMinedByType: {},
     },
   };
+  st.storage.items.iron = 18;
+  st.storage.items.scrap = 12;
   if (mode === 'story') startMission(st, 'm1');
   return st;
+}
+
+function migrateEconomy(state) {
+  if (!state || state.version !== 15 || !Array.isArray(state.ships)) return state;
+  const migrated = clone(state);
+  migrated.version = STATE_VERSION;
+  migrated.stats = migrated.stats || {};
+  migrated.storage = migrated.storage || emptyStorage();
+  const legacyStorage = migrated.storage.items || migrated.storage.minerals || {};
+  migrated.storage.items = { ...emptyMaterials(), ...legacyStorage };
+  const legacyBalance = Math.max(0, Number(migrated.isk) || 0);
+  migrated.storage.items.iron += Math.floor(legacyBalance / 100);
+  migrated.storage.items.scrap += Math.floor(legacyBalance / 250);
+  for (const ship of migrated.ships) {
+    ship.cargo = { ...emptyCargo(), ...(ship.cargo || {}) };
+  }
+  migrated.blueprints = Array.isArray(migrated.blueprints) ? migrated.blueprints : [];
+  delete migrated.storage.minerals;
+  delete migrated.isk;
+  delete migrated.standing;
+  delete migrated.stats.totalIskEarned;
+  migrated.stats.modulesSalvaged = migrated.stats.modulesSalvaged || 0;
+  if (migrated.mode === 'story' && migrated.mission && migrated.mission.active === 'm7') {
+    const grant = MISSIONS.m7.grant;
+    addStoredItems(migrated, grant.items);
+    for (const blueprint of grant.blueprints || []) {
+      const alreadyOwned = migrated.blueprints.some((item) =>
+        item.kind === blueprint.kind && item.type === blueprint.type && item.tier === blueprint.tier
+      );
+      if (!alreadyOwned) migrated.blueprints.push({ id: nextId(), ...blueprint });
+    }
+  }
+  return migrated;
 }
 
 // True if a persisted state is usable (right version, has systems).
@@ -1014,13 +1166,7 @@ function mineActive(s, active, seconds) {
     if (d <= range) inRange.push({ a, d });
   }
   if (!inRange.length) return;
-  const prices = sys.prices || {};
-  inRange.sort((p, q) => {
-    const pv = prices[p.a.mineral] || 0;
-    const qv = prices[q.a.mineral] || 0;
-    if (qv !== pv) return qv - pv;
-    return p.d - q.d;
-  });
+  inRange.sort((p, q) => p.d - q.d);
   let left = budget;
   for (const { a } of inRange) {
     if (left <= 0) break;
@@ -1089,10 +1235,10 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
     }
   }
   // Skill points accrue over time (idle progression), including offline gaps.
-  if (seconds > 0) {
-    const sp = SP_RATE_PER_SEC * seconds;
-    s.skillPoints += sp;
-    s.stats.totalSpEarned += sp;
+  if (elapsed > 0) {
+    const sp = SP_RATE_PER_SEC * elapsed;
+    s.skillPoints = (s.skillPoints || 0) + sp;
+    s.stats.totalSpEarned = (s.stats.totalSpEarned || 0) + sp;
   }
   s.lastTick = now;
 
@@ -1128,27 +1274,27 @@ function resolveCombat(s, now, won, rng = Math.random) {
   const enemy = sys ? sys.enemies.find((e) => e.id === c.enemyId) : null;
   const shipName = ship ? SHIPS[ship.type].name : 'Unknown';
   const enemyName = enemy ? (ENEMIES[enemy.type] ? ENEMIES[enemy.type].name : enemy.type) : 'Unknown';
-  let iskGain = 0;
   let shipLost = false;
   let cargoLost = 0;
-  let insurance = 0;
   let lootDropped = null;
+  let blueprintDropped = null;
+  let scrapDropped = 0;
 
   // Snapshot the hold before it's lost, so the killmail can itemize the loot.
   const cargoSnapshot = ship ? { ...ship.cargo } : null;
 
   if (won) {
-    iskGain = Math.floor(c.reward * skillMults(s).reward);
-    s.isk += iskGain;
-    s.stats.totalIskEarned = (s.stats.totalIskEarned || 0) + iskGain;
-    s.skillPoints += SP_PER_KILL;
-    s.stats.totalSpEarned = (s.stats.totalSpEarned || 0) + SP_PER_KILL;
+    const tier = ENEMY_TIERS[enemy && enemy.tier] || ENEMY_TIERS.standard;
+    const dropAmount = 1 + Math.min(2, Math.floor(tier.multiplier));
+    const cargoRoom = ship ? Math.max(0, cargoCapacity(s) - cargoUsed(s)) : 0;
+    scrapDropped = Math.min(dropAmount, Math.floor(cargoRoom));
+    if (ship && scrapDropped > 0) ship.cargo.scrap = (ship.cargo.scrap || 0) + scrapDropped;
     if (enemy) enemy.alive = false;
     if (enemy && !enemy.missionTag) advanceAgentMission(s, 'kill', 1, enemy.type);
     s.stats.combatsWon += 1;
     // Loot: the rat can drop a module into your loot inventory. Stronger rats
     // drop better modules, more reliably (see LOOT_DROP_CHANCE / LOOT_TIERS).
-    if (enemy && !enemy.missionTag && LOOT_DROP_CHANCE[enemy.type] != null) {
+    if (enemy && LOOT_DROP_CHANCE[enemy.type] != null) {
       const chance = LOOT_DROP_CHANCE[enemy.type];
       if (rng() < chance) {
         const tierPool = LOOT_TIERS[enemy.type];
@@ -1160,16 +1306,14 @@ function resolveCombat(s, now, won, rng = Math.random) {
         lootDropped = { slotType, tier };
       }
     }
+    if (enemy) blueprintDropped = rollBlueprintDrop(s, enemy, rng);
   } else {
     shipLost = true;
-    // The ship is destroyed: its cargo hold is lost with it, and insurance
-    // refunds a fraction of the purchase cost (never the cargo).
+    // The ship is destroyed: its cargo hold and carried materials are lost.
     cargoLost = ship ? Object.values(ship.cargo).reduce((a, b) => a + b, 0) : 0;
-    insurance = ship ? Math.floor(SHIPS[ship.type].cost * INSURANCE_FRACTION) : 0;
     s.stats.combatsLost += 1;
     s.stats.shipsLost += 1;
     s.stats.cargoLost = (s.stats.cargoLost || 0) + cargoLost;
-    s.isk += insurance;
     s.ships = s.ships.filter((sh) => sh.id !== ship.id);
     if (s.activeShipId === ship.id) s.activeShipId = s.ships.length ? s.ships[0].id : null;
     // Respawn: if you lost your last ship, a free Rifter arrives at the local
@@ -1195,15 +1339,6 @@ function resolveCombat(s, now, won, rng = Math.random) {
     }
   }
 
-  // Standing shifts with the outcome in the faction that controls this system:
-  // clearing their rats earns their respect, losing a ship there costs it.
-  const faction = sys ? factionForSystem(sys.id) : null;
-  if (faction) {
-    if (!s.standing) s.standing = emptyStanding();
-    const delta = won ? STANDING_PER_KILL : STANDING_PER_DEATH;
-    s.standing[faction] = clamp(s.standing[faction] + delta, STANDING_MIN, STANDING_MAX);
-  }
-
   s.combatLog.unshift({
     at: now,
     enemy: enemyName,
@@ -1212,12 +1347,12 @@ function resolveCombat(s, now, won, rng = Math.random) {
     shipType: ship ? ship.type : null,
     system: sys ? sys.name : null,
     won,
-    isk: iskGain,
     shipLost,
     cargoLost,
     cargo: shipLost ? cargoSnapshot : null,
-    insurance,
+    scrap: scrapDropped,
     loot: lootDropped,
+    blueprint: blueprintDropped,
   });
   if (s.combatLog.length > 20) s.combatLog.length = 20;
   s.combat = null;
@@ -1235,45 +1370,6 @@ function resolveCombat(s, now, won, rng = Math.random) {
   }
 }
 
-function buyShip(state, type) {
-  const def = SHIPS[type];
-  if (!def) return { error: `Unknown ship type: ${type}` };
-  if (!isDocked(state)) return { error: 'Dock at a station to trade' };
-  const s = clone(state);
-  if (s.isk < def.cost) {
-    return { error: `Not enough ISK (need ${def.cost}, have ${Math.floor(s.isk)})` };
-  }
-  const sys = activeSystem(s);
-  if (!sys) return { error: 'No active system' };
-  s.isk -= def.cost;
-  const ship = {
-    id: nextId(),
-    type,
-    x: sys.stations[0].x,
-    y: sys.stations[0].y,
-    systemId: sys.id,
-    dockTargetId: dockedStation(s)?.id || null,
-    dockedStationId: dockedStation(s)?.id || null,
-    cargo: emptyCargo(),
-    fitting: emptyFitting(type),
-  };
-  s.ships.push(ship);
-  s.stats.shipsBought += 1;
-  if (!s.activeShipId) s.activeShipId = ship.id;
-  return { state: s };
-}
-
-function sellShip(state, shipId) {
-  const s = clone(state);
-  const idx = s.ships.findIndex((sh) => sh.id === shipId);
-  if (idx === -1) return { error: 'Ship not found' };
-  if (shipInCombat(s, shipId)) return { error: 'Ship is in combat' };
-  s.isk += SHIPS[s.ships[idx].type].sellValue;
-  s.ships.splice(idx, 1);
-  if (s.activeShipId === shipId) s.activeShipId = s.ships.length ? s.ships[0].id : null;
-  return { state: s };
-}
-
 function setActive(state, shipId) {
   const s = clone(state);
   const ship = s.ships.find((sh) => sh.id === shipId);
@@ -1285,9 +1381,7 @@ function setActive(state, shipId) {
   return { state: s };
 }
 
-// Set a single fitting slot to a module tier (0 = empty, 1..3 = tier I/II/III).
-// Fitting up costs the tier's price; downgrading (or unfitting) refunds the
-// difference, so a slot can be re-fitted at any time. Works in space or docked.
+// Set a fitting slot from inventory; the replaced module returns to inventory.
 function fitModule(state, shipId, slotType, slotIndex, tier) {
   const mod = MODULES[slotType];
   if (!mod) return { error: `Unknown module type: ${slotType}` };
@@ -1295,6 +1389,7 @@ function fitModule(state, shipId, slotType, slotIndex, tier) {
     return { error: `Invalid tier: ${tier}` };
   }
   const s = clone(state);
+  if (!Array.isArray(s.loot)) s.loot = [];
   const ship = s.ships.find((sh) => sh.id === shipId);
   if (!ship) return { error: 'Ship not found' };
   const slots = SHIPS[ship.type].slots;
@@ -1305,65 +1400,16 @@ function fitModule(state, shipId, slotType, slotIndex, tier) {
   if (!ship.fitting) ship.fitting = emptyFitting(ship.type);
   const current = ship.fitting[slotType][slotIndex] || 0;
   if (current === tier) return { state: s }; // no-op
-  const price = (t) => (t > 0 ? mod.tiers[t - 1].cost : 0);
-  const delta = price(tier) - price(current);
-  if (delta > 0 && s.isk < delta) {
-    return { error: `Not enough ISK (need ${delta}, have ${Math.floor(s.isk)})` };
+  const skillError = tier ? moduleSkillError(s, slotType, tier) : null;
+  if (skillError) return { error: skillError };
+  let inventoryIndex = -1;
+  if (tier > 0) {
+    inventoryIndex = (s.loot || []).findIndex((item) => item.slotType === slotType && item.tier === tier);
+    if (inventoryIndex < 0) return { error: `No ${mod.name} Tier ${tier} module in inventory` };
   }
-  s.isk -= delta;
+  if (tier > 0) s.loot.splice(inventoryIndex, 1);
+  if (current > 0) s.loot.push({ id: nextId(), slotType, tier: current });
   ship.fitting[slotType][slotIndex] = tier;
-  return { state: s };
-}
-
-function sellMinerals(state, mineral, amount) {
-  const def = MINERALS[mineral];
-  if (!def) return { error: `Unknown mineral: ${mineral}` };
-  if (!isDocked(state)) return { error: 'Dock at a station to trade' };
-  const s = clone(state);
-  const active = s.ships.find((sh) => sh.id === s.activeShipId);
-  if (!active) return { error: 'No active ship' };
-  const sys = activeSystem(s);
-  const basePrice = (sys && sys.prices && sys.prices[mineral]) || def.price;
-  const price = sys
-    ? Math.max(1, Math.round(basePrice * priceBonus(standingFor(s, sys.id))))
-    : basePrice;
-  const amt = amount === 'all' ? active.cargo[mineral] : Number(amount);
-  if (!Number.isFinite(amt) || amt <= 0) return { error: 'Invalid amount' };
-  if (amt > active.cargo[mineral] + 1e-9) return { error: `Not enough ${def.name}` };
-  const sold = Math.min(amt, active.cargo[mineral]);
-  active.cargo[mineral] -= sold;
-  advanceAgentMission(s, 'haul', sold);
-  const isk = sold * price;
-  s.isk += isk;
-  s.stats.totalIskEarned = (s.stats.totalIskEarned || 0) + isk;
-  return { state: s };
-}
-
-// Sell every mineral in the active ship's hold at once (the idle "dump cargo"
-// convenience). Prices are the active system's market rates.
-function sellAll(state) {
-  if (!isDocked(state)) return { error: 'Dock at a station to trade' };
-  const s = clone(state);
-  const active = s.ships.find((sh) => sh.id === s.activeShipId);
-  if (!active) return { error: 'No active ship' };
-  const sys = activeSystem(s);
-  let isk = 0;
-  let sold = 0;
-  for (const key of Object.keys(active.cargo)) {
-    const amt = active.cargo[key];
-    if (amt <= 0) continue;
-    const basePrice = (sys && sys.prices && sys.prices[key]) || MINERALS[key].price;
-    const price = sys
-      ? Math.max(1, Math.round(basePrice * priceBonus(standingFor(s, sys.id))))
-      : basePrice;
-    isk += amt * price;
-    sold += amt;
-    active.cargo[key] = 0;
-  }
-  if (isk <= 0) return { error: 'Nothing to sell' };
-  advanceAgentMission(s, 'haul', sold);
-  s.isk += isk;
-  s.stats.totalIskEarned = (s.stats.totalIskEarned || 0) + isk;
   return { state: s };
 }
 
@@ -1371,11 +1417,12 @@ function sellAll(state) {
 // is shared by every station (see emptyStorage), so you can park ore at any
 // dock and pick it up anywhere else. Docking is required.
 function deposit(state, mineral, amount) {
-  const def = MINERALS[mineral];
+  const def = materialDefinition(mineral);
   if (!def) return { error: `Unknown mineral: ${mineral}` };
   if (!isDocked(state)) return { error: 'Dock at a station to access storage' };
   const s = clone(state);
   if (!s.storage) s.storage = emptyStorage();
+  if (!s.storage.items) s.storage.items = { ...emptyMaterials(), ...(s.storage.minerals || {}) };
   const active = s.ships.find((sh) => sh.id === s.activeShipId);
   if (!active) return { error: 'No active ship' };
   const amt = amount === 'all' ? active.cargo[mineral] : Number(amount);
@@ -1383,21 +1430,38 @@ function deposit(state, mineral, amount) {
   if (amt > active.cargo[mineral] + 1e-9) return { error: `Not enough ${def.name} in cargo` };
   const moved = Math.min(amt, active.cargo[mineral]);
   active.cargo[mineral] -= moved;
-  s.storage.minerals[mineral] = (s.storage.minerals[mineral] || 0) + moved;
+  s.storage.items[mineral] = (s.storage.items[mineral] || 0) + moved;
+  return { state: s };
+}
+
+function depositAll(state) {
+  if (!isDocked(state)) return { error: 'Dock at a station to access storage' };
+  const s = clone(state);
+  if (!s.storage) s.storage = emptyStorage();
+  if (!s.storage.items) s.storage.items = { ...emptyMaterials(), ...(s.storage.minerals || {}) };
+  const active = s.ships.find((ship) => ship.id === s.activeShipId);
+  if (!active) return { error: 'No active ship' };
+  const deposited = Object.values(active.cargo || {}).reduce((sum, amount) => sum + amount, 0);
+  if (deposited <= 0) return { error: 'Nothing to deposit' };
+  for (const [mineral, amount] of Object.entries(active.cargo)) {
+    s.storage.items[mineral] = (s.storage.items[mineral] || 0) + amount;
+    active.cargo[mineral] = 0;
+  }
   return { state: s };
 }
 
 // Move minerals from quantum storage back into the active ship's cargo hold,
 // limited by the hold's free space. Docking is required.
 function withdraw(state, mineral, amount) {
-  const def = MINERALS[mineral];
+  const def = materialDefinition(mineral);
   if (!def) return { error: `Unknown mineral: ${mineral}` };
   if (!isDocked(state)) return { error: 'Dock at a station to access storage' };
   const s = clone(state);
   if (!s.storage) s.storage = emptyStorage();
+  if (!s.storage.items) s.storage.items = { ...emptyMaterials(), ...(s.storage.minerals || {}) };
   const active = s.ships.find((sh) => sh.id === s.activeShipId);
   if (!active) return { error: 'No active ship' };
-  const have = s.storage.minerals[mineral] || 0;
+  const have = s.storage.items[mineral] || 0;
   const amt = amount === 'all' ? have : Number(amount);
   if (!Number.isFinite(amt) || amt <= 0) return { error: 'Invalid amount' };
   if (amt > have + 1e-9) return { error: `Not enough ${def.name} in storage` };
@@ -1405,7 +1469,7 @@ function withdraw(state, mineral, amount) {
   const moved = Math.min(amt, have, Math.max(0, room));
   if (moved <= 0) return { error: 'Cargo hold is full' };
   active.cargo[mineral] += moved;
-  s.storage.minerals[mineral] -= moved;
+  s.storage.items[mineral] -= moved;
   return { state: s };
 }
 
@@ -1425,7 +1489,9 @@ function startCombat(s, enemyId, now) {
   const mults = skillMults(s);
   const shipShieldMax = (shipDef.shield + moduleBonus(ship, 'shield')) * mults.shield;
   const shipHullMax = (shipDef.hull + moduleBonus(ship, 'armor')) * mults.hull;
-  const playerDps = (shipDef.dps + moduleBonus(ship, 'weapon') + droneBonus(s, 'combat')) * mults.dps;
+  const playerDps = (
+    shipDef.dps + moduleBonus(ship, 'weapon') + moduleBonus(ship, 'combatDrone') + droneBonus(s, 'combat')
+  ) * mults.dps;
   s.combat = {
     shipId: ship.id,
     enemyId,
@@ -1441,7 +1507,6 @@ function startCombat(s, enemyId, now) {
     enemyHull: est.hull,
     playerDps,
     enemyDps: est.dps,
-    reward: est.reward,
     // Range advantage (D2): the enemy's guns are silent for this many seconds of
     // fight time. Mission "short-range" enemies carry a base `rangeDelay`; the
     // player's fitted range modules extend the window even further.
@@ -1469,8 +1534,9 @@ function engage(state, enemyId, now = Date.now()) {
   return { state: s };
 }
 
-// Perform an in-fight action: 'shieldBoost' (restore shield, ISK + cooldown),
-// 'overload' (temp DPS boost, ISK + cooldown) or 'disengage' (bail out, keep
+// Perform an in-fight action: shield boost and overload consume one scrap,
+// while disengage bails out and lets the rat escape.
+// 'overload' (temp DPS boost, item + cooldown) or 'disengage' (bail out, keep
 // the ship, no reward, the rat escapes).
 function combatAction(state, action, now = Date.now()) {
   const s = clone(state);
@@ -1486,10 +1552,8 @@ function combatAction(state, action, now = Date.now()) {
       ship: ship ? SHIPS[ship.type].name : 'Unknown',
       won: false,
       disengaged: true,
-      isk: 0,
       shipLost: false,
       cargoLost: 0,
-      insurance: 0,
     });
     if (s.combatLog.length > 20) s.combatLog.length = 20;
     s.combat = null;
@@ -1497,16 +1561,18 @@ function combatAction(state, action, now = Date.now()) {
   }
   if (action === 'shieldBoost') {
     if (c.fightTime < c.boostReadyAt) return { error: 'Shield boost is on cooldown' };
-    if (s.isk < SHIELD_BOOST_COST) return { error: `Not enough ISK (need ${SHIELD_BOOST_COST})` };
-    s.isk -= SHIELD_BOOST_COST;
+    const ship = s.ships.find((item) => item.id === c.shipId);
+    if (!ship || (ship.cargo[SHIELD_BOOST_ITEM] || 0) < 1) return { error: 'Need 1 Scrap in cargo' };
+    ship.cargo[SHIELD_BOOST_ITEM] -= 1;
     c.shipShield = c.shipShieldMax;
     c.boostReadyAt = c.fightTime + SHIELD_BOOST_COOLDOWN;
     return { state: s };
   }
   if (action === 'overload') {
     if (c.fightTime < c.overloadReadyAt) return { error: 'Overload is on cooldown' };
-    if (s.isk < OVERLOAD_COST) return { error: `Not enough ISK (need ${OVERLOAD_COST})` };
-    s.isk -= OVERLOAD_COST;
+    const ship = s.ships.find((item) => item.id === c.shipId);
+    if (!ship || (ship.cargo[OVERLOAD_ITEM] || 0) < 1) return { error: 'Need 1 Scrap in cargo' };
+    ship.cargo[OVERLOAD_ITEM] -= 1;
     c.overloadUntil = c.fightTime + OVERLOAD_DURATION;
     c.overloadReadyAt = c.fightTime + OVERLOAD_COOLDOWN;
     return { state: s };
@@ -1580,12 +1646,11 @@ function warp(state, targetId, x, y) {
   return { state: s };
 }
 
-// The chance a gate jump into `systemId` triggers an ambush, modified by your
-// standing with that system's faction (lower standing -> higher chance).
+// The chance a gate jump into `systemId` triggers an ambush, based on system
+// security only.
 function ambushChance(state, systemId) {
-  const standing = standingFor(state, systemId);
   const security = state.systems[systemId] ? state.systems[systemId].security || 0.5 : 0.5;
-  const chance = AMBUSH_BASE_CHANCE * (1 - standing * AMBUSH_STANDING_MOD) * (1 + (0.5 - security) * 0.7);
+  const chance = AMBUSH_BASE_CHANCE * (1 + (0.5 - security) * 0.7);
   return clamp(chance, AMBUSH_MIN_CHANCE, AMBUSH_MAX_CHANCE);
 }
 // Spawn a predator near the arrival point in `sys` (a gate ambush), rolled from
@@ -1638,8 +1703,7 @@ function gateJump(state, gateId, rng = Math.random, now = Date.now()) {
   ship.y = clamp(arriveY, 0, targetSys.height);
   ship.dockTargetId = null;
   ship.dockedStationId = null;
-  // Ambush risk: the less you are liked by the destination's faction, the more
-  // likely a predator is waiting on the other side of the gate.
+  // Lower security systems have a higher chance of gate ambushes.
   if (rng() < ambushChance(s, targetSys.id)) {
     const ambusher = spawnAmbush(targetSys, ship.x, ship.y, rng);
     startCombat(s, ambusher.id, now);
@@ -1661,23 +1725,28 @@ function missionDef(state) {
 
 // Fit a module into the first empty slot of its type (used for mission grants).
 function fitGrantModule(ship, slotType, tier) {
-  if (!ship || !ship.fitting || !MODULES[slotType]) return;
+  if (!ship || !ship.fitting || !MODULES[slotType]) return false;
   const slots = SHIPS[ship.type].slots[slotType] || 0;
   for (let i = 0; i < slots; i++) {
     if (!ship.fitting[slotType][i]) {
       ship.fitting[slotType][i] = tier;
-      return;
+      return true;
     }
   }
+  return false;
 }
 
-// Hand the player what a mission gives them up-front (`def.grant`): ships,
-// modules (fitted) and ISK. Grants that don't apply are skipped silently.
+// Hand the player what a mission grants up front: ships, fitted modules,
+// materials and blueprints.
 // Ships are granted first so modules fit into the newly active replacement.
 function grantMissionRewards(state, def) {
   if (!def) return;
   const g = def.grant || {};
-  if (g.isk) state.isk += g.isk;
+  addStoredItems(state, g.items);
+  if (!Array.isArray(state.blueprints)) state.blueprints = [];
+  for (const blueprint of g.blueprints || []) {
+    state.blueprints.push({ id: nextId(), ...blueprint });
+  }
   if (Array.isArray(g.ships)) {
     grantShips(state, g.ships);
   }
@@ -1716,16 +1785,20 @@ function grantShips(state, types) {
   }
 }
 
-// Rewards paid when a mission completes (`def.completion`): ISK and drones.
+// Item rewards granted when a mission completes.
 function grantCompletionRewards(state, def) {
   if (!def) return;
   const c = def.completion || {};
-  if (c.isk) state.isk += c.isk;
+  addStoredItems(state, c.items);
   if (Array.isArray(c.drones)) {
-    if (!state.drones) state.drones = emptyDroneBay();
+    const ship = state.ships.find((item) => item.id === state.activeShipId);
     for (const d of c.drones) {
-      const dr = DRONES[d.type];
-      if (dr && dr.tiers) state.drones[d.type].push({ type: d.type, tier: d.tier });
+      const slotType = d.type === 'mining' ? 'miningDrone' : d.type === 'combat' ? 'combatDrone' : null;
+      if (!slotType) continue;
+      if (!fitGrantModule(ship, slotType, d.tier)) {
+        if (!Array.isArray(state.loot)) state.loot = [];
+        state.loot.push({ id: nextId(), slotType, tier: d.tier });
+      }
     }
   }
 }
@@ -1894,14 +1967,12 @@ function shipView(ship, mults, drone) {
     // the result. No level/upgrade system.
     mining: shipMining(ship, mults, d.mining),
     combat: def.combat,
-    dps: (def.dps + moduleBonus(ship, 'weapon') + d.dps) * (mults ? mults.dps : 1),
+    dps: (def.dps + moduleBonus(ship, 'weapon') + moduleBonus(ship, 'combatDrone') + d.dps) * (mults ? mults.dps : 1),
     shield: (def.shield + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1),
     hull: (def.hull + moduleBonus(ship, 'armor')) * (mults ? mults.hull : 1),
     cargo: shipCargo(ship, mults),
     slots: def.slots,
     fitting: ship.fitting || emptyFitting(ship.type),
-    sellValue: def.sellValue,
-    cost: def.cost,
   };
 }
 
@@ -1917,8 +1988,8 @@ function combatView(c) {
     overloadReady: c.fightTime >= c.overloadReadyAt,
     boostCooldown: Math.max(0, c.boostReadyAt - c.fightTime),
     overloadCooldown: Math.max(0, c.overloadReadyAt - c.fightTime),
-    boostCost: SHIELD_BOOST_COST,
-    overloadCost: OVERLOAD_COST,
+    boostItem: COMPONENTS[SHIELD_BOOST_ITEM].name,
+    overloadItem: COMPONENTS[OVERLOAD_ITEM].name,
   };
 }
 
@@ -1927,46 +1998,49 @@ function view(state) {
   const sys = active && state.systems ? state.systems[active.systemId] : null;
   const mults = skillMults(state);
   const drone = { mining: droneBonus(state, 'mining'), dps: droneBonus(state, 'combat') };
-  const standing = state.standing || emptyStanding();
-  const activeStanding = sys ? standingFor(state, sys.id) : 0;
-  const activeFactionKey = sys ? factionForSystem(sys.id) : null;
-  const factions = Object.keys(FACTIONS).map((k) => ({
-    key: k,
-    name: FACTIONS[k].name,
-    standing: standing[k] || 0,
-  }));
+  const materials = active ? { ...emptyMaterials(), ...active.cargo } : emptyMaterials();
   const v = {
     version: state.version,
     mode: state.mode,
     mission: missionView(state),
     agentMission: agentMissionView(state),
-    isk: state.isk,
-    // The active ship's cargo hold, exposed as `minerals` for client compat.
-    minerals: active ? { ...active.cargo } : emptyCargo(),
+    materials,
+    minerals: Object.fromEntries(Object.keys(MINERALS).map((key) => [key, materials[key] || 0])),
     ships: state.ships.map((sh) => shipView(sh, mults, drone)),
     activeShipId: state.activeShipId,
     lastTick: state.lastTick,
     skillPoints: state.skillPoints || 0,
+    skillPointRate: SP_RATE_PER_SEC,
     skills: state.skills || emptySkills(),
     skillMults: mults,
-    standing,
-    factions,
-    activeFaction: activeFactionKey
-      ? { key: activeFactionKey, name: FACTIONS[activeFactionKey].name, standing: activeStanding }
-      : null,
-    priceBonus: priceBonus(activeStanding),
-    drones: state.drones || emptyDroneBay(),
-    droneBonuses: { mining: droneBonus(state, 'mining'), dps: droneBonus(state, 'combat') },
+    drones: {
+      mining: active && active.fitting && (active.fitting.miningDrone || []).some((tier) => tier > 0)
+        ? active.fitting.miningDrone.filter((tier) => tier > 0)
+        : (state.drones || emptyDroneBay()).mining,
+      combat: active && active.fitting && (active.fitting.combatDrone || []).some((tier) => tier > 0)
+        ? active.fitting.combatDrone.filter((tier) => tier > 0)
+        : (state.drones || emptyDroneBay()).combat,
+    },
+    droneBonuses: {
+      mining: moduleBonus(active, 'miningDrone') + droneBonus(state, 'mining'),
+      dps: moduleBonus(active, 'combatDrone') + droneBonus(state, 'combat'),
+    },
     loot: (state.loot || []).map((l) => ({
       id: l.id,
       slotType: l.slotType,
       tier: l.tier,
       name: MODULES[l.slotType] ? MODULES[l.slotType].name : l.slotType,
     })),
+    blueprints: (state.blueprints || []).map((blueprint) => {
+      const definition = blueprint.kind === 'module'
+        ? BLUEPRINTS[blueprint.type] && BLUEPRINTS[blueprint.type][blueprint.tier]
+        : blueprint.kind === 'ship' ? SHIP_BLUEPRINTS[blueprint.type] : null;
+      return { ...blueprint, name: definition ? definition.name : 'Unknown Blueprint' };
+    }),
     // Quantum storage (shared by every station) — mirrors of the raw state so
     // the client can render the inventory overlay.
     storage: {
-      minerals: (state.storage && state.storage.minerals) || emptyCargo(),
+      items: (state.storage && (state.storage.items || state.storage.minerals)) || emptyMaterials(),
     },
     combat: state.combat
       ? combatView(state.combat)
@@ -2010,17 +2084,16 @@ function view(state) {
               shield: stats.shield,
               hull: stats.hull,
               dps: stats.dps,
-              reward: stats.reward,
+              difficulty: active ? estimateCombatDifficulty(state, active, enemy) : { key: 'unknown', label: 'Unknown', ratio: null },
             };
           }),
           gates: sys.gates,
           security: sys.security,
-          prices: effectivePrices(sys.id, activeStanding, sys.security),
         }
       : null,
     system: sys ? { id: sys.id, name: sys.name, color: sys.color, security: sys.security, gates: sys.gates } : null,
     systemNames: Object.values(state.systems).map((s) => ({ id: s.id, name: s.name, color: s.color, security: s.security })),
-    // Gate-ambush chance per destination system (standing-modified), for the HUD.
+    // Gate-ambush chance by destination system security.
     ambush: Object.fromEntries(
       Object.values(state.systems).map((s) => [s.id, ambushChance(state, s.id)])
     ),
@@ -2052,16 +2125,22 @@ module.exports = {
   MODULES,
   SKILLS,
   MINERALS,
+  COMPONENTS,
+  ORE_EXCHANGE,
+  COMPONENT_EXCHANGE,
+  BLUEPRINT_COSTS,
+  NPC_BLUEPRINTS,
+  SHIP_PROGRESSION,
   ENEMIES,
   ENEMY_TIERS,
   spawnTable,
-  FACTIONS,
   DRONES,
   ACHIEVEMENTS,
   AGENT_MISSIONS,
   BLUEPRINTS,
   SHIP_BLUEPRINTS,
   createInitialState,
+  migrateEconomy,
   isValidState,
   migrateWorldLayout,
   evaluateMission,
@@ -2074,8 +2153,6 @@ module.exports = {
   MISSIONS,
   MISSION_ORDER,
   tick,
-  buyShip,
-  sellShip,
   setActive,
   fitModule,
   saveFittingPreset,
@@ -2088,21 +2165,15 @@ module.exports = {
   skillMults,
   skillCost,
   emptySkills,
-  emptyStanding,
-  factionForSystem,
-  standingFor,
-  priceBonus,
-  effectivePrices,
   emptyDroneBay,
   droneBonus,
-  buyDrone,
+  buyBlueprint,
+  exchangeItems,
   equipLoot,
-  sellLoot,
   refineLoot,
   craftModule,
-  sellMinerals,
-  sellAll,
   deposit,
+  depositAll,
   withdraw,
   emptyStorage,
   cargoUsed,
@@ -2128,6 +2199,7 @@ module.exports = {
   dockedStation,
   rollRat,
   enemyCombatStats,
+  estimateCombatDifficulty,
   activeSystem,
   generateSystems,
   resetIds,

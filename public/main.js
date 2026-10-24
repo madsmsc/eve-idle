@@ -21,7 +21,7 @@ window.__eve = {
   combatAction: (action) => app.doCombatAction(action),
   showDeath: (mail) => app.overlays.showDeath(mail),
   setAutoPilot: (on) => {
-    if (app.autoPilot !== !!on) app.toggleAutoPilot();
+    while (app.autoPilot !== !!on) app.toggleAutoPilot();
   },
   getShip: () => ({ x: app.player.x, y: app.player.y }),
   perf: {

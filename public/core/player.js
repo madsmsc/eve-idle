@@ -122,34 +122,13 @@ export class Player extends Node {
     if (speed > 4) this.heading = Math.atan2(this.vy, this.vx);
   }
 
-  // Undocking: the ship starts at the station's centre and flies out to the
-  // dock boundary (where the server already placed it), then keeps drifting.
-  startUndock(station) {
-    this.x = station.x;
-    this.y = station.y;
-    this.vx = 0;
-    this.vy = 0;
-    this.heading = 0;
-    this.destination = null;
-    this.undock = { station, t: 0 };
-    this.app.undocking = true;
-  }
-
-  updateUndock(dt) {
-    const u = this.undock;
-    u.t += dt;
-    const speed = Math.min(45, 14 + u.t * 4);
-    const exitX = u.station.x + this.app.constants.dockRange + 30;
-    this.x = Math.min(exitX, this.x + speed * dt);
-    this.y = u.station.y;
-    this.vx = speed;
-    this.vy = 0;
-    this.heading = 0;
-    if (this.x >= exitX) {
-      this.undock = null;
-      this.app.undocking = false;
-      this.drift = { ax: 1, ay: 0, t: 2.2 };
-    }
+  startUndock() {
+    const ship = this.app.state.activeShip;
+    if (!ship) throw new Error('Cannot undock without an active ship');
+    this.snap(ship.x, ship.y);
+    this.undock = null;
+    this.drift = null;
+    this.app.undocking = false;
   }
 
   // Docking cutscene: glide slowly into the station centre, fading to black
@@ -174,10 +153,6 @@ export class Player extends Node {
 
   #updateMotion(dt) {
     if (this.app.docking) return;
-    if (this.undock) {
-      this.updateUndock(dt);
-      return;
-    }
     if (this.drift && !this.destination && !this.app.state.combat) {
       this.updateDrift(dt);
       return;
@@ -370,14 +345,14 @@ export class Player extends Node {
     return !this.nearestSafeRat();
   }
 
-  // Best belt to mine: highest (total ore value / distance) score.
+  // Best belt to mine: highest (tier-weighted ore / distance) score.
   bestBeltTarget() {
     const w = this.app.state.world;
-    const prices = w.prices;
     const beltValue = new Map();
     for (const a of w.asteroids) {
       if (a.amount <= 0) continue;
-      const v = a.amount * (prices[a.mineral] || 0);
+      const tier = this.app.catalog.minerals[a.mineral].tier || 1;
+      const v = a.amount * tier;
       beltValue.set(a.beltId, (beltValue.get(a.beltId) || 0) + v);
     }
     let best = null;
@@ -422,6 +397,12 @@ export class Player extends Node {
 }
 
 class AutoPilotNode extends Node {
+  constructor(app) {
+    super(app);
+    this.depositPending = false;
+    this.launchPending = false;
+  }
+
   update(dt) {
     this.#run(performance.now());
     return super.update(dt);
@@ -438,17 +419,25 @@ class AutoPilotNode extends Node {
     const canHunt = mode === 'hunt' || mode === 'mine_hunt';
     if (state.docked) {
       if (state.cargoUsed > 0) {
-        app.doAction('sell-all', {});
+        if (this.depositPending) return;
+        this.depositPending = true;
+        app.doAction('deposit-all', {}).finally(() => {
+          this.depositPending = false;
+        });
       } else {
         let target = null;
         if (canMine) target = app.player.bestBeltTarget();
         if (!target && canHunt) target = app.player.nearestSafeRat();
         if (target) {
+          if (this.launchPending) return;
+          this.launchPending = true;
           app.launch({ keepAutoPilot: true }).then((launched) => {
             if (launched && app.autoPilot) {
               const point = target.beltId !== undefined ? app.player.beltApproachPoint(target) : target;
               app.player.setDestination(point.x, point.y);
             }
+          }).finally(() => {
+            this.launchPending = false;
           });
         } else {
           app.toggleAutoPilot();

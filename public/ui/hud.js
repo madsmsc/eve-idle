@@ -1,6 +1,6 @@
 'use strict';
 
-// The main HUD: top-left readouts (system, security, faction), the
+// The main HUD: top-left readouts (system, security), the
 // mission tracker/dialogue, the ship-info line, and the per-frame fast readouts
 // (status box + event log, engage/gate buttons, combat banner + combat HUD).
 // DOM only; panels refresh on server sync, while fast readouts update every frame.
@@ -31,15 +31,6 @@ export class HudNode extends Node {
       sysNameEl.style.color = '';
       sysNameEl.style.textShadow = '';
     }
-    const factionEl = document.getElementById('faction');
-    if (this.app.state.activeFaction) {
-      const st = this.app.state.activeFaction.standing;
-      const sign = st > 0 ? '+' : '';
-      factionEl.textContent = `${this.app.state.activeFaction.name} · ${sign}${st.toFixed(1)}`;
-      factionEl.hidden = false;
-    } else {
-      factionEl.hidden = true;
-    }
     const securityEl = document.getElementById('security');
     securityEl.textContent = this.app.state.system ? `Sec ${this.app.state.system.security.toFixed(1)}` : '';
     this.collectEvents();
@@ -61,7 +52,8 @@ export class HudNode extends Node {
       if (e.disengaged) this.pushEvent(`Disengaged from ${e.enemy}`, 'warn');
       else if (e.won) {
         const loot = e.loot ? ` · loot: ${e.loot.slotType} T${e.loot.tier}` : '';
-        this.pushEvent(`Destroyed ${e.enemy} · +${fmt(e.isk)} ISK${loot}`, 'good');
+        const blueprint = e.blueprint ? ` · blueprint: ${this.blueprintName(e.blueprint)}` : '';
+        this.pushEvent(`Destroyed ${e.enemy} · +${fmt(e.scrap || 0)} Scrap${loot}${blueprint}`, 'good');
       } else this.pushEvent(`${e.ship} lost to ${e.enemy}`, 'bad');
     }
     this.lastLogAt = Math.max(this.lastLogAt, newest);
@@ -72,6 +64,15 @@ export class HudNode extends Node {
     this.lastSystemId = systemId;
     if (state.cargoFull && !this.wasCargoFull) this.pushEvent('Cargo hold full', 'warn');
     this.wasCargoFull = !!state.cargoFull;
+  }
+
+  blueprintName(blueprint) {
+    if (blueprint.kind === 'module') {
+      const module = this.app.catalog.modules[blueprint.type];
+      return `${module ? module.name : blueprint.type} T${blueprint.tier}`;
+    }
+    const ship = this.app.catalog.ships[blueprint.type];
+    return `${ship ? ship.name : blueprint.type} ship`;
   }
 
   pushEvent(text, tone) {
@@ -180,10 +181,10 @@ export class HudNode extends Node {
       chud.innerHTML = `
         <div class="chud-actions">
           <button class="chud-btn" data-action="shieldBoost" data-testid="act-boost" ${c.boostReady ? '' : 'disabled'}>
-            🛡 Boost${c.boostReady ? ` · ${c.boostCost}` : ` · ${Math.ceil(c.boostCooldown)}s`}
+            🛡 Boost${c.boostReady ? ` · 1 ${c.boostItem}` : ` · ${Math.ceil(c.boostCooldown)}s`}
           </button>
           <button class="chud-btn" data-action="overload" data-testid="act-overload" ${c.overloadReady ? '' : 'disabled'}>
-            ⚡ Overload${c.overloadReady ? ` · ${c.overloadCost}` : ` · ${Math.ceil(c.overloadCooldown)}s`}${c.overloaded ? ' ✦' : ''}
+            ⚡ Overload${c.overloadReady ? ` · 1 ${c.overloadItem}` : ` · ${Math.ceil(c.overloadCooldown)}s`}${c.overloaded ? ' ✦' : ''}
           </button>
           <button class="chud-btn disengage" data-action="disengage" data-testid="act-disengage">🏃 Disengage</button>
         </div>`;
@@ -242,13 +243,28 @@ export class HudNode extends Node {
     }
     const ns = player.nearestStation();
     if (state.docked) {
-      if (state.cargoFull) return { label: 'Docked', color: CTX_COLORS.docked, detail: `Cargo full at ${state.dockedStation} — sell it (H)` };
-      return { label: 'Docked', color: CTX_COLORS.docked, detail: `Docked at ${state.dockedStation} — press H to trade` };
+      if (state.cargoFull) return { label: 'Docked', color: CTX_COLORS.docked, detail: `Cargo full at ${state.dockedStation} — sell or store it` };
+      return { label: 'Docked', color: CTX_COLORS.docked, detail: `Docked at ${state.dockedStation} — access station services` };
     }
     if (player.destination && state.cargoFull) {
       const label = player.poiLabel(player.destination.x, player.destination.y);
       const d = Math.round(Math.hypot(player.destination.x - player.x, player.destination.y - player.y));
       return { label: 'Returning', color: CTX_COLORS.warn, detail: `Cargo full — returning to ${label || 'station'} · ${fmt(d)} m` };
+    }
+    const target = this.app.targetEnemyId
+      ? state.world.enemies.find((enemy) => enemy.id === this.app.targetEnemyId && enemy.alive)
+      : null;
+    if (target) {
+      const def = this.app.catalog.enemies[target.type];
+      const tier = target.tierName ? ` (${target.tierName})` : '';
+      const distance = Math.round(Math.hypot(target.x - player.x, target.y - player.y));
+      const inRange = distance <= this.app.constants.engageRange;
+      const difficulty = target.difficulty ? target.difficulty.label.toLowerCase() : 'unknown';
+      return {
+        label: inRange ? 'Hostile in range' : 'Target acquired',
+        color: CTX_COLORS.warn,
+        detail: `${def ? def.name : 'Rat'}${tier} · Approx. ${difficulty} · ${fmt(distance)} m${inRange ? ' — press E to engage' : ''}`,
+      };
     }
     const a = player.nearestAsteroid();
     if (a && active && !state.cargoFull) {
@@ -264,11 +280,16 @@ export class HudNode extends Node {
       return { label: 'Traveling', color: CTX_COLORS.travel, detail: `${label || 'Your destination'} · ${fmt(d)} m` };
     }
     if (ns && ns.d < 240) return { label: 'Approaching', color: CTX_COLORS.travel, detail: `${ns.station.name}…` };
-    const target = player.nearestEnemyInRange();
-    if (target) {
-      const def = this.app.catalog.enemies[target.type];
-      const tier = target.tierName ? ` (${target.tierName})` : '';
-      return { label: 'Hostile in range', color: CTX_COLORS.warn, detail: `${def ? def.name : 'Rat'}${tier} — press E to engage` };
+    const nearbyEnemy = player.nearestEnemyInRange();
+    if (nearbyEnemy) {
+      const def = this.app.catalog.enemies[nearbyEnemy.type];
+      const tier = nearbyEnemy.tierName ? ` (${nearbyEnemy.tierName})` : '';
+      const difficulty = nearbyEnemy.difficulty ? nearbyEnemy.difficulty.label.toLowerCase() : 'unknown';
+      return {
+        label: 'Hostile in range',
+        color: CTX_COLORS.warn,
+        detail: `${def ? def.name : 'Rat'}${tier} · Approx. ${difficulty} — press E to engage`,
+      };
     }
     return { label: 'Idle', color: CTX_COLORS.idle, detail: 'Select a destination to fly there' };
   }
