@@ -754,7 +754,7 @@ function craftModule(state, slotType, tier, blueprintId = null) {
       const key = `${slotType}:${tier}`;
       s.mission.flags.crafted[key] = (s.mission.flags.crafted[key] || 0) + 1;
     }
-    evaluateMission(s);
+    checkMissionObjective(s);
   }
   return { state: s };
 }
@@ -1008,7 +1008,7 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
   const st = {
     version: STATE_VERSION,
     mode: MODES.includes(mode) ? mode : 'demo',
-    mission: { active: mode === 'story' ? 'm1' : null, step: 0, flags: {}, completed: [] },
+    mission: { active: mode === 'story' ? 'm1' : null, ready: false, offered: null, step: 0, flags: {}, completed: [] },
     agentMissions: {},
     autoPilotMode: null,
     automationLog: [],
@@ -1210,7 +1210,7 @@ function mine(state, now = Date.now()) {
   recordMiningProgress(s, beforeMined, beforeOreBelts, now);
   const wholeUnits = Math.floor(mined);
   if (!s.autoPilotMode && wholeUnits > 0) recordAutomation(s, `Mined ${wholeUnits} ore`, now);
-  evaluateMission(s);
+  checkMissionObjective(s);
   return { state: s };
 }
 
@@ -1602,7 +1602,7 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
       damageEnemy(c, pdps * seconds);
     }
   }
-  evaluateMission(s);
+  checkMissionObjective(s);
   return s;
 }
 
@@ -1655,12 +1655,11 @@ function resolveCombat(s, now, won, rng = Math.random) {
     s.stats.cargoLost = (s.stats.cargoLost || 0) + cargoLost;
     s.ships = s.ships.filter((sh) => sh.id !== ship.id);
     if (s.activeShipId === ship.id) s.activeShipId = s.ships.length ? s.ships[0].id : null;
-    // Respawn: if you lost your last ship, a free Rifter arrives at the local
-    // station (your pod makes it home with a loaner) so the game can't soft-lock.
-    // You still paid the price — the destroyed ship and its cargo are gone.
-    // The scripted Last Stand (m3) suppresses the loaner: the clone respawn is
-    // the story's job (the next mission hands you a replacement frigate).
-    if (s.ships.length === 0 && sys && !(s.mission && s.mission.active === 'm3')) {
+    // Respawn: if you lost your last ship, your pod makes it home to the local
+    // station (docked for the scripted Last Stand — the next mission's replacement
+    // frigate is handed out at the hangar) so the game can't soft-lock. You still
+    // paid the price — the destroyed ship and its cargo are gone.
+    if (s.ships.length === 0 && sys) {
       const home = sys.stations[0];
       const pod = {
         id: nextId(),
@@ -2200,6 +2199,8 @@ function startMission(state, id) {
   state.mission.active = id;
   state.mission.flags = {};
   state.mission.step = 0;
+  state.mission.ready = false;
+  state.mission.offered = null;
   clearMissionEnemies(state);
   grantMissionRewards(state, def);
   spawnMissionEnemies(state, def);
@@ -2269,41 +2270,69 @@ function missionDone(state) {
   }
 }
 
-// Advance the mission chain: complete the current mission, hand out rewards and
-// start the next one (granting its up-front items and spawning its targets).
-// Called after combat/mine/craft ticks so objectives resolve as soon as met.
-function evaluateMission(state) {
+// Re-evaluate the active mission's objective without completing it. Objective
+// hooks only mark the mission ready here; completion happens at a station
+// hangar via missionAction('turnin'), which hands out rewards and offers the
+// next mission (missionAction('accept'), also docked-only).
+function checkMissionObjective(state) {
   const m = state.mission;
   if (!m || state.mode !== 'story' || !m.active) return;
   const def = MISSIONS[m.active];
   if (!def) return;
   if (def.objective.type === 'dock' && dockedStation(state)) m.flags.docked = 1;
-  if (!missionDone(state)) return;
+  if (missionDone(state)) m.ready = true;
+}
+
+// Complete the current mission: hand out completion rewards, mark it done and
+// offer the next mission. Docked at a station hangar only — the storyline's one
+// job that happens in space is m1 (auto-started at boot) and the scripted m3
+// death, which the m4 replacement frigate resolves at the hangar.
+function evaluateMission(state) {
+  const m = state.mission;
+  if (!m || state.mode !== 'story' || !m.active) return { error: 'No active mission' };
+  if (!dockedStation(state)) return { error: 'Return to a station to turn in the mission' };
+  const def = MISSIONS[m.active];
+  if (!def) return { error: 'No active mission' };
+  if (!missionDone(state)) return { error: 'Mission objective not complete' };
   grantCompletionRewards(state, def);
   m.completed.push(m.active);
   state.stats.missionsCompleted = (state.stats.missionsCompleted || 0) + 1;
   const idx = MISSION_ORDER.indexOf(m.active);
   const next = MISSION_ORDER[idx + 1] || null;
-  if (next) {
-    startMission(state, next);
-  } else {
-    m.active = null;
-    m.flags = {};
-    m.step = 0;
-  }
+  m.active = null;
+  m.flags = {};
+  m.step = 0;
+  m.ready = false;
+  m.offered = next
+    ? { id: next, title: MISSIONS[next].title, npc: MISSIONS[next].npc, brief: MISSIONS[next].brief }
+    : null;
+  return { state };
 }
 
 // Player-triggered mission actions. 'continue' acknowledges a dialogue-only
-// mission (e.g. accepting certification), completing it.
+// mission (e.g. reading your certification). 'turnin' completes the active
+// mission and 'accept' starts the offered one — both docked at a station.
 function missionAction(state, action) {
   const s = clone(state);
   const m = s.mission;
-  if (!m || s.mode !== 'story' || !m.active) return { error: 'No active mission' };
+  if (!m || s.mode !== 'story') return { error: 'No active mission' };
   if (action === 'continue') {
+    if (!m.active) return { error: 'No active mission' };
     const def = MISSIONS[m.active];
     if (!def) return { error: 'No active mission' };
     if (def.objective.type === 'dialogue') m.flags.done = 1;
-    evaluateMission(s);
+    checkMissionObjective(s);
+    return { state: s };
+  }
+  if (action === 'turnin') {
+    const result = evaluateMission(s);
+    if (result.error) return { error: result.error };
+    return { state: s };
+  }
+  if (action === 'accept') {
+    if (!m.offered) return { error: 'No mission offered' };
+    if (!dockedStation(s)) return { error: 'Dock at a station to accept the mission' };
+    startMission(s, m.offered.id);
     return { state: s };
   }
   return { error: 'Unknown mission action' };
@@ -2331,6 +2360,8 @@ function missionView(state) {
   return {
     mode: state.mode,
     active: m.active,
+    ready: !!m.ready,
+    offered: m.offered ? { ...m.offered } : null,
     title: def ? def.title : null,
     npc: def ? def.npc : null,
     brief: def ? def.brief : null,
@@ -2577,6 +2608,7 @@ module.exports = {
   isValidState,
   migrateWorldLayout,
   evaluateMission,
+  checkMissionObjective,
   missionView,
   missionAction,
   agentMissionAction,

@@ -167,6 +167,8 @@ export class Input {
       else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type, blueprintId: el.dataset.blueprint });
       else if (a === 'accept-agent-mission') app.doAction('agent-mission', { action: 'accept', agentId: el.dataset.agentId });
       else if (a === 'cancel-agent-mission') app.doAction('agent-mission', { action: 'cancel', agentId: el.dataset.agentId });
+      else if (a === 'turnin-mission') app.doAction('mission', { action: 'turnin' });
+      else if (a === 'accept-mission') app.doAction('mission', { action: 'accept' });
       else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
       else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
       else if (a === 'retrieve-item') app.doAction('retrieve-item', { kind: el.dataset.kind, id: el.dataset.id });

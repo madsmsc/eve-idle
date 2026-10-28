@@ -104,7 +104,7 @@ test('renders the world, minimap and HUD', async ({ page }) => {
     return colors.size;
   })).toBeGreaterThan(1);
 
-  expect((await getState(page)).isk).toBe(10000);
+  expect((await getState(page)).isk).toBeUndefined();
   await expect(page.getByTestId('context-state')).toHaveText(/\S/);
   const minimap = page.locator('#minimap');
   await expect(minimap).toBeVisible();
@@ -550,21 +550,6 @@ test('gate jump moves the ship to the connected system', async ({ page }) => {
   }).toPass({ timeout: 5000 });
 });
 
-test('HUD shows the controlling faction and standing', async ({ page }) => {
-  const st = await getState(page);
-  expect(st.activeFaction && st.activeFaction.name).toBeTruthy();
-  await expect(page.getByTestId('faction')).toContainText(st.activeFaction.name);
-});
-
-test('the hangar lists every faction with standing and ambush risk', async ({ page }) => {
-  const st = await getState(page);
-  await page.getByTestId('menu-factions').click();
-  const factions = page.getByTestId('hangar-factions');
-  for (const f of st.factions) {
-    await expect(factions).toContainText(f.name);
-  }
-});
-
 test('manual mining: fly to an asteroid, press M, and cargo grows', async ({ page }) => {
   await expect(page.getByTestId('cargo')).toHaveCount(0);
   await undock(page);
@@ -653,7 +638,11 @@ test('death screen shows the killmail when a ship is destroyed', async ({ page }
   await expect(page.getByTestId('death-screen')).toBeHidden();
 });
 
-test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship', async ({ page }) => {
+test('in-fight actions: boost costs scrap, disengage bails out and keeps the ship', async ({ page }) => {
+  // Boost and overload consume one scrap from the cargo hold; the demo save
+  // starts with scrap in quantum storage, so withdraw a unit before undocking.
+  const withdrawn = await page.request.post('/api/withdraw', { mineral: 'scrap', amount: 1 });
+  expect(withdrawn.ok(), await withdrawn.text()).toBe(true);
   await undock(page);
   const st = await getState(page);
   // Prefer a pirate (a long fight for the starting rifter) so we have time to act.
@@ -675,15 +664,15 @@ test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship'
   await expect(page.getByTestId('act-overload')).toBeVisible();
   await expect(page.getByTestId('act-disengage')).toBeVisible();
 
-  // Boosting the shield costs ISK. (The HUD re-renders every frame, so click
-  // via evaluate to avoid Playwright's element-stability wait.)
-  const iskBefore = (await getState(page)).isk;
+  // Boosting the shield costs one scrap. (The HUD re-renders every frame, so
+  // click via evaluate to avoid Playwright's element-stability wait.)
+  const scrapBefore = (await getState(page)).materials.scrap;
   await page.evaluate(() => document.querySelector('[data-testid="act-boost"]').click());
   await expect(page.getByTestId('context-log')).toContainText('Shield boosted');
   await expect(page.getByTestId('toast')).toHaveCount(0);
   await expect(async () => {
     const s = await getState(page);
-    expect(s.isk).toBeLessThan(iskBefore);
+    expect(s.materials.scrap).toBeLessThan(scrapBefore);
   }).toPass({ timeout: 5000 });
 
   // Disengaging ends the fight immediately and keeps the ship.
@@ -1175,7 +1164,7 @@ test('auto-pilot modes are selected directly and the active mode toggles off', a
   await expect(page.getByTestId('auto-mine-hunt')).not.toHaveClass(/auto-mode-selected/);
 });
 
-test('mode menu: START boots the storyline with zero ISK, DEMO resumes the sandbox', async ({ page }) => {
+test('mode menu: START boots the storyline with m1, DEMO resumes the sandbox', async ({ page }) => {
   await page.request.post('/api/reset');
   await page.goto('/');
   await expect(page.getByTestId('mode-menu')).toBeVisible();
@@ -1183,35 +1172,41 @@ test('mode menu: START boots the storyline with zero ISK, DEMO resumes the sandb
   await expect(page.getByTestId('context-state')).toHaveText(/\S/, { timeout: 15000 });
   let st = await getState(page);
   expect(st.mode).toBe('story');
-  expect(st.isk).toBe(0);
-  // Switching back to demo returns the 10k sandbox start.
+  expect(st.isk).toBeUndefined();
+  expect(st.mission.active).toBe('m1');
+  // Switching back to demo returns the material-supplied sandbox.
   await page.reload();
   await page.getByTestId('mode-demo').click();
   await expect(page.getByTestId('context-state')).toHaveText(/\S/, { timeout: 15000 });
   st = await getState(page);
   expect(st.mode).toBe('demo');
-  expect(st.isk).toBeGreaterThan(0);
+  expect(st.isk).toBeUndefined();
+  expect(st.mission.active).toBe(null);
 });
 
-// Play the whole storyline in one pass (m1â†’m8), asserting each mission's lesson
-// as the course advances and ending at certification with the jump gates open.
-// A single chain replaces five per-mission tests that each replayed the opening
-// missions, so the browser suite covers the same ground in a fraction of the time.
-test('storyline: pilot training from rookie to certification (m1â€“m8) unlocks the gates @slow', async ({ page }) => {
-  test.setTimeout(420000);
+// Play the whole storyline in one pass (m1 to m9), turning each completed mission
+// in at the station hangar and accepting the next, ending with certification (m8),
+// the m9 raiders in Placid, and the jump gates open for the sandbox. A single
+// chain replaces five per-mission tests that each replayed the opening missions,
+// so the browser suite covers the same ground in a fraction of the time.
+test('storyline: pilot training from rookie to certification (m1-m9) unlocks the gates @slow', async ({ page }) => {
+  test.setTimeout(600000);
   await page.request.post('/api/reset');
   await page.goto('/');
   await page.getByTestId('mode-story').click();
   await expect(page.getByTestId('context-state')).toHaveText(/\S/, { timeout: 15000 });
 
-  // m1 â€” Under Attack: the handed-out weapon beats the attacker.
+  // m1 - Under Attack: the handed-out weapon beats the attacker, then a docked
+  // hangar turn-in offers m2.
   await expect(page.getByTestId('mission-tracker')).toContainText('Under Attack');
   await expect(page.getByTestId('mission-dialogue')).toBeVisible();
   await page.getByTestId('mission-continue').click();
   await expect(page.getByTestId('mission-dialogue')).toBeHidden();
   await killMissionEnemy(page, 'attacker');
+  await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
+  await turnInAndAccept(page);
 
-  // m2 â€” Help the Buddies: three short-range frigates; the first fight shows the
+  // m2 - Help the Buddies: three short-range frigates; the first fight shows the
   // free-fire window the Range Amplifier grants.
   await expect(page.getByTestId('mission-tracker')).toContainText('Help the Buddies');
   const frigates = (await getState(page)).world.enemies.filter((e) => e.missionTag === 'shortrange' && e.alive);
@@ -1219,8 +1214,10 @@ test('storyline: pilot training from rookie to certification (m1â€“m8) unlo
   await killMissionEnemy(page, 'shortrange', true);
   await killMissionEnemy(page, 'shortrange');
   await killMissionEnemy(page, 'shortrange');
+  await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
+  await turnInAndAccept(page);
 
-  // m3 â€” Last Stand: the unwinnable wave destroys the ship (scripted death).
+  // m3 - Last Stand: the unwinnable wave destroys the ship (scripted death).
   await expect(page.getByTestId('mission-tracker')).toContainText('Last Stand');
   const wave = (await getState(page)).world.enemies.find((e) => e.missionTag === 'waveship' && e.alive);
   expect(wave).toBeTruthy();
@@ -1232,49 +1229,47 @@ test('storyline: pilot training from rookie to certification (m1â€“m8) unlo
   await page.getByTestId('engage-btn').click();
   await expect(page.getByTestId('death-screen')).toBeVisible({ timeout: 45000 });
   await page.getByTestId('death-dismiss').click();
-  await expect(async () => {
-    const s = await getState(page);
-    expect(s.mission.active).toBe('m4');
-  }).toPass({ timeout: 15000 });
+  await turnInAndAccept(page);
 
-  // m4 â€” A New Clone: dock at the station, which hands off to m5.
+  // m4 - A New Clone: the replacement frigate waits outside the dock; warp home,
+  // dock, and the hangar turn-in hands off to m5.
   await expect(page.getByTestId('mission-tracker')).toContainText('A New Clone');
-  await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.mission.active === 'm5');
+  await page.getByTestId('mission-continue').click();
+  await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.mission.ready === true);
+  await turnInAndAccept(page);
 
-  // m5 â€” Mining 101: warp to a belt and mine 40 ore.
+  // m5 - Mining 101: warp to a belt and mine 40 ore.
   await expect(page.getByTestId('mission-tracker')).toContainText('Mining 101');
+  await page.getByTestId('mission-continue').click();
   const belt = (await getState(page)).world.belts[0];
   await page.evaluate((id) => window.__eve.warp(id), belt.id);
   await expect(page.getByTestId('mine-btn')).toBeEnabled({ timeout: 30000 });
-  for (let i = 0; i < 20 && (await getState(page)).mission.active === 'm5'; i++) {
+  for (let i = 0; i < 30 && !(await getState(page)).mission.ready; i++) {
     await manualMine(page);
   }
   await expect(async () => {
     const s = await getState(page);
-    expect(s.mission.active).toBe('m6');
+    expect(s.mission.ready).toBe(true);
   }).toPass({ timeout: 10000 });
-
-  // m6 â€” Rogue Drones: destroy the drone hub and earn a mining drone.
-  await killMissionEnemy(page, 'dronhub');
-  await expect(async () => {
-    const s = await getState(page);
-    expect(s.mission.active).toBe('m7');
-  }).toPass({ timeout: 45000 });
-  const afterM6 = await getState(page);
-  expect(afterM6.activeShip.fitting.miningDrone[0]).toBe(1);
-
-  // m7 â€” The Forge: mine the ore both recipes need, dock, and craft them.
-  await expect(page.getByTestId('mission-tracker')).toContainText('The Forge');
-  const w = cfg.BLUEPRINTS.weapon[1].recipe;
-  const sh = cfg.BLUEPRINTS.shield[2].recipe;
-  await mineNeededOre(page, {
-    iron: w.iron + sh.iron,
-    bauxite: w.bauxite + sh.bauxite,
-    gadolinium: w.gadolinium + sh.gadolinium,
-    megacyte: w.megacyte + sh.megacyte,
-  });
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
+  await turnInAndAccept(page);
+
+  // m6 - Rogue Drones: destroy the drone hub and earn a mining drone.
+  await expect(page.getByTestId('mission-tracker')).toContainText('Rogue Drones');
+  await page.getByTestId('mission-continue').click();
+  await killMissionEnemy(page, 'dronhub');
+  await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
+  await turnInAndAccept(page);
+
+  // m7 - The Forge: the grant ships both recipes' ore, so train the shield skill
+  // and craft both modules in the hangar.
+  await expect(page.getByTestId('mission-tracker')).toContainText('The Forge');
+  await page.getByTestId('mission-continue').click();
+  await page.getByTestId('menu-skills').click();
+  await expect(page.getByTestId('skill-shieldUpgrades')).toBeEnabled({ timeout: 30000 });
+  await page.getByTestId('skill-shieldUpgrades').click();
   const blueprints = (await getState(page)).blueprints;
+  await page.getByTestId('menu-cargo').click();
   await page.getByTestId('cargo-filter-blueprints').click();
   for (const type of ['weapon', 'shield']) {
     const blueprint = blueprints.find((item) => item.kind === 'module' && item.type === type);
@@ -1282,29 +1277,45 @@ test('storyline: pilot training from rookie to certification (m1â€“m8) unlo
     await page.getByTestId(`inv-cell-${blueprint.id}`).click();
     await page.getByTestId(`craft-blueprint-${blueprint.id}`).click();
   }
-
-  // m8 â€” Certification: accept it and the jump gates unlock.
   await expect(async () => {
     const s = await getState(page);
-    expect(s.mission.active).toBe('m8');
-  }).toPass({ timeout: 15000 });
+    expect(s.mission.ready).toBe(true);
+  }).toPass({ timeout: 10000 });
+  await turnInAndAccept(page);
+
+  // m8 - Certification: acknowledge the dialogue, turn it in, and accept m9.
   await expect(page.getByTestId('mission-tracker')).toContainText('Certification');
   await page.getByTestId('mission-continue').click();
-  await expect(async () => {
-    const s = await getState(page);
-    expect(s.mission.completed).toContain('m8');
-  }).toPass({ timeout: 15000 });
-  const certified = await getState(page);
-  const gate = certified.world.gates[0];
+  await turnInAndAccept(page);
+
+  // m9 - Beyond the Gates: the gates are open, so jump, clear the two raiders and
+  // turn the course in. The storyline ends and the sandbox opens.
+  await expect(page.getByTestId('mission-tracker')).toContainText('Beyond the Gates');
+  await page.getByTestId('mission-continue').click();
+  const gate = (await getState(page)).world.gates[0];
   await page.evaluate((id) => window.__eve.warp(id), gate.id);
   await expect(async () => {
     const s = await getState(page);
     expect(dist(s.activeShip, gate)).toBeLessThan(400);
   }).toPass({ timeout: 30000 });
   await expect(page.getByTestId('gate-jump')).toBeVisible({ timeout: 10000 });
+  await page.getByTestId('gate-jump').click();
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.system.id).toBe('sys_1');
+  }).toPass({ timeout: 15000 });
+  await killMissionEnemy(page, 'placidraider');
+  await killMissionEnemy(page, 'placidraider');
+  await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
+  await page.getByTestId('turnin-mission').click();
+  await expect(page.getByTestId('storyline-card')).toContainText('Story complete', { timeout: 10000 });
+  const finished = await getState(page);
+  expect(finished.mission.active).toBe(null);
+  expect(finished.mission.offered).toBe(null);
+  expect(finished.mission.completed).toEqual(cfg.MISSION_ORDER);
 });
 
-// Warp to a POI and wait until `done(state)` is true â€” used for handoffs that
+// Warp to a POI and wait until `done(state)` is true — used for handoffs that
 // complete automatically once you arrive (docking, mission progression).
 async function warpUntil(page, targetId, done) {
   await page.evaluate((id) => window.__eve.warp(id), targetId);
@@ -1314,35 +1325,19 @@ async function warpUntil(page, targetId, done) {
   }).toPass({ timeout: 45000 });
   // Docking plays a fly-in + fade; let it finish before the next scripted move.
   if ((await getState(page)).world.stations.some((st) => st.id === targetId)) {
-    await expect(page.getByTestId('hangar')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('station-view')).toBeVisible({ timeout: 10000 });
   }
 }
 
-// Warp the active ship onto a living asteroid of each still-missing mineral and
-// mine until its target is met. Parking directly on the rock (rather than a belt)
-// is deterministic: mining always takes the nearest asteroid in range, so a belt's
-// layout can never starve a mineral. Polls tightly so the ~444 units of recipe ore
-// fits the granted 510-unit hold; if it ever fills we dock and sell, then continue.
-async function mineNeededOre(page, needs) {
-  for (let iter = 0; iter < 200; iter++) {
-    const st = await getState(page);
-    const c = st.minerals || {};
-    const missing = Object.entries(needs).filter(([k, n]) => (c[k] || 0) < n);
-    if (!missing.length) return st;
-    if (st.cargoFull) {
-      await warpUntil(page, st.world.stations[0].id, (s) => s.docked === true);
-      await page.request.post('/api/sell-all');
-      continue;
-    }
-    const rock = st.world.asteroids.find((a) => a.mineral === missing[0][0] && a.amount > 0);
-    if (!rock) throw new Error('No asteroid for missing mineral: ' + missing[0][0]);
-    await page.evaluate(([x, y]) => window.__eve.warp(null, { x, y }), [rock.x, rock.y]);
-    await page.waitForTimeout(300);
-    const response = await page.request.post('/api/mine');
-    if (!response.ok()) {
-      const error = (await response.json()).error || 'Manual mining failed';
-      if (!/range/i.test(error)) throw new Error(error);
-    }
-  }
-  throw new Error('gave up mining the forge ore');
+// Turn the completed mission in at the hangar and accept the offered one.
+async function turnInAndAccept(page) {
+  await page.getByTestId('menu-missions').click();
+  await expect(page.getByTestId('turnin-mission')).toBeVisible({ timeout: 10000 });
+  await page.getByTestId('turnin-mission').click();
+  await expect(page.getByTestId('accept-mission')).toBeVisible({ timeout: 10000 });
+  await page.getByTestId('accept-mission').click();
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.mission.active).toBeTruthy();
+  }).toPass({ timeout: 10000 });
 }

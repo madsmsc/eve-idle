@@ -176,6 +176,7 @@ export class HangarNode extends Node {
       achievementsEl.appendChild(row);
     }
 
+    this.#renderStoryline(state);
     this.#renderAgentMissions(state, catalog);
 
     const tradeUp = document.getElementById('market-trade-up');
@@ -224,6 +225,76 @@ export class HangarNode extends Node {
     dropNote.className = 'sub';
     dropNote.textContent = 'Higher-tier module and ship blueprints are recovered from rat loot; NPCs do not sell them.';
     blueprints.appendChild(dropNote);
+  }
+
+  // PRIVATE
+  // Storyline (pilot-training) card: turn the completed mission in and accept
+  // the next one. The storyline's missions are handed off at a station hangar —
+  // the m1 intro is the only one that starts on its own.
+  #renderStoryline(state) {
+    const panel = document.getElementById('hangar-storyline');
+    if (!panel) return;
+    panel.innerHTML = '';
+    if (!state.mission || state.mode !== 'story') return;
+
+    const card = document.createElement('article');
+    card.className = 'agent-card storyline-card';
+    card.dataset.testid = 'storyline-card';
+
+    const offered = state.mission.offered;
+    if (offered) {
+      const name = document.createElement('strong');
+      name.textContent = offered.title;
+      const npc = document.createElement('span');
+      npc.className = 'agent-role';
+      npc.textContent = offered.npc;
+      const objective = document.createElement('span');
+      objective.className = 'sub';
+      objective.textContent = offered.brief;
+      const accept = document.createElement('button');
+      accept.className = 'mini';
+      accept.dataset.action = 'accept-mission';
+      accept.dataset.testid = 'accept-mission';
+      accept.disabled = !state.docked;
+      accept.textContent = 'Accept mission';
+      card.append(name, npc, objective, accept);
+    } else if (state.mission.active) {
+      const m = state.mission;
+      const name = document.createElement('strong');
+      name.textContent = m.title;
+      const objective = document.createElement('span');
+      objective.className = 'sub';
+      let text = m.objective || '';
+      if (m.progress != null) {
+        text += Array.isArray(m.progress)
+          ? ` (${m.progress.map((p, i) => `${p}/${m.target[i]}`).join(', ')})`
+          : ` (${m.progress}/${m.target})`;
+      }
+      objective.textContent = text;
+      card.append(name, objective);
+      if (m.ready) {
+        const hint = document.createElement('span');
+        hint.className = 'agent-role';
+        hint.textContent = 'Objective complete — turn the mission in.';
+        const turnin = document.createElement('button');
+        turnin.className = 'mini';
+        turnin.dataset.action = 'turnin-mission';
+        turnin.dataset.testid = 'turnin-mission';
+        turnin.disabled = !state.docked;
+        turnin.textContent = 'Turn in mission';
+        card.append(hint, turnin);
+      }
+    } else if (state.mission.completed && state.mission.completed.length) {
+      const name = document.createElement('strong');
+      name.textContent = 'Story complete';
+      const objective = document.createElement('span');
+      objective.className = 'sub';
+      objective.textContent = 'Your certification is filed. The gates are open — fly where you will.';
+      card.append(name, objective);
+    } else {
+      card.hidden = true;
+    }
+    panel.appendChild(card);
   }
 
   // PRIVATE

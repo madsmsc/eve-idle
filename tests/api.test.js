@@ -682,11 +682,64 @@ describe('HTTP API', () => {
     assert.deepEqual(r.data.state.mission.completed, []);
   });
 
+  test('POST /api/mission drives the hangar turn-in and accept lifecycle', async () => {
+    const started = await api(srv.base, '/api/mode', { mode: 'story' });
+    assert.equal(started.data.state.mission.active, 'm1');
+    assert.equal(started.data.state.mission.ready, false);
+
+    // Kill the m1 attacker: teleport onto it, engage, force an instant win.
+    let state = srv.app.getState();
+    const attacker = state.systems.sys_0.enemies.find((e) => e.missionTag === 'attacker');
+    state.ships[0].fitting.weapon[0] = 4;
+    state.ships[0].x = attacker.x;
+    state.ships[0].y = attacker.y;
+    srv.app.setState(state);
+    const engaged = await api(srv.base, '/api/engage', { enemyId: attacker.id });
+    assert.equal(engaged.status, 200);
+    state = srv.app.getState();
+    state.combat.playerDps = 1e9;
+    state.combat.enemyDps = 0;
+    state.lastTick = Date.now() - 1000;
+    srv.app.setState(state);
+    const resolved = await api(srv.base, '/api/tick', {});
+    assert.equal(resolved.status, 200);
+    assert.equal(resolved.data.state.mission.ready, true);
+    assert.equal(resolved.data.state.mission.active, 'm1');
+
+    // Turning in while undocked is refused over HTTP too.
+    const spaceTurnin = await api(srv.base, '/api/mission', { action: 'turnin' });
+    assert.equal(spaceTurnin.status, 400);
+    assert.ok(/station/i.test(spaceTurnin.data.error));
+
+    // Dock, turn in and accept m2 — the hangar lifecycle.
+    state = srv.app.getState();
+    const home = state.systems.sys_0.stations[0];
+    state.ships[0].x = home.x;
+    state.ships[0].y = home.y;
+    state.ships[0].dockedStationId = home.id;
+    srv.app.setState(state);
+    const turnin = await api(srv.base, '/api/mission', { action: 'turnin' });
+    assert.equal(turnin.status, 200);
+    assert.equal(turnin.data.state.mission.active, null);
+    assert.equal(turnin.data.state.mission.offered.id, 'm2');
+    assert.equal(turnin.data.state.mission.ready, false);
+    const scrapBefore = (started.data.state.storage.items.scrap || 0);
+    assert.equal(turnin.data.state.storage.items.scrap, scrapBefore + 3, 'completion items land in storage');
+    const accept = await api(srv.base, '/api/mission', { action: 'accept' });
+    assert.equal(accept.status, 200);
+    assert.equal(accept.data.state.mission.active, 'm2');
+    assert.equal(accept.data.state.mission.offered, null);
+    const again = await api(srv.base, '/api/mission', { action: 'accept' });
+    assert.equal(again.status, 400);
+    assert.ok(/offer/i.test(again.data.error));
+  });
+
   test('resuming a save reports capped simulation and full offline skill-point progress once', async () => {
     const state = srv.app.getState();
     const asteroid = state.systems[state.ships[0].systemId].asteroids[0];
     state.ships[0].x = asteroid.x;
     state.ships[0].y = asteroid.y;
+    state.autoPilotMode = 'mine';
     state.lastTick = Date.now() - (cfg.MAX_OFFLINE_SECONDS + 3600) * 1000;
     srv.app.setState(state);
     const resumed = await api(srv.base, '/api/mode', { mode: 'demo' });

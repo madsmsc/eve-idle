@@ -257,7 +257,8 @@ export class HudNode extends Node {
           ? m.progress.map((p, i) => `${p}/${m.target[i]}`).join(', ')
           : `${m.progress}/${m.target}`;
       }
-      tracker.innerHTML = `<span class="label">${m.title}</span> <span class="sub">${m.objective}${prog ? ' — ' + prog : ''}</span>`;
+      const hint = m.ready ? ' — return to a station to turn in' : '';
+      tracker.innerHTML = `<span class="label">${m.title}</span> <span class="sub">${m.objective}${prog ? ' — ' + prog : ''}${hint}</span>`;
       tracker.hidden = false;
       if (this.dialogueShownFor !== m.active) {
         this.dialogueShownFor = m.active;
