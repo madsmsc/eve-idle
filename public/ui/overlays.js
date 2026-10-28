@@ -51,6 +51,28 @@ export class OverlaysNode extends Node {
   }
 
   // PUBLIC
+  showCelebration(label, title) {
+    const container = document.getElementById('celebration-toasts');
+    const toast = document.createElement('div');
+    toast.className = 'celebration-toast';
+    toast.dataset.testid = 'celebration-toast';
+    toast.setAttribute('role', 'status');
+    const heading = document.createElement('span');
+    heading.className = 'celebration-toast-label';
+    heading.dataset.testid = 'celebration-toast-label';
+    heading.textContent = label;
+    const detail = document.createElement('strong');
+    detail.dataset.testid = 'celebration-toast-title';
+    detail.textContent = title;
+    toast.append(heading, detail);
+    container.appendChild(toast);
+    setTimeout(() => {
+      toast.classList.add('is-leaving');
+      setTimeout(() => toast.remove(), 350);
+    }, 3650);
+  }
+
+  // PUBLIC
   showDeath(mail) {
     const el = document.getElementById('death-screen');
     const detail = document.getElementById('death-detail');

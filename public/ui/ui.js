@@ -9,7 +9,7 @@ import { HangarNode } from './hangar.js';
 import { InventoryNode } from './inventory.js';
 import { OverlaysNode } from './overlays.js';
 
-const STATION_MENUS = ['fitting', 'fleet', 'shipyard', 'storage', 'market', 'skills', 'achievements', 'missions', 'industry', 'killboard'];
+const STATION_MENUS = ['fitting', 'ship-tree', 'market', 'skills', 'achievements', 'missions'];
 
 class MenuGroupNode extends Node {
   // PUBLIC
@@ -75,9 +75,11 @@ export class UINode extends Node {
       this.inventory.refresh();
     } else if (!docked && wasDocked) {
       app.menuPageOpen = false;
-      app.activeMenu = 'cargo';
-      document.getElementById('menu-window').hidden = true;
-      document.body.classList.remove('menu-window-open');
+      if (app.activeMenu === 'cargo') {
+        document.getElementById('menu-window').hidden = true;
+        document.body.classList.remove('menu-window-open');
+      }
+      this.inventory.refresh();
     }
     document.body.classList.toggle('docked', !!docked);
     const view = document.getElementById('station-view');
@@ -89,16 +91,18 @@ export class UINode extends Node {
       const nameElement = document.getElementById('station-view-name');
       if (nameElement) nameElement.textContent = app.state.dockedStation;
     }
-    app.hangarOpen = !!docked && STATION_MENUS.includes(app.activeMenu);
+    app.hangarOpen = STATION_MENUS.includes(app.activeMenu);
     document.getElementById('hangar').hidden = !app.hangarOpen;
-    if (app.hangarOpen && (!wasDocked || app.activeMenu !== app.lastHangarTab)) this.hangar.refresh();
+    if (app.hangarOpen && (docked !== wasDocked || app.activeMenu !== app.lastHangarTab)) this.hangar.refresh();
     if (app.hangarOpen) this.hangar.showService(app.activeMenu);
     app.lastHangarTab = app.activeMenu;
+    const readonlyNotice = document.getElementById('service-readonly-notice');
+    readonlyNotice.hidden = !!docked || !app.hangarOpen;
     document.querySelectorAll('.menu-card').forEach((button) => {
       const selected = app.activeMenu === button.dataset.menu && (app.menuPageOpen || app.hangarOpen);
       button.classList.toggle('active', selected);
       button.setAttribute('aria-current', selected ? 'page' : 'false');
-      if (button.hasAttribute('data-station-menu')) button.disabled = !docked;
+      if (button.hasAttribute('data-station-menu')) button.disabled = false;
     });
   }
 
@@ -108,11 +112,6 @@ export class UINode extends Node {
     const shipMenus = ['cargo'];
     const stationMenus = STATION_MENUS;
     if (!shipMenus.includes(name) && !stationMenus.includes(name)) throw new Error(`Unknown menu: ${name}`);
-    if (stationMenus.includes(name) && !(app.state && app.state.docked)) {
-      app.toast('Dock at a station to use this service', true);
-      return;
-    }
-
     const opening = force !== undefined ? !!force : (!app.menuPageOpen && !app.hangarOpen || app.activeMenu !== name);
     if (!opening) {
       this.closeMenu();
@@ -121,6 +120,7 @@ export class UINode extends Node {
     app.activeMenu = name;
     app.menuPageOpen = shipMenus.includes(name);
     app.hangarOpen = stationMenus.includes(name);
+    document.getElementById('service-readonly-notice').hidden = !!app.state.docked || !app.hangarOpen;
     document.body.classList.toggle('menu-window-open', app.menuPageOpen);
     document.getElementById('menu-window').hidden = !app.menuPageOpen;
     document.getElementById('hangar').hidden = !app.hangarOpen;

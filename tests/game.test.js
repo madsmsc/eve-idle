@@ -377,7 +377,8 @@ describe('missions', () => {
     const a = sys(s).asteroids.find((x) => x.amount > 0);
     s.ships[0].x = a.x;
     s.ships[0].y = a.y;
-    const s2 = game.tick(s, T0 + 2000, { x: a.x, y: a.y });
+    s.ships[0].dockedStationId = null;
+    const s2 = game.mine(s, T0 + 2000).state;
     assert.ok((s2.mission.flags.mined || 0) > 0, 'mined ore counted');
     assert.equal(s2.mission.active, 'm5', 'not complete after one short tick');
   });
@@ -454,12 +455,15 @@ describe('missions', () => {
 });
 
 describe('spatial mining', () => {
-  test('mines the asteroid you stand on, yielding its mineral', () => {
+  test('manual mine action extracts one cycle from an asteroid in range', () => {
     const s = fresh();
     const a = atAsteroid(s);
+    s.ships[0].dockedStationId = null;
     const before = a.amount;
     const rate = game.shipMining(s.ships[0]);
-    const s2 = game.tick(s, T0 + 10_000, { x: a.x, y: a.y });
+    const result = game.mine(s, T0 + 1000);
+    assert.ok(!result.error, result.error);
+    const s2 = result.state;
     const a2 = sys(s2).asteroids.find((x) => x.id === a.id);
     assert.ok(a2.amount < before);
     assert.ok(Math.abs(s2.ships[0].cargo[a.mineral] - (before - a2.amount)) < 1e-6);
@@ -467,32 +471,46 @@ describe('spatial mining', () => {
     assert.ok(rate > 0);
   });
 
-  test('does not mine when far from any asteroid', () => {
+  test('ordinary ticks do not passively mine an asteroid in range', () => {
     const s = fresh();
-    atStation(s); // station is kept clear of asteroids
-    const s2 = game.tick(s, T0 + 10_000, { x: s.ships[0].x, y: s.ships[0].y });
+    const a = atAsteroid(s);
+    s.ships[0].dockedStationId = null;
+    const before = a.amount;
+    const s2 = game.tick(s, T0 + 10_000);
+    const a2 = sys(s2).asteroids.find((x) => x.id === a.id);
+    assert.equal(a2.amount, before);
     assert.equal(s2.stats.totalMineralsMined, 0);
   });
 
-  test('mining is capped by offline time and cargo', () => {
+  test('mining autopilot continues mining while in range', () => {
     const s = fresh();
     const a = atAsteroid(s);
-    // Refill the asteroid so the cap, not depletion, is what limits mining.
-    a.amount = 10_000_000;
-    const s2 = game.tick(s, T0 + 1000 * 3600 * 100, { x: a.x, y: a.y }); // 100h
-    const offlineCap = game.shipMining(s.ships[0]) * cfg.MAX_OFFLINE_SECONDS;
-    const cargoCap = cfg.SHIPS[s.ships[0].type].cargo;
-    const expected = Math.min(offlineCap, cargoCap);
-    assert.ok(Math.abs(s2.stats.totalMineralsMined - expected) < 1e-3);
+    s.ships[0].dockedStationId = null;
+    s.autoPilotMode = 'mine';
+    const s2 = game.tick(s, T0 + 1000);
+    assert.ok(s2.stats.totalMineralsMined > 0);
+    assert.ok(s2.automationLog.some((event) => /^Mined [1-9]\d* ore$/.test(event.message)));
+    assert.ok(!s2.automationLog.some((event) => event.message === 'Mined 0 ore'));
   });
 
-  test('mining stops when the cargo hold is full', () => {
+  test('manual mining rejects when far from any asteroid', () => {
+    const s = fresh();
+    atStation(s); // station is kept clear of asteroids
+    s.ships[0].dockedStationId = null;
+    const result = game.mine(s, T0 + 1000);
+    assert.match(result.error, /range/i);
+  });
+
+  test('manual mining stops at cargo capacity', () => {
     const s = fresh();
     const a = atAsteroid(s);
+    s.ships[0].dockedStationId = null;
     a.amount = 10_000_000;
     const cap = cfg.SHIPS[s.ships[0].type].cargo;
     s.ships[0].cargo[a.mineral] = cap - 10; // nearly full
-    const s2 = game.tick(s, T0 + 1000, { x: a.x, y: a.y });
+    const result = game.mine(s, T0 + 1000);
+    assert.ok(!result.error, result.error);
+    const s2 = result.state;
     const used = Object.values(s2.ships[0].cargo).reduce((x, y) => x + y, 0);
     assert.ok(used <= cap, `cargo ${used} exceeded cap ${cap}`);
   });
@@ -507,8 +525,9 @@ describe('spatial mining', () => {
       startedAt: T0,
       resolvesAt: T0 + 100_000,
     };
-    const s2 = game.tick(s, T0 + 5_000, { x: a.x, y: a.y });
-    assert.equal(s2.stats.totalMineralsMined, 0);
+    s.ships[0].dockedStationId = null;
+    const result = game.mine(s, T0 + 5_000);
+    assert.match(result.error, /combat/i);
   });
 });
 
@@ -1117,6 +1136,59 @@ describe('server-authoritative target orbit', () => {
     assert.ok(Math.hypot(movedShip.x - before.x, movedShip.y - before.y) > 20);
     assert.ok(Math.abs(distance - 100) < 5, `orbit radius was ${distance}`);
     assert.ok(angle > 0.5, `ship did not orbit far enough: ${angle}`);
+  });
+
+  test('orbiting obeys the acceleration limit', () => {
+    const state = fresh();
+    const asteroid = sys(state).asteroids.find((item) => item.amount > 0);
+    placeUndockedShip(state, asteroid.x + 100, asteroid.y);
+
+    const after = game.tick(state, T0 + 50);
+    const ship = after.ships.find((item) => item.id === after.activeShipId);
+
+    assert.ok(Math.hypot(ship.vx, ship.vy) <= cfg.MAX_ACCELERATION * 0.05 + 0.001);
+  });
+
+  test('navigation uses a fixed acceleration limit and the doubled speed cap', () => {
+    const state = fresh();
+    const system = sys(state);
+    const ship = placeUndockedShip(state, 1000, 1000);
+    system.asteroids.forEach((asteroid) => { asteroid.amount = 0; });
+    ship.navigation = { x: 10_000, y: 1000, targetId: null, dockTargetId: null, orbitTargetId: null };
+
+    const accelerated = game.tick(state, T0 + 1000);
+    const acceleratedShip = accelerated.ships.find((item) => item.id === accelerated.activeShipId);
+    const initialSpeed = Math.hypot(ship.vx || 0, ship.vy || 0);
+    const acceleratedSpeed = Math.hypot(acceleratedShip.vx, acceleratedShip.vy);
+    assert.ok(acceleratedSpeed > initialSpeed);
+    assert.ok(acceleratedSpeed <= cfg.MAX_ACCELERATION + 0.001);
+    assert.equal(cfg.MAX_SPEED, 1200);
+
+    const cruising = game.tick(state, T0 + 7000);
+    const cruisingShip = cruising.ships.find((item) => item.id === cruising.activeShipId);
+    const cruisingSpeed = Math.hypot(cruisingShip.vx, cruisingShip.vy);
+    assert.ok(cruisingSpeed > 1100);
+    assert.ok(cruisingSpeed <= cfg.MAX_SPEED + 0.001);
+  });
+
+  test('cancelling navigation brakes smoothly instead of zeroing velocity', () => {
+    const state = fresh();
+    const system = sys(state);
+    const ship = placeUndockedShip(state, 1000, 1000);
+    system.asteroids.forEach((asteroid) => { asteroid.amount = 0; });
+    ship.navigation = { x: 10_000, y: 1000, targetId: null, dockTargetId: null, orbitTargetId: null };
+
+    const moving = game.tick(state, T0 + 1000);
+    const movingShip = moving.ships.find((item) => item.id === moving.activeShipId);
+    const speedBeforeCancel = Math.hypot(movingShip.vx, movingShip.vy);
+    const cancelled = game.navigate(moving, { cancel: true }).state;
+    const braking = game.tick(cancelled, T0 + 1500);
+    const brakingShip = braking.ships.find((item) => item.id === braking.activeShipId);
+    const speedAfterCancel = Math.hypot(brakingShip.vx, brakingShip.vy);
+
+    assert.ok(speedAfterCancel > 0);
+    assert.ok(speedAfterCancel < speedBeforeCancel);
+    assert.ok(speedBeforeCancel - speedAfterCancel <= cfg.MAX_ACCELERATION * 0.5 + 0.001);
   });
 
   test('orbits a selected rat and continues orbiting during combat', () => {
@@ -1782,27 +1854,92 @@ describe('drones', () => {
 });
 
 describe('repeatable agent missions', () => {
-  test('contracts can be accepted once, cancelled, and offered again after a day', () => {
+  test('each station has three agents and one active mission is allowed per agent', () => {
     const s = fresh();
-    const accepted = game.agentMissionAction(s, 'accept', T0);
+    const agents = game.view(s).agentMission.agents;
+    assert.deepEqual(agents.map((agent) => agent.role), ['security', 'mining', 'industry']);
+    const accepted = game.agentMissionAction(s, 'accept', agents[0].id, T0);
     assert.ok(!accepted.error, accepted.error);
-    assert.ok(accepted.state.agentMission);
-    assert.match(game.agentMissionAction(accepted.state, 'accept', T0 + 1).error, /already active/i);
-    const cancelledAt = T0 + 1000;
-    const cancelled = game.agentMissionAction(accepted.state, 'cancel', cancelledAt).state;
-    assert.match(game.agentMissionAction(cancelled, 'accept', cancelledAt + 1000).error, /available yet/i);
-    const next = game.agentMissionAction(cancelled, 'accept', cancelledAt + cfg.AGENT_MISSION_COOLDOWN_MS);
-    assert.ok(!next.error, next.error);
+    assert.ok(accepted.state.agentMissions[agents[0].id].active);
+    assert.match(game.agentMissionAction(accepted.state, 'accept', agents[0].id, T0 + 1).error, /already have an active mission/i);
+    const second = game.agentMissionAction(accepted.state, 'accept', agents[1].id, T0 + 2);
+    assert.ok(!second.error, second.error);
+    assert.equal(Object.values(second.state.agentMissions).filter((record) => record.active).length, 2);
   });
 
-  test('selling ore completes a haul contract and grants its reward', () => {
-    const s = withCargo(fresh(), { iron: 100 });
-    s.agentMission = { key: 'ore-haul', progress: 0, status: 'active', startedAt: T0 };
-    const result = game.sellMinerals(s, 'iron', 'all');
+  test('missions can only be accepted at the agent station and cancellation preserves the offer', () => {
+    const s = fresh();
+    const agent = game.view(s).agentMission.agents[1];
+    const accepted = game.agentMissionAction(s, 'accept', agent.id, T0);
+    const missionKey = accepted.state.agentMissions[agent.id].active.key;
+    const cancelled = game.agentMissionAction(accepted.state, 'cancel', agent.id, T0 + 1000).state;
+    const next = game.agentMissionAction(cancelled, 'accept', agent.id, T0 + 1001);
+    assert.ok(!next.error, next.error);
+    assert.equal(next.state.agentMissions[agent.id].active.key, missionKey);
+    next.state.ships[0].dockedStationId = null;
+    assert.match(game.agentMissionAction(next.state, 'accept', agent.id, T0 + 1002).error, /dock at an agent/i);
+  });
+
+  test('matching actions progress active contracts together and completion unlocks the next offer', () => {
+    const s = fresh();
+    const agent = game.view(s).agentMission.agents.find((entry) => entry.role === 'mining');
+    const accepted = game.agentMissionAction(s, 'accept', agent.id, T0);
+    const current = accepted.state.agentMissions[agent.id].active;
+    current.target = 1;
+    const missionKey = current.key;
+    const asteroid = atAsteroid(accepted.state);
+    accepted.state.ships[0].dockedStationId = null;
+    const result = game.mine(accepted.state, T0 + 1000);
     assert.ok(!result.error, result.error);
-    assert.equal(result.state.agentMission.status, 'complete');
-    assert.equal(result.state.agentMission.progress, 100);
     assert.equal(result.state.stats.agentMissionsCompleted, 1);
+    assert.ok(result.state.storage.items[current.rewardItems && Object.keys(current.rewardItems)[0]] > 0);
+    result.state.ships[0].dockedStationId = agent.stationId;
+    const station = sys(result.state).stations.find((item) => item.id === agent.stationId);
+    result.state.ships[0].x = station.x;
+    result.state.ships[0].y = station.y;
+    const updated = game.view(result.state).agentMission.agents.find((entry) => entry.id === agent.id);
+    assert.equal(updated.active, null);
+    assert.ok(updated.offer);
+    assert.notEqual(updated.offer.key, missionKey);
+    assert.ok(asteroid.amount > 0);
+  });
+
+  test('one mining action progresses matching contracts accepted at different stations', () => {
+    const s = fresh();
+    const firstAgent = game.view(s).agentMission.agents.find((entry) => entry.role === 'mining');
+    const firstAccepted = game.agentMissionAction(s, 'accept', firstAgent.id, T0).state;
+    const otherStation = sys(firstAccepted).stations.find((station) => station.id !== firstAgent.stationId);
+    assert.ok(otherStation);
+
+    firstAccepted.ships[0].dockedStationId = otherStation.id;
+    firstAccepted.ships[0].x = otherStation.x;
+    firstAccepted.ships[0].y = otherStation.y;
+    const secondAgent = game.view(firstAccepted).agentMission.agents.find((entry) => entry.role === 'mining');
+    const accepted = game.agentMissionAction(firstAccepted, 'accept', secondAgent.id, T0 + 1);
+    assert.ok(!accepted.error, accepted.error);
+    const contracts = Object.values(accepted.state.agentMissions)
+      .map((record) => record.active)
+      .filter(Boolean);
+    assert.equal(contracts.length, 2);
+    for (const contract of contracts) contract.target = 1;
+
+    accepted.state.ships[0].dockedStationId = null;
+    atAsteroid(accepted.state);
+    const result = game.mine(accepted.state, T0 + 1000);
+    assert.ok(!result.error, result.error);
+    assert.equal(result.state.stats.agentMissionsCompleted, 2);
+    assert.equal(game.view(result.state).agentMission.active.length, 0);
+  });
+
+  test('old single-agent mission saves migrate to the matching station agent', () => {
+    const s = fresh();
+    s.agentMission = { key: 'ore-haul', progress: 30, status: 'active', startedAt: T0 };
+    delete s.agentMissions;
+    const migrated = game.migrateAgentMissionState(s);
+    const mission = game.view(migrated).agentMission.active[0];
+    assert.equal(mission.role, 'mining');
+    assert.equal(mission.progress, 30);
+    assert.equal(migrated.agentMission, undefined);
   });
 });
 

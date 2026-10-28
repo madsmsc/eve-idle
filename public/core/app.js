@@ -11,7 +11,7 @@ import { Input } from './input.js';
 import { WorldNode } from '../view/world.js';
 import { UINode } from '../ui/ui.js';
 
-const SYNC_MS = 400;
+const SYNC_MS = 200;
 
 export class App {
   // PUBLIC
@@ -110,6 +110,7 @@ export class App {
 
   // PUBLIC
   onServerState(newState) {
+    const previousState = this.state;
     if (this.docking) {
       // Keep presenting the ship as in space until the cutscene finishes.
       this.docking.dockedStation = newState.dockedStation;
@@ -122,6 +123,7 @@ export class App {
     const prevShipPos = { x: this.player.x, y: this.player.y };
     const prevSystem = this.state ? this.state.system.id : null;
     this.state = newState;
+    this.#notifyProgressCompletions(previousState, newState);
     this.player.dockTargetId = newState.dockTargetId || null;
     this.targetEnemyId = (newState.combat && newState.combat.enemyId) ||
       (newState.navigation && newState.navigation.targetId) || null;
@@ -209,7 +211,7 @@ export class App {
       return;
     }
     if (this.state && this.state.docked) {
-      this.openMenu('fleet', true);
+      this.openMenu('ship-tree', true);
     } else {
       this.toast('Dock at a station to use the hangar', true);
     }
@@ -251,7 +253,16 @@ export class App {
 
   // PUBLIC
   toggleStorage(force) {
-    this.openMenu('storage', force);
+    if (force === false) {
+      this.closeMenu();
+      return;
+    }
+    if (force === undefined && this.menuPageOpen && this.activeMenu === 'cargo') {
+      this.closeMenu();
+      return;
+    }
+    this.openMenu('cargo', true);
+    requestAnimationFrame(() => document.getElementById('storage-panel').scrollIntoView({ block: 'nearest' }));
   }
 
   // ---- autopilot ----
@@ -316,6 +327,39 @@ export class App {
     if (!this.perfMetrics) return null;
     const { lastFrame, ...samples } = this.perfMetrics;
     return Object.fromEntries(Object.entries(samples).map(([key, values]) => [key, values.slice()]));
+  }
+
+  // PRIVATE
+  #notifyProgressCompletions(previousState, newState) {
+    if (!previousState) return;
+
+    const previousAchievements = new Set(
+      (previousState.achievements || []).filter((item) => item.unlocked).map((item) => item.key)
+    );
+    for (const achievement of newState.achievements || []) {
+      if (achievement.unlocked && !previousAchievements.has(achievement.key)) {
+        this.overlays.showCelebration('Achievement Unlocked', achievement.name);
+      }
+    }
+
+    const previousMission = previousState.mission;
+    const completedMissions = new Set(previousMission && previousMission.completed || []);
+    for (const missionId of newState.mission && newState.mission.completed || []) {
+      if (completedMissions.has(missionId)) continue;
+      const title = previousMission && previousMission.active === missionId
+        ? previousMission.title
+        : missionId;
+      this.overlays.showCelebration('Mission Complete', title);
+    }
+
+    const previousAgentCompletions = new Set(
+      (previousState.agentMission && previousState.agentMission.completed || []).map((mission) => mission.id)
+    );
+    for (const mission of newState.agentMission && newState.agentMission.completed || []) {
+      if (!previousAgentCompletions.has(mission.id)) {
+        this.overlays.showCelebration('Mission Complete', `${mission.name} · ${mission.agentName}`);
+      }
+    }
   }
 
   // PRIVATE

@@ -19,6 +19,7 @@ window.__eve = {
   combatAction: (action) => app.doCombatAction(action),
   showDeath: (mail) => app.overlays.showDeath(mail),
   showOfflineReport: (report) => app.overlays.showOfflineReport(report),
+  applyServerState: (state) => app.onServerState(state),
   setAutoPilot: (on) => app.setAutoPilot(on),
   getShip: () => ({ x: app.player.x, y: app.player.y }),
   perf: {

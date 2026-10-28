@@ -8,8 +8,8 @@ import { Node } from '../core/node.js';
 import { fmt, pct } from '../core/util.js';
 
 const CTX_COLORS = { idle: '#7a89ad', mining: '#35d07f', travel: '#4fd1ff', combat: '#ff5c7a', docked: '#a58bff', warn: '#ffb454' };
-const EVENT_LIFETIME_MS = 14000;
-const EVENT_FADE_AFTER_MS = 2000;
+const EVENT_LIFETIME_MS = 6000;
+const EVENT_FADE_AFTER_MS = 2500;
 const MAX_VISIBLE_EVENTS = 6;
 
 export function countAutomationEvents(log = []) {
@@ -181,14 +181,13 @@ export class HudNode extends Node {
 
     const btn = document.getElementById('engage');
     const target = state.world.enemies.find((enemy) => enemy.id === state.nearby.enemyId);
-    if (target && !state.combat) {
-      btn.disabled = false;
+    const canEngage = !!target && !state.combat;
+    btn.hidden = !canEngage;
+    btn.disabled = !canEngage;
+    if (canEngage) {
       btn.classList.add('engage-ready');
-      btn.textContent = 'Engage';
     } else {
-      btn.disabled = true;
       btn.classList.remove('engage-ready');
-      btn.textContent = 'Engage';
     }
 
     const gateBtn = document.getElementById('gate-jump');
@@ -202,6 +201,8 @@ export class HudNode extends Node {
     } else {
       gateBtn.hidden = true;
     }
+    const mineButton = document.getElementById('mine');
+    mineButton.disabled = state.docked || state.combat || state.cargoFull || !state.miningTargetId;
 
     const banner = document.getElementById('combat-banner');
     const chud = document.getElementById('combat-hud');
@@ -320,7 +321,10 @@ export class HudNode extends Node {
       const ore = this.app.catalog.minerals[a.mineral].name;
       const rate = active.mining.toFixed(1);
       const cargo = `${fmt(state.cargoUsed)}/${fmt(state.cargoCapacity)}`;
-      return { label: 'Mining', color: CTX_COLORS.mining, detail: `${ore}${belt ? ' · ' + belt.name : ''} · +${rate}/s · Cargo ${cargo}` };
+      if (['mine', 'mine_hunt'].includes(state.autoPilotMode)) {
+        return { label: 'Mining', color: CTX_COLORS.mining, detail: `${ore}${belt ? ' · ' + belt.name : ''} · +${rate}/s · Cargo ${cargo}` };
+      }
+      return { label: 'Ore in range', color: CTX_COLORS.mining, detail: `${ore}${belt ? ' · ' + belt.name : ''} · press M to mine · Cargo ${cargo}` };
     }
     if (player.destination) {
       const label = player.poiLabel(player.destination.x, player.destination.y);

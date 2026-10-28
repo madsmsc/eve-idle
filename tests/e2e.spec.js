@@ -19,6 +19,15 @@ async function getState(page) {
   return (await (await page.request.get('/api/state')).json()).state;
 }
 
+async function manualMine(page) {
+  const responsePromise = page.waitForResponse((response) =>
+    response.url().endsWith('/api/mine') && response.request().method() === 'POST'
+  );
+  await page.keyboard.press('m');
+  const response = await responsePromise;
+  expect(response.ok(), await response.text()).toBe(true);
+}
+
 // The ship spawns docked at the home station; warp off the pad so combat and
 // other space-only actions are possible.
 async function undock(page) {
@@ -41,8 +50,9 @@ async function killMissionEnemy(page, tag, expectFreeFire = false) {
   await page.evaluate((id) => window.__eve.warp(id), e.id);
   await expect(async () => {
     const s = await getState(page);
-    expect(dist(s.activeShip, e)).toBeLessThan(200);
+    expect(s.nearby.enemyId).toBe(e.id);
   }).toPass({ timeout: 30000 });
+  await expect(page.getByTestId('engage-btn')).toBeVisible();
   await page.getByTestId('engage-btn').click();
   await expect(page.getByTestId('combat-banner')).toBeVisible({ timeout: 5000 });
   if (expectFreeFire) {
@@ -151,6 +161,8 @@ test('space status bars persist, docked status is hidden, and shortcuts are labe
   await expect(page.getByTestId('navigate-station')).toHaveAttribute('data-shortcut', 'S');
   await expect(page.getByTestId('navigate-rat')).toHaveAttribute('data-shortcut', 'R');
   await expect(page.getByTestId('engage-btn')).toHaveAttribute('data-shortcut', 'E');
+  await expect(page.getByTestId('mine-btn')).toHaveAttribute('data-shortcut', 'M');
+  await expect(page.getByTestId('gate-jump')).toHaveAttribute('data-shortcut', 'J');
   await expect(page.getByTestId('menu-pilot')).toHaveCount(0);
   await expect(page.getByTestId('menu-cargo')).toHaveAttribute('data-shortcut', 'I');
 
@@ -159,6 +171,20 @@ test('space status bars persist, docked status is hidden, and shortcuts are labe
   await expect(page.getByTestId('status-shield-value')).toContainText('/');
   await expect(page.getByTestId('status-hull-value')).toContainText('/');
   await expect(page.getByTestId('status-speed-value')).toContainText('m/s');
+  for (const name of ['speed', 'shield', 'hull']) {
+    const geometry = await page.getByTestId(`status-${name}`).evaluate((element) => {
+      const label = element.querySelector('.status-label').getBoundingClientRect();
+      const bar = element.querySelector('.status-track').getBoundingClientRect();
+      const value = element.querySelector('.status-value').getBoundingClientRect();
+      const labelCenter = label.top + label.height / 2;
+      return {
+        sameLine: Math.abs(labelCenter - bar.top - bar.height / 2) < 3 &&
+          Math.abs(labelCenter - value.top - value.height / 2) < 3,
+        order: label.left < bar.left && bar.right < value.left,
+      };
+    });
+    expect(geometry).toEqual({ sameLine: true, order: true });
+  }
 
   const state = await getState(page);
   const destinationX = state.activeShip.x < 7000
@@ -185,7 +211,8 @@ test('right-side Actions and Auto panels stay visible beside ship status', async
   await expect(page.getByTestId('navigation-actions')).toBeVisible();
   await expect(page.getByTestId('actions-panel')).toBeVisible();
   await expect(page.getByTestId('auto-panel')).toBeVisible();
-  for (const testId of ['engage-btn', 'navigate-belt', 'navigate-station', 'navigate-rat', 'auto-mine', 'auto-mine-hunt', 'auto-hunt']) {
+  await expect(page.getByTestId('engage-btn')).toBeHidden();
+  for (const testId of ['navigate-belt', 'navigate-station', 'navigate-rat', 'mine-btn', 'auto-mine', 'auto-mine-hunt', 'auto-hunt']) {
     await expect(page.getByTestId(testId)).toBeVisible();
   }
   const layout = await page.evaluate(() => {
@@ -206,6 +233,7 @@ test('right-side Actions and Auto panels stay visible beside ship status', async
   });
   expect(Math.abs(layout.context.x + layout.context.width / 2 - layout.viewportWidth / 2)).toBeLessThanOrEqual(1);
   expect(layout.context.y).toBeLessThan(30);
+  expect(layout.status.height).toBeLessThan(65);
   expect(layout.actions.x).toBeGreaterThanOrEqual(layout.status.x + layout.status.width);
   expect(layout.actionPanel.x).toBeGreaterThan(layout.auto.x);
   expect(layout.actionPanel.x + layout.actionPanel.width).toBeCloseTo(layout.viewportWidth - 16, 0);
@@ -230,6 +258,7 @@ test('right-side Actions and Auto panels stay visible beside ship status', async
     };
   });
   expect(mobileLayout.actionPanel.x).toBeGreaterThan(mobileLayout.auto.x);
+  expect(mobileLayout.status.height).toBeLessThan(55);
   expect(mobileLayout.status.y + mobileLayout.status.height).toBeLessThan(mobileLayout.actions.y);
   expect(mobileLayout.menu.x + mobileLayout.menu.width).toBeLessThan(mobileLayout.status.x);
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -239,8 +268,11 @@ test('right-side Actions and Auto panels stay visible beside ship status', async
   await expect(page.getByTestId('menu-pilot')).toHaveCount(0);
   await expect(page.getByTestId('menu-achievements')).toHaveText('Achieve');
   await expect(page.locator('.menu-icon, .menu-copy small')).toHaveCount(0);
-  await expect(page.getByTestId('menu-fleet')).toBeVisible();
-  await expect(page.getByTestId('menu-fleet')).toBeDisabled();
+  await expect(page.getByTestId('menu-ship-tree')).toBeVisible();
+  await expect(page.getByTestId('menu-ship-tree')).toBeEnabled();
+  await expect(page.getByTestId('menu-fitting')).toBeEnabled();
+  await expect(page.getByTestId('menu-market')).toBeEnabled();
+  await expect(page.locator('#left-menu h2')).toHaveText('Menus');
 
   await expect(page.getByTestId('minimap')).toBeVisible();
   const minimapBounds = await page.getByTestId('minimap').boundingBox();
@@ -253,8 +285,8 @@ test('right-side Actions and Auto panels stay visible beside ship status', async
   await expect(page.getByTestId('overview-toggle')).toHaveText('V');
   await expect(page.getByTestId('overview-toggle')).toHaveAttribute('aria-label', 'Show minimap');
   await page.keyboard.press('m');
-  await expect(page.getByTestId('minimap')).toBeVisible();
-  await expect(page.getByTestId('overview-toggle')).toHaveText('X');
+  await expect(page.getByTestId('minimap')).toBeHidden();
+  await expect(page.getByTestId('overview-toggle')).toHaveText('V');
 });
 
 test('cargo shows the hold alone and fitting is a separate ship menu', async ({ page }) => {
@@ -308,14 +340,45 @@ test('cargo shows the hold alone and fitting is a separate ship menu', async ({ 
   await page.getByTestId('menu-fitting').click();
   await expect(page.getByTestId('fitting-layout')).toBeHidden();
   await page.getByTestId('menu-cargo').click();
-  await page.getByTestId('menu-storage').click();
   await expect(page.getByTestId('storage-panel')).toBeVisible();
-  await expect(page.getByTestId('inventory')).toBeHidden();
+  await expect(page.getByTestId('cargo-tab')).toHaveCount(0);
+  await expect(page.getByTestId('inventory')).toBeVisible();
   await expect(page.getByTestId('menu-pilot')).toHaveCount(0);
-  await page.getByTestId('menu-killboard').click();
-  await expect(page.getByTestId('killboard-stats')).toContainText('Battles Won');
-  await expect(page.getByTestId('killboard-stats')).toContainText('Ships Lost');
+  await expect(page.getByTestId('menu-killboard')).toHaveCount(0);
+  await expect(page.locator('[data-panel="killboard"]')).toHaveCount(0);
+});
+
+test('station services stay visible as read-only menus while undocked', async ({ page }) => {
+  for (const menu of ['fitting', 'ship-tree', 'skills', 'achievements', 'market', 'missions']) {
+    await expect(page.getByTestId(`menu-${menu}`)).toBeEnabled();
+  }
+  await page.getByTestId('menu-market').click();
   await expect(page.getByTestId('hangar')).toBeVisible();
+  await undock(page);
+  await expect(page.getByTestId('service-readonly-notice')).toBeVisible();
+  await expect(page.getByTestId('market-layout')).toBeVisible();
+  const serviceActions = page.locator('#hangar button[data-action]');
+  await expect.poll(() => serviceActions.evaluateAll((buttons) =>
+    buttons.length > 0 && buttons.every((button) => button.disabled)
+  )).toBe(true);
+  await page.getByTestId('menu-missions').click();
+  await expect(page.getByTestId('hangar-agent-missions')).toBeVisible();
+  await expect(page.getByTestId('service-readonly-notice')).toBeVisible();
+});
+
+test('station agents offer concurrent contracts with independent progress', async ({ page }) => {
+  await page.getByTestId('menu-missions').click();
+  await expect(page.getByTestId('agent-card-security')).toBeVisible();
+  await expect(page.getByTestId('agent-card-mining')).toBeVisible();
+  await expect(page.getByTestId('agent-card-industry')).toBeVisible();
+  await page.getByTestId('accept-agent-mission-security').click();
+  await page.getByTestId('accept-agent-mission-mining').click();
+  await expect(async () => {
+    const state = await getState(page);
+    expect(state.agentMission.active).toHaveLength(2);
+  }).toPass({ timeout: 5000 });
+  await expect(page.getByTestId('cancel-agent-mission-security')).toBeVisible();
+  await expect(page.getByTestId('cancel-agent-mission-mining')).toBeVisible();
 });
 
 test('inventory stacks ore and expands to fit more items without an inner scrollbar', async ({ page }) => {
@@ -479,7 +542,8 @@ test('gate jump moves the ship to the connected system', async ({ page }) => {
     expect(dist(s.activeShip, gate)).toBeLessThan(5);
   }).toPass({ timeout: 5000 });
   await expect(page.getByTestId('gate-jump')).toContainText('%');
-  await page.getByTestId('gate-jump').click();
+  await expect(page.getByTestId('gate-jump')).toHaveAttribute('data-shortcut', 'J');
+  await page.keyboard.press('j');
   await expect(async () => {
     const s = await getState(page);
     expect(s.system.id).toBe(gate.targetSystemId);
@@ -501,7 +565,7 @@ test('the hangar lists every faction with standing and ambush risk', async ({ pa
   }
 });
 
-test('mining: fly to an asteroid and cargo grows', async ({ page }) => {
+test('manual mining: fly to an asteroid, press M, and cargo grows', async ({ page }) => {
   await expect(page.getByTestId('cargo')).toHaveCount(0);
   await undock(page);
   const st = await getState(page);
@@ -513,11 +577,11 @@ test('mining: fly to an asteroid and cargo grows', async ({ page }) => {
   await expect.poll(async () => dist((await getState(page)).activeShip, start), { timeout: 5000 })
     .toBeGreaterThan(5);
 
-  // The HUD flips to "Mining" once the ship is within range of the asteroid.
-  await expect(page.getByTestId('context-state')).toContainText('Mining', { timeout: 30000 });
+  await expect(page.getByTestId('context-state')).toContainText('Ore in range', { timeout: 30000 });
   await expect(page.getByTestId('context-detail')).toContainText(/Cargo \d+\/\d+/);
+  await expect(page.getByTestId('mine-btn')).toBeEnabled();
 
-  // And the server actually credits cargo.
+  await manualMine(page);
   await expect(async () => {
     const s = await getState(page);
     const total = Object.values(s.minerals).reduce((a, b) => a + b, 0);
@@ -527,6 +591,7 @@ test('mining: fly to an asteroid and cargo grows', async ({ page }) => {
 
 test('belt mining grows cargo and auto-recalls on a full hold @slow', async ({ page }) => {
   await undock(page);
+  await page.getByTestId('auto-mine').click();
   const st = await getState(page);
   const belt = st.world.belts[0];
   await page.evaluate(({ x, y }) => window.__eve.setDestination(x, y), belt);
@@ -551,6 +616,7 @@ test('combat engages and resolves as a win or loss @slow', async ({ page }) => {
     expect(dist(s.activeShip, enemy)).toBeLessThan(200);
   }).toPass({ timeout: 30000 });
 
+  await expect(page.getByTestId('engage-btn')).toBeVisible();
   await expect(page.getByTestId('engage-btn')).toHaveText('Engage');
   await page.getByTestId('engage-btn').click();
   await expect(page.getByTestId('combat-banner')).toBeVisible({ timeout: 5000 });
@@ -600,6 +666,7 @@ test('in-fight actions: boost costs ISK, disengage bails out and keeps the ship'
     expect(dist(s.activeShip, enemy)).toBeLessThan(200);
   }).toPass({ timeout: 30000 });
 
+  await expect(page.getByTestId('engage-btn')).toBeVisible();
   await page.getByTestId('engage-btn').click();
   await expect(page.getByTestId('combat-banner')).toBeVisible({ timeout: 5000 });
 
@@ -657,17 +724,17 @@ test('fitting lists equippable modules and ship loadout unequips all', async ({ 
     const state = await getState(page);
     expect(state.storage.blueprints.some((item) => item.id === blueprintId)).toBe(true);
   }).toPass({ timeout: 5000 });
-  await page.getByTestId('menu-storage').click();
-  await page.getByTestId(`inv-retrieve-blueprint-${blueprintId}`).click();
-  await page.getByTestId('menu-industry').click();
-  await page.getByTestId('craft-weapon-t1').click();
+  await page.getByTestId(`inv-storage-cell-${blueprintId}`).click();
+  await expect(page.getByTestId(`inv-crafting-panel-${blueprintId}`)).toBeVisible();
+  await expect(page.getByTestId(`inv-storage-detail`)).toContainText('Crafting');
+  await expect(page.getByTestId(`craft-blueprint-${blueprintId}`)).toBeEnabled();
+  await page.getByTestId(`craft-blueprint-${blueprintId}`).click();
   await expect(async () => {
     const state = await getState(page);
     expect(state.loot).toHaveLength(1);
     expect(state.loot[0].slotType).toBe('weapon');
   }).toPass({ timeout: 5000 });
   const lootId = (await getState(page)).loot[0].id;
-  await page.getByTestId('menu-cargo').click();
   await page.getByTestId('cargo-filter-loot').click();
   await page.getByTestId(`inv-cell-${lootId}`).click();
   await page.getByTestId(`inv-store-loot-${lootId}`).click();
@@ -675,29 +742,57 @@ test('fitting lists equippable modules and ship loadout unequips all', async ({ 
     const state = await getState(page);
     expect(state.storage.loot.some((item) => item.id === lootId)).toBe(true);
   }).toPass({ timeout: 5000 });
-  await page.getByTestId('menu-storage').click();
-  await page.getByTestId(`inv-retrieve-loot-${lootId}`).click();
   await page.getByTestId('menu-fitting').click();
-  await expect(page.getByTestId(`fitting-equip-${lootId}`)).toBeEnabled();
-  await page.getByTestId(`fitting-equip-${lootId}`).click();
+  await expect(page.locator(`[data-testid="fitting-retrieve-${lootId}"]`)).toHaveCount(0);
+  await page.getByTestId('menu-cargo').click();
+  await page.getByTestId(`inv-storage-cell-${lootId}`).click();
+  await expect(page.getByTestId(`storage-equip-loot-${lootId}`)).toBeEnabled();
+  await expect(page.getByTestId(`storage-salvage-loot-${lootId}`)).toBeEnabled();
+  await page.getByTestId(`storage-equip-loot-${lootId}`).click();
   await expect(async () => {
     const state = await getState(page);
     expect(state.activeShip.fitting.weapon[0]).toBe(1);
-    expect(state.loot).toHaveLength(0);
+    expect(state.storage.loot).toHaveLength(0);
   }).toPass({ timeout: 5000 });
+  await page.getByTestId('menu-fitting').click();
   await expect(page.getByTestId('fit-slot-weapon-0')).toContainText('Tier I');
-
-  await expect(page.getByTestId('unequip-all')).toBeEnabled();
-  await expect(page.getByTestId('unequip-all-hint')).toHaveText('Returns all fitted modules to inventory.');
   await page.getByTestId('unequip-all').click();
   await expect(async () => {
     const state = await getState(page);
     expect(state.activeShip.fitting.weapon[0]).toBe(0);
     expect(state.loot).toHaveLength(1);
+    expect(state.loot[0].slotType).toBe('weapon');
   }).toPass({ timeout: 5000 });
-  await expect(page.getByTestId('fit-slot-weapon-0')).toContainText('Empty');
-  await expect(page.getByTestId('unequip-all')).toBeDisabled();
-  await expect(page.getByTestId('unequip-all-hint')).toHaveText('No fitted modules to return.');
+  await page.getByTestId('menu-cargo').click();
+  await page.getByTestId('cargo-filter-loot').click();
+  const cargoLootId = (await getState(page)).loot[0].id;
+  await page.getByTestId(`inv-cell-${cargoLootId}`).click();
+  await expect(page.getByTestId(`inv-equip-loot-${cargoLootId}`)).toBeEnabled();
+  await page.getByTestId(`inv-equip-loot-${cargoLootId}`).dispatchEvent('click');
+  await expect(async () => {
+    const state = await getState(page);
+    expect(state.activeShip.fitting.weapon[0]).toBe(1);
+    expect(state.loot).toHaveLength(0);
+  }).toPass({ timeout: 5000 });
+  await page.getByTestId('menu-fitting').click();
+  await page.getByTestId('unequip-all').click();
+  await expect(async () => {
+    const state = await getState(page);
+    expect(state.loot).toHaveLength(1);
+  }).toPass({ timeout: 5000 });
+  await page.getByTestId('menu-cargo').click();
+  await page.getByTestId('cargo-filter-loot').click();
+  const salvagedLootId = (await getState(page)).loot[0].id;
+  await page.getByTestId(`inv-cell-${salvagedLootId}`).click();
+  await page.getByTestId(`inv-store-loot-${salvagedLootId}`).click();
+  await page.getByTestId(`inv-storage-cell-${salvagedLootId}`).click();
+  await expect(page.getByTestId(`storage-salvage-loot-${salvagedLootId}`)).toBeEnabled();
+  await page.getByTestId(`storage-salvage-loot-${salvagedLootId}`).dispatchEvent('click');
+  await expect(async () => {
+    const state = await getState(page);
+    expect(state.storage.loot).toHaveLength(0);
+    expect(state.storage.items.scrap).toBeGreaterThan(0);
+  }).toPass({ timeout: 5000 });
 });
 
 test('skills: the hangar shows the skill tree and SP', async ({ page }) => {
@@ -708,65 +803,73 @@ test('skills: the hangar shows the skill tree and SP', async ({ page }) => {
   await expect(page.getByTestId('skill-gunnery')).toBeDisabled();
 });
 
-test('station services open independently from the persistent menu', async ({ page }) => {
-  await expect(page.getByTestId('left-menu').locator('.menu-card')).toHaveCount(10);
-  await expect(page.getByTestId('menu-fleet')).toBeVisible();
-  await expect(page.getByTestId('menu-fleet')).toBeEnabled();
-  await expect(page.getByTestId('menu-industry')).toBeVisible();
-  await expect(page.getByTestId('menu-industry')).toBeEnabled();
-  await page.getByTestId('menu-fleet').click();
-  await expect(page.getByTestId('hangar')).toBeVisible();
-  await expect(page.getByTestId('hangar-fleet')).toBeVisible();
-  await expect(page.locator('.hangar-header')).toHaveCount(0);
-  await expect(page.locator('.hangar-body section[data-panel="fleet"] > h3')).toBeHidden();
-  const fleetPanelBackground = await page.locator('.hangar-body section[data-panel="fleet"]').evaluate((element) =>
-    getComputedStyle(element).backgroundColor
-  );
-  expect(fleetPanelBackground).not.toBe('rgba(0, 0, 0, 0)');
-
-  await page.getByTestId('menu-shipyard').click();
-  await expect(page.getByTestId('hangar-shop')).toBeVisible();
+test('mission and achievement completions show temporary celebration toasts', async ({ page }) => {
+  await page.evaluate(() => {
+    const previous = window.__eve.state;
+    previous.mission = { ...previous.mission, active: 'm1', title: 'Under Attack', completed: [] };
+    const next = structuredClone(previous);
+    next.mission = { ...next.mission, active: 'm2', title: 'Help the Buddies', completed: ['m1'] };
+    next.agentMission = {
+      ...next.agentMission,
+      completed: [{ id: 'agent-test:1', name: 'Pirate Hunt', agentName: 'Ari Venn' }],
+    };
+    next.achievements[0].unlocked = true;
+    window.__eve.applyServerState(next);
+  });
+  const toasts = page.getByTestId('celebration-toast');
+  await expect(toasts).toHaveCount(3);
+  await expect(page.getByTestId('celebration-toast-label')).toHaveText([
+    'Achievement Unlocked',
+    'Mission Complete',
+    'Mission Complete',
+  ]);
+  await expect(page.getByTestId('celebration-toast-title')).toHaveText([
+    'Prospector',
+    'Under Attack',
+    'Pirate Hunt',
+  ]);
+  await expect(toasts).toHaveCount(0, { timeout: 5000 });
 });
 
-test('shipyard shows progression requirements and NPCs only sell basic blueprints', async ({ page }) => {
-  await page.getByTestId('menu-shipyard').click();
-  await expect(page.getByTestId('hangar-shop')).toContainText('Tier 1');
-  await expect(page.getByTestId('hangar-shop')).toContainText('Tier 4');
-  await expect(page.getByTestId('hangar-shop')).toContainText('Mining Yield 0/1 (missing)');
-  await expect(page.getByTestId('craft-ship-falcon')).toBeDisabled();
+test('ship tree replaces fleet and crafting services', async ({ page }) => {
+  await expect(page.getByTestId('left-menu').locator('.menu-card')).toHaveCount(7);
+  await expect(page.getByTestId('menu-ship-tree')).toBeVisible();
+  await expect(page.getByTestId('menu-ship-tree')).toBeEnabled();
+  await expect(page.getByTestId('menu-fleet')).toHaveCount(0);
+  await expect(page.getByTestId('menu-storage')).toHaveCount(0);
+  await expect(page.getByTestId('menu-shipyard')).toHaveCount(0);
+  await expect(page.getByTestId('menu-industry')).toHaveCount(0);
+  await page.getByTestId('menu-ship-tree').click();
+  await expect(page.getByTestId('hangar')).toBeVisible();
+  await expect(page.getByTestId('hangar-ship-tree')).toBeVisible();
+  await expect(page.locator('.hangar-header')).toHaveCount(0);
+  await expect(page.locator('.hangar-body section[data-panel="ship-tree"] > h3')).toBeHidden();
+  const treePanelBackground = await page.locator('.hangar-body section[data-panel="ship-tree"]').evaluate((element) =>
+    getComputedStyle(element).backgroundColor
+  );
+  expect(treePanelBackground).not.toBe('rgba(0, 0, 0, 0)');
+  await expect(page.getByTestId('hangar-ship-tree').locator('.ship-tree-entry')).toHaveCount(Object.keys(cfg.SHIPS).length);
+  await expect(page.getByTestId('hangar-ship-tree').locator('.ship-tree-model svg')).toHaveCount(Object.keys(cfg.SHIPS).length);
+  await expect(page.getByTestId('ship-tree-arrow-1-2')).toBeVisible();
+  await expect(page.getByTestId('ship-tree-arrow-3-4')).toBeVisible();
+  await expect(page.getByTestId('ship-tree-falcon')).toContainText('Requires Mining Yield 1');
+  await expect(page.getByTestId('ship-tree-falcon')).toHaveClass(/skills-locked/);
+  await expect(page.getByTestId('ship-tree-rifter')).toHaveClass(/skill-ready/);
+  await page.getByTestId('ship-tree-rifter').hover();
+  await expect(page.getByTestId('ship-tree-rifter')).toHaveCSS('transform', 'none');
+});
 
+test('NPC market sells basic module blueprints only', async ({ page }) => {
   await page.getByTestId('menu-market').click();
   await expect(page.getByTestId('buy-blueprint-weapon-t1')).toBeVisible();
   await expect(page.getByTestId('buy-blueprint-weapon-t2')).toHaveCount(0);
   await expect(page.getByTestId('buy-blueprint-ship-falcon')).toHaveCount(0);
 });
 
-test('hangar: open it and buy a ship', async ({ page }) => {
-  await page.getByTestId('menu-shipyard').click();
-  await expect(page.getByTestId('hangar')).toBeVisible();
-
-  // The hangar re-renders on every sync, so click via evaluate to avoid
-  // Playwright's element-stability wait on the (now lower) buy button.
-  await page.evaluate(() => document.querySelector('[data-testid="buy-falcon"]').click());
-  await expect(async () => {
-    const s = await getState(page);
-    expect(s.ships.length).toBe(2);
-    expect(s.isk).toBe(5000);
-  }).toPass({ timeout: 5000 });
-});
-
-test('shows an unaffordable purchase message in the action log', async ({ page }) => {
-  await page.getByTestId('menu-shipyard').click();
-  await page.evaluate(() => document.querySelector('[data-testid="buy-brutix"]').click()); // 250000 ISK, we have 10000
-  await expect(page.getByTestId('context-log')).toContainText(/Not enough ISK/i);
-  const s = await getState(page);
-  expect(s.ships.length).toBe(1);
-});
-
 test('station services overlay a blurred world capture and launching returns to space', async ({ page }) => {
   await expect(page.getByTestId('station-view')).toBeVisible();
   await expect(page.getByTestId('station-view-name')).toContainText('Station A');
-  await page.getByTestId('menu-fleet').click();
+  await page.getByTestId('menu-ship-tree').click();
   await expect(page.getByTestId('hangar')).toBeVisible();
   const dockBackground = await page.getByTestId('station-view').evaluate((el) => el.style.getPropertyValue('--dock-background'));
   expect(dockBackground).toMatch(/^url\("data:image\/png;base64,/);
@@ -807,7 +910,7 @@ test('station services overlay a blurred world capture and launching returns to 
 });
 
 test('the hangar is only available while docked', async ({ page }) => {
-  await expect(page.getByTestId('menu-fleet')).toBeVisible();
+  await expect(page.getByTestId('menu-ship-tree')).toBeVisible();
 
   // Fly to open space (far from every station); the hangar closes and can't reopen.
   await undock(page);
@@ -830,13 +933,12 @@ test('docking flies into the station and fades to black before the hangar shows'
   await expect(page.getByTestId('dock-fade')).not.toHaveClass(/\bon\b/);
 });
 
-test('skill points and combat totals are shown in their respective menus', async ({ page }) => {
+test('skill points remain available and the unused Killboard is removed', async ({ page }) => {
   await expect(page.getByTestId('isk')).toHaveCount(0);
   await page.getByTestId('menu-skills').click();
   await expect(page.getByTestId('hangar-sp')).toContainText('SP');
-  await page.getByTestId('menu-killboard').click();
-  await expect(page.getByTestId('killboard-stats')).toContainText('Battles Won');
-  await expect(page.getByTestId('killboard-stats')).toContainText('Ships Lost');
+  await expect(page.getByTestId('menu-killboard')).toHaveCount(0);
+  await expect(page.getByTestId('combat-log')).toHaveCount(0);
   await expect(page.getByTestId('menu-pilot')).toHaveCount(0);
   await expect(page.getByTestId('security')).toHaveCount(0);
 });
@@ -849,8 +951,7 @@ test('the same left-side menu remains available docked and in space', async ({ p
   await page.getByTestId('menu-skills').click();
   await expect(page.getByTestId('hangar-skills')).toBeVisible();
   await expect(page.getByTestId('left-menu')).toBeVisible();
-  await page.getByTestId('menu-killboard').click();
-  await expect(page.getByTestId('combat-log')).toBeVisible();
+  await expect(page.getByTestId('menu-killboard')).toHaveCount(0);
 
   await undock(page);
   await page.evaluate(() => window.__eve.setDestination(600, 600));
@@ -859,7 +960,7 @@ test('the same left-side menu remains available docked and in space', async ({ p
   const spaceMenu = await page.getByTestId('left-menu').boundingBox();
   expect(spaceMenu.x).toBeCloseTo(initialMenu.x, 0);
   expect(spaceMenu.width).toBeCloseTo(initialMenu.width, 0);
-  await expect(page.getByTestId('menu-fleet')).toBeDisabled();
+  await expect(page.getByTestId('menu-ship-tree')).toBeDisabled();
   await expect(page.getByTestId('hangar')).toBeHidden();
   await page.getByTestId('menu-cargo').click();
   await expect(page.getByTestId('inventory')).toBeVisible();
@@ -870,9 +971,11 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   const st = await getState(page);
   const ast = st.world.asteroids.find((a) => a.amount > 0);
   await page.evaluate(([x, y]) => window.__eve.warp(null, { x, y }), [ast.x, ast.y]);
+  await expect(page.getByTestId('mine-btn')).toBeEnabled();
+  await manualMine(page);
   await expect(async () => {
     const s = await getState(page);
-    expect(Object.values(s.minerals).reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
+    expect(Object.values(s.minerals).reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(1);
   }).toPass({ timeout: 15000 });
 
   // Dock again and open the inventory.
@@ -888,6 +991,7 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
   const storedAfterDeposit = storedBefore + deposited;
 
   // The hold is a grid of squares: select the ore stack, then deposit it all.
+  await page.getByTestId('cargo-filter-all').click();
   await expect(page.getByTestId(`inv-cell-${mineral}`)).toBeVisible();
   await page.evaluate((k) => document.querySelector(`[data-testid="inv-cell-${k}"]`).click(), mineral);
   await expect(page.getByTestId('inv-grid')).toBeVisible();
@@ -898,10 +1002,9 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
     expect(s.minerals[mineral]).toBe(0);
   }).toPass({ timeout: 5000 });
 
-  // Quantum storage is a separate menu page.
-  await page.keyboard.press('q');
+  // Quantum Storage is always shown below Cargo.
   await expect(page.getByTestId('storage-panel')).toBeVisible();
-  await expect(page.getByTestId('inventory')).toBeHidden();
+  await expect(page.getByTestId('inventory')).toBeVisible();
   await page.getByTestId(`inv-storage-cell-${mineral}`).click();
   const takeBtn = deposited >= 100 ? '100' : 'all';
   const taken = takeBtn === '100' ? Math.min(100, storedAfterDeposit) : storedAfterDeposit;
@@ -912,6 +1015,32 @@ test('inventory: deposit mined cargo into quantum storage and withdraw it back',
     expect(s.storage.items[mineral]).toBe(storedAfterDeposit - taken);
     expect(s.minerals[mineral]).toBe(taken);
   }).toPass({ timeout: 5000 });
+
+  await undock(page);
+  await page.getByTestId('menu-cargo').click();
+  await expect(page.getByTestId('storage-panel')).toBeVisible();
+  await expect(page.getByTestId('storage-readonly-note')).toBeVisible();
+  await expect(page.getByTestId('inv-storage-detail')).toContainText('Select an item to view its details');
+  await expect(page.getByTestId(`inv-withdraw-${mineral}-all`)).toHaveCount(0);
+});
+
+test('quantum storage items remain viewable but read-only while undocked', async ({ page }) => {
+  await undock(page);
+  await page.evaluate(() => {
+    const state = window.__eve.state;
+    state.storage.items.iron = 42;
+    window.__eve.applyServerState(state);
+  });
+  await page.getByTestId('menu-cargo').click();
+
+  await expect(page.getByTestId('storage-panel')).toBeVisible();
+  await expect(page.getByTestId('storage-readonly-note')).toBeVisible();
+  const storedOre = page.getByTestId('inv-storage-cell-iron');
+  await expect(storedOre).toBeVisible();
+  await expect(storedOre).toHaveAttribute('title', /Iron.*Quantum Storage.*Select/);
+  await storedOre.click();
+  await expect(page.getByTestId('inv-storage-detail')).toContainText(/Iron/);
+  await expect(page.getByTestId('inv-withdraw-iron-all')).toHaveCount(0);
 });
 
 test('cargo contains items while fitting retains ship stats and loadout', async ({ page }) => {
@@ -948,36 +1077,27 @@ test('cargo contains items while fitting retains ship stats and loadout', async 
   expect(fittingColumns.ship.width).toBeLessThan(fittingColumns.fitted.width);
   expect(fittingColumns.slotHeight).toBeLessThanOrEqual(27);
 
-  await page.keyboard.press('q');
-  await expect(page.getByTestId('storage-panel')).toBeVisible();
-  await expect(page.getByTestId('inventory')).toBeHidden();
-  await expect(page.getByTestId('inv-storage-grid')).toBeVisible();
-  const storedOre = page.getByTestId('inv-storage-cell-iron');
-  await expect(storedOre).toBeVisible();
-  await expect(storedOre).toHaveAttribute('title', /Iron.*Quantum Storage.*Select/);
-  await storedOre.click();
-  await expect(page.getByTestId('inv-storage-detail')).toContainText(/Iron/);
-  await expect(page.getByTestId('inv-withdraw-iron-all')).toHaveAttribute('title', /Withdraw all/);
+  await expect(page.getByTestId('storage-panel')).toBeHidden();
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('storage-panel')).toBeHidden();
 });
 
 test('reset returns to a fresh game', async ({ page }) => {
-  // Buy a ship so the reset has something to undo.
-  await page.getByTestId('menu-shipyard').click();
-  await page.evaluate(() => document.querySelector('[data-testid="buy-falcon"]').click());
+  // Acquire a blueprint so the reset has progression to undo.
+  await page.getByTestId('menu-market').click();
+  await page.getByTestId('buy-blueprint-weapon-t1').click();
   await expect(async () => {
     const s = await getState(page);
-    expect(s.ships.length).toBe(2);
+    expect(s.blueprints).toHaveLength(1);
   }).toPass({ timeout: 5000 });
 
   await page.request.post('/api/reset');
   await page.reload();
   await page.getByTestId('mode-demo').click();
   await expect(page.getByTestId('context-state')).toHaveText(/\S/, { timeout: 15000 });
-  expect((await getState(page)).isk).toBe(10000);
   const s = await getState(page);
   expect(s.ships.length).toBe(1);
+  expect(s.blueprints).toHaveLength(0);
 });
 
 test('market: buy and fit a mining drone control module', async ({ page }) => {
@@ -995,13 +1115,26 @@ test('market: buy and fit a mining drone control module', async ({ page }) => {
   await expect.poll(() => page.getByTestId('market-layout').evaluate((element) =>
     getComputedStyle(element).gridTemplateColumns.split(' ').length
   )).toBe(2);
-  await page.getByTestId('buy-blueprint-miningDrone-t1').click();
+  const purchaseRow = page.getByTestId('market-blueprint-miningDrone-t1');
+  const purchaseButton = page.getByTestId('buy-blueprint-miningDrone-t1');
+  const otherPurchaseButton = page.getByTestId('buy-blueprint-weapon-t1');
+  await expect(otherPurchaseButton).toBeEnabled();
+  await purchaseButton.click();
+  await expect(purchaseRow).toHaveClass(/market-purchase-flash/);
+  await expect(purchaseButton).toBeDisabled();
+  await expect(otherPurchaseButton).toBeEnabled();
   await expect(async () => {
     const s = await getState(page);
     expect(s.blueprints.some((blueprint) => blueprint.type === 'miningDrone' && blueprint.tier === 1)).toBe(true);
   }).toPass({ timeout: 5000 });
-  await page.getByTestId('menu-industry').click();
-  await page.getByTestId('craft-miningDrone-t1').click();
+  await expect(purchaseRow).not.toHaveClass(/market-purchase-flash/, { timeout: 2000 });
+  await expect(purchaseButton).toBeEnabled();
+  const blueprint = (await getState(page)).blueprints.find((item) => item.type === 'miningDrone');
+  await page.getByTestId('menu-cargo').click();
+  await page.getByTestId('cargo-filter-blueprints').click();
+  await page.getByTestId(`inv-cell-${blueprint.id}`).click();
+  await expect(page.getByTestId(`inv-crafting-panel-${blueprint.id}`)).toBeVisible();
+  await page.getByTestId(`craft-blueprint-${blueprint.id}`).click();
   await expect(async () => {
     const s = await getState(page);
     expect(s.loot).toHaveLength(1);
@@ -1016,13 +1149,10 @@ test('market: buy and fit a mining drone control module', async ({ page }) => {
   }).toPass({ timeout: 5000 });
 });
 
-test('industry: the hangar lists module blueprints craftable from ore', async ({ page }) => {
-  await page.getByTestId('menu-industry').click();
-  await expect(page.getByTestId('hangar')).toBeVisible();
-  await expect(page.getByTestId('hangar-industry')).toBeVisible();
-  // A weapon blueprint with a mineral recipe is listed (not craftable: no ore).
-  await expect(page.getByTestId('craft-weapon-t1')).toBeVisible();
-  await expect(page.getByTestId('craft-weapon-t1')).toBeDisabled();
+test('cargo shows crafting actions only for owned blueprints', async ({ page }) => {
+  await page.getByTestId('cargo-filter-blueprints').click();
+  await expect(page.getByTestId('inv-detail')).toContainText('Select an item');
+  await expect(page.getByTestId('menu-industry')).toHaveCount(0);
 });
 
 test('auto-pilot modes are selected directly and the active mode toggles off', async ({ page }) => {
@@ -1034,9 +1164,10 @@ test('auto-pilot modes are selected directly and the active mode toggles off', a
   await expect(page.getByTestId('auto-log')).toHaveCount(0);
   await expect(page.getByTestId('auto-log-panel')).toHaveCount(0);
   // Auto flies to the nearest belt, where it starts mining.
+  await expect.poll(async () => (await getState(page)).stats.totalMineralsMined, { timeout: 30000 })
+    .toBeGreaterThan(0);
   await expect(page.getByTestId('context')).toContainText('Mining', { timeout: 30000 });
   await expect(page.getByTestId('context-state')).toContainText('Mining', { timeout: 5000 });
-  await expect(page.getByTestId('context-log')).toContainText(/Mined \d+ ore/);
   await page.getByTestId('auto-mine-hunt').click();
   await expect(page.getByTestId('auto-mine-hunt')).toHaveClass(/auto-mode-selected/);
   await expect(page.getByTestId('auto-mine')).not.toHaveClass(/auto-mode-selected/);
@@ -1112,7 +1243,16 @@ test('storyline: pilot training from rookie to certification (m1â€“m8) unlo
 
   // m5 â€” Mining 101: warp to a belt and mine 40 ore.
   await expect(page.getByTestId('mission-tracker')).toContainText('Mining 101');
-  await warpUntil(page, (await getState(page)).world.belts[0].id, (s) => s.mission.active === 'm6');
+  const belt = (await getState(page)).world.belts[0];
+  await page.evaluate((id) => window.__eve.warp(id), belt.id);
+  await expect(page.getByTestId('mine-btn')).toBeEnabled({ timeout: 30000 });
+  for (let i = 0; i < 20 && (await getState(page)).mission.active === 'm5'; i++) {
+    await manualMine(page);
+  }
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.mission.active).toBe('m6');
+  }).toPass({ timeout: 10000 });
 
   // m6 â€” Rogue Drones: destroy the drone hub and earn a mining drone.
   await killMissionEnemy(page, 'dronhub');
@@ -1134,10 +1274,14 @@ test('storyline: pilot training from rookie to certification (m1â€“m8) unlo
     megacyte: w.megacyte + sh.megacyte,
   });
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
-  await page.getByTestId('menu-industry').click();
-  await expect(page.getByTestId('hangar-industry')).toBeVisible();
-  await page.getByTestId('craft-weapon-t1').click();
-  await page.getByTestId('craft-shield-t2').click();
+  const blueprints = (await getState(page)).blueprints;
+  await page.getByTestId('cargo-filter-blueprints').click();
+  for (const type of ['weapon', 'shield']) {
+    const blueprint = blueprints.find((item) => item.kind === 'module' && item.type === type);
+    expect(blueprint).toBeTruthy();
+    await page.getByTestId(`inv-cell-${blueprint.id}`).click();
+    await page.getByTestId(`craft-blueprint-${blueprint.id}`).click();
+  }
 
   // m8 â€” Certification: accept it and the jump gates unlock.
   await expect(async () => {
@@ -1194,6 +1338,11 @@ async function mineNeededOre(page, needs) {
     if (!rock) throw new Error('No asteroid for missing mineral: ' + missing[0][0]);
     await page.evaluate(([x, y]) => window.__eve.warp(null, { x, y }), [rock.x, rock.y]);
     await page.waitForTimeout(300);
+    const response = await page.request.post('/api/mine');
+    if (!response.ok()) {
+      const error = (await response.json()).error || 'Manual mining failed';
+      if (!/range/i.test(error)) throw new Error(error);
+    }
   }
   throw new Error('gave up mining the forge ore');
 }

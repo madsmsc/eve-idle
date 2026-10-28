@@ -103,7 +103,7 @@ function serveStatic(req, res, pathname, liveReload = false) {
 // mode keeps its own progress, so switching modes never clobbers the other.
 function normalizeStore(loaded) {
   const migrate = (state) => {
-    const current = game.migrateEconomy(state);
+    const current = game.migrateAgentMissionState(game.migrateEconomy(state));
     return game.isValidState(current) ? game.migrateWorldLayout(current) : null;
   };
   if (loaded && typeof loaded === 'object' && (loaded.demo || loaded.story || loaded.__slots)) {
@@ -176,6 +176,13 @@ function createApp({ dataFile, liveReload = false } = {}) {
     switch (action) {
       case 'tick': {
         state = game.tick(state, now);
+        persist();
+        return { state };
+      }
+      case 'mine': {
+        const r = game.mine(state, now);
+        if (r.error) return r;
+        state = r.state;
         persist();
         return { state };
       }
@@ -271,14 +278,14 @@ function createApp({ dataFile, liveReload = false } = {}) {
         return { state };
       }
       case 'craft-module': {
-        const r = game.craftModule(state, payload.slotType, payload.tier);
+        const r = game.craftModule(state, payload.slotType, payload.tier, payload.blueprintId);
         if (r.error) return r;
         state = r.state;
         persist();
         return { state };
       }
       case 'craft-ship': {
-        const r = game.craftShip(state, payload.type);
+        const r = game.craftShip(state, payload.type, payload.blueprintId);
         if (r.error) return r;
         state = r.state;
         persist();
@@ -362,7 +369,7 @@ function createApp({ dataFile, liveReload = false } = {}) {
         return { state };
       }
       case 'agent-mission': {
-        const r = game.agentMissionAction(state, payload.action, now);
+        const r = game.agentMissionAction(state, payload.action, payload.agentId, now);
         if (r.error) return r;
         state = r.state;
         persist();
@@ -408,6 +415,7 @@ function createApp({ dataFile, liveReload = false } = {}) {
           modules: game.MODULES,
           skills: game.SKILLS,
           achievements: game.ACHIEVEMENTS,
+          agentRoles: game.AGENT_ROLES,
           agentMissions: game.AGENT_MISSIONS,
           minerals: game.MINERALS,
           components: game.COMPONENTS,
@@ -428,6 +436,7 @@ function createApp({ dataFile, liveReload = false } = {}) {
             dockRange: cfg.DOCK_RANGE,
             gateRange: cfg.GATE_RANGE,
             maxSpeed: cfg.MAX_SPEED,
+            maxAcceleration: cfg.MAX_ACCELERATION,
             maxThrust: cfg.MAX_THRUST,
             damping: cfg.DAMPING,
             arriveRadius: cfg.ARRIVE_RADIUS,

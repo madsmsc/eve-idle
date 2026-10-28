@@ -117,7 +117,23 @@ describe('HTTP API', () => {
     assert.ok(s.ambush && Object.keys(s.ambush).length === 3);
     assert.ok(s.skillTraining.gunnery);
     assert.equal(typeof s.shipProgression.falcon.canBuild, 'boolean');
-    assert.ok(s.agentMission.offer);
+    assert.equal(s.agentMission.agents.length, 3);
+    assert.equal(s.agentMission.station.name, s.dockedStation);
+  });
+
+  test('agent missions are station-specific and can be accepted from multiple agents', async () => {
+    const state = (await api(srv.base, '/api/state')).data.state;
+    const [security, mining] = state.agentMission.agents;
+    const first = await api(srv.base, '/api/agent-mission', { action: 'accept', agentId: security.id });
+    assert.equal(first.status, 200);
+    const second = await api(srv.base, '/api/agent-mission', { action: 'accept', agentId: mining.id });
+    assert.equal(second.status, 200);
+    assert.equal(second.data.state.agentMission.active.length, 2);
+
+    await api(srv.base, '/api/launch', {});
+    const rejected = await api(srv.base, '/api/agent-mission', { action: 'accept', agentId: security.id });
+    assert.equal(rejected.status, 400);
+    assert.match(rejected.data.error, /dock/i);
   });
 
   test('POST /api/tick advances movement from server navigation and ignores client positions', async () => {
@@ -172,12 +188,12 @@ describe('HTTP API', () => {
   test('POST /api/craft-ship builds a ship using a found blueprint and materials', async () => {
     const state = srv.app.getState();
     state.skills.miningYield = 1;
-    state.blueprints.push({ id: 'found-falcon', kind: 'ship', type: 'falcon', tier: null });
+    state.storage.blueprints.push({ id: 'found-falcon', kind: 'ship', type: 'falcon', tier: null });
     srv.app.setState(state);
-    const r = await api(srv.base, '/api/craft-ship', { type: 'falcon' });
+    const r = await api(srv.base, '/api/craft-ship', { type: 'falcon', blueprintId: 'found-falcon' });
     assert.equal(r.status, 200);
     assert.equal(r.data.state.ships.length, 2);
-    assert.equal(r.data.state.blueprints.length, 0);
+    assert.equal(r.data.state.storage.blueprints.length, 0);
   });
 
   test('POST /api/exchange-items trades a 3:1 material stack', async () => {
@@ -390,19 +406,42 @@ describe('HTTP API', () => {
     assert.equal(r.data.state.loot.length, 0);
   });
 
+  test('POST /api/equip-loot equips a module directly from Quantum Storage', async () => {
+    const cur = srv.app.getState();
+    cur.storage.loot.push({ id: 'stored-loot-api', slotType: 'weapon', tier: 1 });
+    srv.app.setState(cur);
+    const r = await api(srv.base, '/api/equip-loot', { lootId: 'stored-loot-api' });
+    assert.equal(r.status, 200);
+    const ship = r.data.state.ships.find((item) => item.id === r.data.state.activeShipId);
+    assert.equal(ship.fitting.weapon[0], 1);
+    assert.equal(r.data.state.storage.loot.length, 0);
+  });
+
+  test('POST /api/refine-loot salvages a module directly from Quantum Storage', async () => {
+    const cur = srv.app.getState();
+    const scrapBefore = cur.storage.items.scrap;
+    cur.storage.loot.push({ id: 'stored-salvage-api', slotType: 'weapon', tier: 1 });
+    srv.app.setState(cur);
+    const r = await api(srv.base, '/api/refine-loot', { lootId: 'stored-salvage-api' });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.state.storage.loot.length, 0);
+    assert.equal(r.data.state.storage.items.scrap, scrapBefore + 1);
+  });
+
   test('POST /api/craft-module turns ore into a looted module', async () => {
     const cur = srv.app.getState();
     const active = cur.ships.find((s) => s.id === cur.activeShipId);
-    cur.blueprints.push({ id: 'weapon-blueprint', kind: 'module', type: 'weapon', tier: 1 });
+    cur.storage.blueprints.push({ id: 'weapon-blueprint', kind: 'module', type: 'weapon', tier: 1 });
     for (const [key, amount] of Object.entries(cfg.BLUEPRINTS.weapon[1].recipe)) {
       cur.storage.items[key] += amount;
     }
     srv.app.setState(cur);
-    const r = await api(srv.base, '/api/craft-module', { slotType: 'weapon', tier: 1 });
+    const r = await api(srv.base, '/api/craft-module', { slotType: 'weapon', tier: 1, blueprintId: 'weapon-blueprint' });
     assert.equal(r.status, 200);
     assert.equal(r.data.state.loot.length, 1);
     assert.equal(r.data.state.loot[0].slotType, 'weapon');
     assert.equal(r.data.state.loot[0].tier, 1);
+    assert.equal(r.data.state.storage.blueprints.length, 0);
   });
 
   test('POST /api/craft-module rejects when the ore is missing (400)', async () => {
@@ -533,14 +572,17 @@ describe('HTTP API', () => {
     assert.match(wd.data.error, /dock/i);
   });
 
-  test('mining works over HTTP: fly to an asteroid, tick, cargo grows', async () => {
+  test('manual mining works over HTTP and ordinary ticks do not mine', async () => {
     const st = (await api(srv.base, '/api/state')).data.state;
     const a = st.world.asteroids.find((x) => x.amount > 0);
     await flyTo(srv.base, a.x, a.y);
-    const r = await api(srv.base, '/api/tick', {});
-    assert.equal(r.status, 200);
-    assert.ok(r.data.state.stats.totalMineralsMined > 0);
-    assert.ok(Object.values(r.data.state.minerals).some((amount) => amount > 0));
+    const tick = await api(srv.base, '/api/tick', {});
+    assert.equal(tick.status, 200);
+    assert.equal(tick.data.state.stats.totalMineralsMined, 0);
+    const mined = await api(srv.base, '/api/mine', {});
+    assert.equal(mined.status, 200);
+    assert.ok(mined.data.state.stats.totalMineralsMined > 0);
+    assert.ok(Object.values(mined.data.state.minerals).some((amount) => amount > 0));
   });
 
   test('POST /api/warp moves the ship to a POI in its system', async () => {

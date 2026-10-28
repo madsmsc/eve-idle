@@ -31,6 +31,12 @@ export class Player extends Node {
     if (this.serverTarget && this.serverTargetAge >= 0.1) {
       accelerationX = (velocityX - this.serverTarget.vx) / this.serverTargetAge;
       accelerationY = (velocityY - this.serverTarget.vy) / this.serverTargetAge;
+      const maxAcceleration = (this.app.constants && this.app.constants.maxAcceleration) || 180;
+      const acceleration = Math.hypot(accelerationX, accelerationY);
+      if (acceleration > maxAcceleration) {
+        accelerationX = (accelerationX / acceleration) * maxAcceleration;
+        accelerationY = (accelerationY / acceleration) * maxAcceleration;
+      }
     }
     this.serverTarget = {
       x: ship.x,

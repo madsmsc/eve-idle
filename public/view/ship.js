@@ -110,7 +110,13 @@ export class ShipNode extends Node {
 
   // PUBLIC
   async doEngage() {
-    const ok = await this.app.doAction('engage', { enemyId: this.app.targetEnemyId });
+    const target = this.app.state.world.enemies.find((enemy) =>
+      enemy.id === this.app.targetEnemyId &&
+      enemy.alive &&
+      dist(enemy.x, enemy.y, this.app.player.x, this.app.player.y) <= this.app.constants.engageRange
+    );
+    const enemyId = target ? target.id : this.app.state.nearby.enemyId;
+    const ok = await this.app.doAction('engage', { enemyId });
     if (ok) this.app.toast('Engaged!');
   }
 
@@ -208,9 +214,10 @@ export class ShipNode extends Node {
     if (sp > 10) {
       ctx.globalAlpha = clamp(sp / this.app.constants.maxSpeed, 0.2, 0.9);
       ctx.fillStyle = '#4fd1ff';
+      const trailLength = 3 * (0.2 + 0.5 * (sp / this.app.constants.maxSpeed));
       ctx.beginPath();
       ctx.moveTo(-s * 0.25, s * 0.7);
-      ctx.lineTo(0, s * (0.9 + 0.5 * (sp / this.app.constants.maxSpeed)));
+      ctx.lineTo(0, s * (0.7 + trailLength));
       ctx.lineTo(s * 0.25, s * 0.7);
       ctx.closePath();
       ctx.fill();

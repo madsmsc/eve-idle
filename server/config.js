@@ -351,12 +351,44 @@ const MISSIONS = {
   },
 };
 
-const AGENT_MISSIONS = [
-  { key: 'pirate-hunt', name: 'Pirate Hunt', objective: 'Destroy 3 pirate ships', type: 'kill', enemyType: 'pirate', target: 3, rewardItems: { scrap: 9 } },
-  { key: 'ore-haul', name: 'Ore Haul', objective: 'Mine 100 units of ore', type: 'mine', target: 100, rewardItems: { alloy: 3 } },
-  { key: 'field-survey', name: 'Field Survey', objective: 'Mine 200 units of ore', type: 'mine', target: 200, rewardItems: { scrap: 6 } },
+const AGENT_ROLES = [
+  {
+    key: 'security',
+    name: 'Security',
+    titles: ['Security Agent', 'Combat Liaison', 'Patrol Coordinator'],
+    agents: ['Ari Venn', 'Kara Sol', 'Dara Voss', 'Tomas Iren', 'Niko Pell', 'Mira Dane'],
+  },
+  {
+    key: 'mining',
+    name: 'Mining',
+    titles: ['Mining Agent', 'Field Surveyor', 'Resource Coordinator'],
+    agents: ['Sela Orin', 'Rhea Korr', 'Evan Quill', 'Juno Marr', 'Tavi Renn', 'Oren Vale'],
+  },
+  {
+    key: 'industry',
+    name: 'Industry',
+    titles: ['Industry Agent', 'Production Liaison', 'Supply Coordinator'],
+    agents: ['Lio Varda', 'Nara Pell', 'Cato Mire', 'Vera Sorn', 'Ilan Rusk', 'Suri Kade'],
+  },
 ];
-const AGENT_MISSION_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+const AGENT_MISSIONS = {
+  security: [
+    { key: 'pirate-patrol', name: 'Pirate Patrol', objective: 'Destroy 3 pirate ships', type: 'kill', enemyType: 'pirate', target: 3, rewardItems: { scrap: 9 } },
+    { key: 'gang-suppression', name: 'Gang Suppression', objective: 'Destroy 2 gang ships', type: 'kill', enemyType: 'gang', target: 2, rewardItems: { alloy: 2 } },
+    { key: 'security-sweep', name: 'Security Sweep', objective: 'Destroy 4 hostile ships', type: 'kill', target: 4, rewardItems: { scrap: 12 } },
+  ],
+  mining: [
+    { key: 'ore-survey', name: 'Ore Survey', objective: 'Mine 100 units of ore', type: 'mine', target: 100, rewardItems: { alloy: 3 } },
+    { key: 'field-sample', name: 'Field Samples', objective: 'Mine 200 units of ore', type: 'mine', target: 200, rewardItems: { scrap: 8 } },
+    { key: 'deep-field-haul', name: 'Deep-field Haul', objective: 'Mine 300 units of ore', type: 'mine', target: 300, rewardItems: { alloy: 5 } },
+  ],
+  industry: [
+    { key: 'module-order', name: 'Module Order', objective: 'Craft 1 module or ship', type: 'craft', target: 1, rewardItems: { alloy: 3 } },
+    { key: 'production-run', name: 'Production Run', objective: 'Craft 3 modules or ships', type: 'craft', target: 3, rewardItems: { circuits: 2 } },
+    { key: 'fabrication-contract', name: 'Fabrication Contract', objective: 'Craft 5 modules or ships', type: 'craft', target: 5, rewardItems: { circuits: 3 } },
+  ],
+};
 
 // ---- spatial world ----
 const WORLD_SIZE = 8000;        // world is WORLD_SIZE x WORLD_SIZE units
@@ -369,9 +401,10 @@ const MINING_RANGE = 160;       // must be this close to an asteroid to mine it
 const ENGAGE_RANGE = 240;       // must be this close to an enemy to engage it
 const DOCK_RANGE = 260;         // must be this close to a station to dock/trade
 const GATE_RANGE = 320;         // must be this close to a gate to jump systems
-const MAX_SPEED = 600;          // units/sec
+const MAX_SPEED = 1200;         // units/sec
+const MAX_ACCELERATION = 180;   // units/sec^2
 const MAX_THRUST = 260;         // legacy constant retained for catalog compatibility
-const DAMPING = 0.985;          // per-frame velocity damping
+const DAMPING = 0.985;          // legacy constant retained for catalog compatibility
 const ARRIVE_RADIUS = 24;       // click-to-move arrival radius
 const STATE_VERSION = 16;
 
@@ -413,8 +446,8 @@ module.exports = {
   SHIP_BLUEPRINTS,
   MISSION_ORDER,
   MISSIONS,
+  AGENT_ROLES,
   AGENT_MISSIONS,
-  AGENT_MISSION_COOLDOWN_MS,
   WORLD_SIZE,
   ASTEROID_FIELDS,
   ASTEROIDS_PER_FIELD,
@@ -426,6 +459,7 @@ module.exports = {
   DOCK_RANGE,
   GATE_RANGE,
   MAX_SPEED,
+  MAX_ACCELERATION,
   MAX_THRUST,
   DAMPING,
   ARRIVE_RADIUS,

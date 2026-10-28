@@ -395,6 +395,37 @@ describe('EnemyNode status labels', () => {
 });
 
 describe('Ship destination indicator', () => {
+  test('thruster trail is three times its original length at the same speed', async () => {
+    const { ShipNode } = await import('../public/view/ship.js');
+    const lineTos = [];
+    const ctx = {
+      save() {},
+      restore() {},
+      translate() {},
+      rotate() {},
+      beginPath() {},
+      moveTo() {},
+      lineTo(x, y) { lineTos.push([x, y]); },
+      closePath() {},
+      arc() {},
+      fill() {},
+      stroke() {},
+    };
+    const app = {
+      ctx,
+      canvas: { width: 800, height: 600 },
+      camera: { zoom: 1, worldToScreen: () => ({ x: 400, y: 300 }) },
+      constants: { maxSpeed: 1000 },
+      player: { destination: null, heading: 0, vx: 500, vy: 0 },
+      state: { docked: false, miningTargetId: null, combat: null, world: { enemies: [], asteroids: [] } },
+      targetEnemyId: null,
+    };
+
+    new ShipNode(app).render(0);
+
+    assert.ok(lineTos.some(([x, y]) => x === 0 && Math.abs(y - 45.1) < 0.001));
+  });
+
   test('hides the blue destination crosshair when the destination is the selected rat', async () => {
     const { ShipNode } = await import('../public/view/ship.js');
     const calls = { arcs: 0, strokes: 0 };
@@ -637,6 +668,7 @@ describe('Player server-authoritative motion', () => {
   test('smoothly predicts acceleration between server updates', async () => {
     const { Player } = await import('../public/core/player.js');
     const app = {
+      constants: { maxAcceleration: 1000 },
       state: { world: { enemies: [], asteroids: [] } },
     };
     const player = new Player(app);
@@ -654,6 +686,19 @@ describe('Player server-authoritative motion', () => {
 
     assert.ok(positions[1] - positions[0] > positions[0] - 40);
     assert.ok(positions[4] > positions[0]);
+  });
+
+  test('caps predicted acceleration to the server movement limit', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const player = new Player({
+      constants: { maxAcceleration: 180 },
+      state: { world: { enemies: [], asteroids: [] } },
+    });
+    player.setServerState({ x: 0, y: 0, vx: 0, vy: 0, heading: 0 }, null);
+    player.serverTargetAge = 0.2;
+    player.setServerState({ x: 0, y: 0, vx: 1000, vy: 1000, heading: 0 }, null);
+
+    assert.ok(Math.hypot(player.serverTarget.ax, player.serverTarget.ay) <= 180.001);
   });
 });
 

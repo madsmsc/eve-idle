@@ -1,7 +1,6 @@
 'use strict';
 
-// The hangar / market overlay: fleet, skills, barter, industry,
-// shipyard and killboard. Its DOM is rebuilt when the
+// The hangar / market overlay: ship tree, skills, and barter. Its DOM is rebuilt when the
 // overlay opens or when state changes while it is open.
 import { Node } from '../core/node.js';
 import { fmt } from '../core/util.js';
@@ -16,13 +15,37 @@ function recipeText(recipe, catalog) {
   return Object.entries(recipe).map(([key, amount]) => `${fmt(amount)} ${itemName(catalog, key)}`).join(' + ');
 }
 
+function shipModelMarkup(type) {
+  const hulls = {
+    rifter: 'M50 4 61 34 56 52 50 46 44 52 39 34Z M39 34 23 43 31 48 45 42 M61 34 77 43 69 48 55 42',
+    falcon: 'M50 5 61 34 87 48 68 47 58 57 50 49 42 57 32 47 13 48 39 34Z M50 10 54 37 50 43 46 37Z',
+    raptor: 'M50 3 58 29 82 48 61 45 56 56 50 49 44 56 39 45 18 48 42 29Z M50 8 53 36 50 42 47 36Z',
+    vexor: 'M50 5 59 34 76 41 70 50 57 46 52 57 48 57 43 46 30 50 24 41 41 34Z M24 41 9 51 29 48 M76 41 91 51 71 48',
+    gnosis: 'M50 6 65 22 71 43 59 55 41 55 29 43 35 22Z M35 26 18 36 31 39 M65 26 82 36 69 39 M42 24 50 15 58 24 56 43 50 49 44 43Z',
+    manticore: 'M50 3 59 30 94 46 70 48 58 57 50 48 42 57 30 48 6 46 41 30Z M50 9 54 37 50 43 46 37Z',
+    brutix: 'M50 5 64 18 70 37 83 48 64 49 58 58 42 58 36 49 17 48 30 37 36 18Z M40 23 50 15 60 23 57 43 50 49 43 43Z M30 37 12 41 23 49 M70 37 88 41 77 49',
+  };
+  return `<svg viewBox="0 0 100 64" aria-hidden="true"><path class="ship-model-hull" d="${hulls[type] || hulls.rifter}"/><path class="ship-model-core" d="M50 13 55 31 50 40 45 31Z"/></svg>`;
+}
+
 export class HangarNode extends Node {
+  // PUBLIC
+  constructor(app) {
+    super(app);
+    this.pendingBlueprintPurchases = new Set();
+    this.blueprintPurchaseCooldowns = new Map();
+  }
+
   // PUBLIC
   refresh() {
     this.#renderHangar();
-    this.#renderCombatLog();
     this.app.ui.inventory.renderFitting();
     this.app.ui.inventory.renderStorage();
+    if (!this.app.state.docked) {
+      document.querySelectorAll('#hangar button[data-action]').forEach((button) => {
+        button.disabled = true;
+      });
+    }
     return this;
   }
   // Display one station service selected from the persistent menu rail.
@@ -33,29 +56,90 @@ export class HangarNode extends Node {
       section.classList.toggle('active', section.dataset.panel === name);
     });
   }
+
+  // PUBLIC
+  async buyBlueprint(type, tier) {
+    const key = `${type}:${tier}`;
+    if (this.pendingBlueprintPurchases.has(key)) return false;
+    const expiresAt = this.blueprintPurchaseCooldowns.get(key) || 0;
+    if (expiresAt > Date.now()) return false;
+
+    this.pendingBlueprintPurchases.add(key);
+    this.#renderHangar();
+    const success = await this.app.doAction('buy-blueprint', { kind: 'module', type, tier });
+    this.pendingBlueprintPurchases.delete(key);
+    if (!success) {
+      this.#renderHangar();
+      return false;
+    }
+
+    const cooldownEndsAt = Date.now() + 1000;
+    this.blueprintPurchaseCooldowns.set(key, cooldownEndsAt);
+    this.#renderHangar();
+    setTimeout(() => {
+      if (this.blueprintPurchaseCooldowns.get(key) !== cooldownEndsAt) return;
+      this.blueprintPurchaseCooldowns.delete(key);
+      this.#renderHangar();
+    }, Math.max(0, cooldownEndsAt - Date.now()));
+    return true;
+  }
+
   // PRIVATE
   #renderHangar() {
     const state = this.app.state;
     const catalog = this.app.catalog;
-    const docked = !!state.docked;
 
-    const fleet = document.getElementById('hangar-fleet');
-    fleet.innerHTML = '';
-    if (!state.ships.length) {
-      fleet.innerHTML = '<div class="row"><span class="sub">No ships in fleet.</span></div>';
+    const shipTree = document.getElementById('hangar-ship-tree');
+    shipTree.innerHTML = '';
+    const flow = document.createElement('div');
+    flow.className = 'ship-tree-flow';
+    for (let tierIndex = 0; tierIndex < catalog.shipProgression.length; tierIndex++) {
+      const tier = catalog.shipProgression[tierIndex];
+      const column = document.createElement('section');
+      column.className = 'ship-tree-tier';
+      column.dataset.testid = `ship-tree-tier-${tier.tier}`;
+      const header = document.createElement('h3');
+      header.textContent = `Tier ${tier.tier}`;
+      column.appendChild(header);
+      for (const entry of tier.ships) {
+        const definition = catalog.ships[entry.type];
+        const progression = state.shipProgression[entry.type];
+        const ownedShips = state.ships.filter((ship) => ship.type === entry.type);
+        const missingSkills = entry.skills
+          .filter(({ skill, level }) => state.skillTraining[skill].level < level)
+          .map(({ skill, level }) => `${catalog.skills[skill].name} ${level} (you have ${state.skillTraining[skill].level})`);
+        const row = document.createElement('div');
+        row.className = `ship-tree-entry ${progression.skillsReady ? 'skill-ready' : 'skills-locked'}`;
+        row.dataset.testid = `ship-tree-${entry.type}`;
+        const ownedText = ownedShips.length ? ` · Owned: ${ownedShips.length}` : '';
+        const statusText = progression.skillsReady
+          ? `Skills ready${progression.blueprintReady ? ' · Blueprint acquired' : ' · Blueprint not acquired'}`
+          : `Requires ${missingSkills.join(', ')}`;
+        const actions = ownedShips.map((ship) => {
+          const isActive = state.activeShipId === ship.id;
+          return `<button class="mini" data-action="set-active" data-id="${ship.id}" data-testid="ship-${ship.id}-active" ${isActive ? 'disabled' : ''}>${isActive ? 'Active' : 'Use ship'}</button>`;
+        }).join('');
+        row.innerHTML = `
+          <div class="ship-tree-model" title="${definition.name} hull model">${shipModelMarkup(entry.type)}</div>
+          <div class="ship-tree-info">
+            <strong>${definition.name}</strong>
+            <span class="sub">${definition.mining}/s mining · ${definition.combat} combat · ${fmt(definition.cargo)} cargo</span>
+            <span class="ship-tree-status">${statusText}${ownedText}</span>
+            <span class="actions">${actions}</span>
+          </div>`;
+        column.appendChild(row);
+      }
+      flow.appendChild(column);
+      if (tierIndex < catalog.shipProgression.length - 1) {
+        const arrow = document.createElement('div');
+        arrow.className = 'ship-tree-arrow';
+        arrow.dataset.testid = `ship-tree-arrow-${tier.tier}-${catalog.shipProgression[tierIndex + 1].tier}`;
+        arrow.setAttribute('aria-hidden', 'true');
+        arrow.innerHTML = '<svg viewBox="0 0 36 24"><path d="M2 12h27M20 3l9 9-9 9"/></svg>';
+        flow.appendChild(arrow);
+      }
     }
-    for (const s of state.ships) {
-      const isActive = state.activeShipId === s.id;
-      const inCombat = state.combat && state.combat.shipId === s.id;
-      const row = document.createElement('div');
-      row.className = 'row' + (isActive ? ' active' : '');
-      row.innerHTML = `
-        <span class="label">${s.name} <span class="sub">⛏${s.mining.toFixed(0)}/s · ⚔${s.combat.toFixed(0)}${isActive ? ' · active' : ''}${inCombat ? ' · in combat' : ''}</span></span>
-        <span class="actions">
-          <button class="mini" data-action="set-active" data-id="${s.id}" data-testid="ship-${s.id}-active" ${isActive ? 'disabled' : ''}>Active</button>
-        </span>`;
-      fleet.appendChild(row);
-    }
+    shipTree.appendChild(flow);
 
     const skills = document.getElementById('hangar-skills');
     const spLabel = document.getElementById('hangar-sp');
@@ -92,100 +176,7 @@ export class HangarNode extends Node {
       achievementsEl.appendChild(row);
     }
 
-    const agentPanel = document.getElementById('hangar-agent-missions');
-    const cooldown = document.getElementById('agent-mission-cooldown');
-    agentPanel.innerHTML = '';
-    const agent = state.agentMission;
-    if (agent.active) {
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = `<span class="label">${agent.active.name} <span class="sub">${agent.active.objective} · ${fmt(agent.active.progress)}/${fmt(agent.active.target)} · reward ${recipeText(agent.active.rewardItems || {}, catalog)}</span></span><span class="actions"><button class="mini danger" data-action="cancel-agent-mission">Cancel</button></span>`;
-      agentPanel.appendChild(row);
-    } else if (agent.available) {
-      const offer = agent.offer;
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = `<span class="label">${offer.name} <span class="sub">${offer.objective} · reward ${recipeText(offer.rewardItems || {}, catalog)}</span></span><span class="actions"><button class="mini" data-action="accept-agent-mission" data-testid="accept-agent-mission">Accept</button></span>`;
-      agentPanel.appendChild(row);
-      cooldown.textContent = 'available';
-    } else {
-      cooldown.textContent = `${Math.ceil(agent.remainingMs / 3600000)}h`;
-      const note = document.createElement('div');
-      note.className = 'row';
-      note.textContent = agent.completed ? `${agent.completed} complete — next contract in ${cooldown.textContent}.` : `Next contract in ${cooldown.textContent}.`;
-      agentPanel.appendChild(note);
-    }
-    if (agent.active) cooldown.textContent = 'in progress';
-
-    const industry = document.getElementById('hangar-industry');
-    industry.innerHTML = '';
-    if (!docked) {
-      const note = document.createElement('div');
-      note.className = 'row';
-      note.innerHTML = '<span class="sub">Dock at a station to manufacture. Blueprints are consumed when used.</span>';
-      industry.appendChild(note);
-    }
-    for (const slotType of Object.keys(catalog.blueprints)) {
-      for (const tier of Object.keys(catalog.blueprints[slotType])) {
-        const bp = catalog.blueprints[slotType][tier];
-        const recipe = recipeText(bp.recipe, catalog);
-        const readiness = state.actionAvailability.craftModules[`${slotType}:${tier}`];
-        const requirements = Object.entries(bp.recipe).map(([key, amount]) =>
-          `${fmt(readiness.materialCounts[key])}/${fmt(amount)} ${itemName(catalog, key)}`
-        ).join(' · ');
-        const row = document.createElement('div');
-        row.className = 'row';
-        row.innerHTML = `
-          <span class="label">${bp.name} <span class="sub">${recipe} · ${requirements} · ${readiness.hasBlueprint ? 'blueprint ready' : 'blueprint required'}</span></span>
-          <span class="actions"><button class="mini" data-action="craft-module" data-slot="${bp.slotType}" data-tier="${bp.tier}" data-testid="craft-${slotType}-t${bp.tier}" ${readiness.canCraft ? '' : 'disabled'}>Craft</button></span>`;
-        industry.appendChild(row);
-      }
-    }
-
-    const shop = document.getElementById('hangar-shop');
-    shop.innerHTML = '';
-    if (!docked) {
-      const note = document.createElement('div');
-      note.className = 'row';
-      note.innerHTML = '<span class="sub">Ship blueprints drop as rat loot. Skills and materials are required to build each hull.</span>';
-      shop.appendChild(note);
-    }
-    shop.insertAdjacentHTML('beforeend', '<p class="sub">Ship progression — requirements are checked against your skills and shared/cargo materials.</p>');
-    for (const tier of catalog.shipProgression || []) {
-      const header = document.createElement('div');
-      header.className = 'skill-cat';
-      header.textContent = `Tier ${tier.tier}`;
-      shop.appendChild(header);
-      for (const entry of tier.ships) {
-        const type = entry.type;
-        const blueprint = catalog.shipBlueprints[type];
-        const progression = state.shipProgression[type];
-        const skillRequirements = entry.skills.map((requirement) => {
-          const skill = catalog.skills[requirement.skill];
-          const level = state.skillTraining[requirement.skill].level;
-          return `${skill.name} ${level}/${requirement.level}${level < requirement.level ? ' (missing)' : ''}`;
-        });
-        const hasBlueprint = progression.blueprintReady;
-        const ownedCount = state.ships.filter((ship) => ship.type === type).length;
-        const row = document.createElement('div');
-        row.className = 'row ship-tree-row';
-        const requirements = [
-          skillRequirements.length ? `Skills: ${skillRequirements.join(', ')}` : 'No skill prerequisite',
-          blueprint ? `Materials: ${Object.entries(progression.materials).map(([key, amount]) =>
-            `${fmt(progression.materialCounts[key])}/${fmt(amount)} ${itemName(catalog, key)}`
-          ).join(' · ')}` : 'Starter hull',
-          type === 'rifter' ? 'Starter ship' : hasBlueprint ? 'Blueprint acquired' : 'Blueprint: rat loot',
-          ownedCount ? `Owned: ${ownedCount}` : '',
-        ].filter(Boolean).join(' · ');
-        const action = type === 'rifter'
-          ? '<span class="sub">Starting hull</span>'
-          : `<button class="mini" data-action="craft-ship" data-type="${type}" data-testid="craft-ship-${type}" ${progression.canBuild ? '' : 'disabled'}>Build</button>`;
-        row.innerHTML = `
-          <span class="label">${catalog.ships[type].name} <span class="sub">${requirements}</span></span>
-          <span class="actions">${action}</span>`;
-        shop.appendChild(row);
-      }
-    }
+    this.#renderAgentMissions(state, catalog);
 
     const tradeUp = document.getElementById('market-trade-up');
     const blueprints = document.getElementById('market-blueprints');
@@ -220,9 +211,13 @@ export class HangarNode extends Node {
       const def = catalog.modules[slotType];
       const cost = catalog.blueprintCosts[key];
       const availability = state.actionAvailability.buyBlueprints[key];
+      const purchaseKey = `${slotType}:${tier}`;
+      const cooldownActive = (this.blueprintPurchaseCooldowns.get(purchaseKey) || 0) > Date.now();
+      const purchasePending = this.pendingBlueprintPurchases.has(purchaseKey);
       const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = `<span class="label">${def.name} ${ROMAN[tier]} Blueprint <span class="sub">${recipeText(cost, catalog)}</span></span><span class="actions"><button class="mini" data-action="buy-blueprint" data-kind="module" data-type="${slotType}" data-tier="${tier}" data-testid="buy-blueprint-${slotType}-t${tier}" ${availability.canBuy ? '' : 'disabled'}>Buy blueprint</button></span>`;
+      row.className = `row${purchasePending || cooldownActive ? ' market-purchase-flash' : ''}`;
+      row.dataset.testid = `market-blueprint-${slotType}-t${tier}`;
+      row.innerHTML = `<span class="label">${def.name} ${ROMAN[tier]} Blueprint <span class="sub">${recipeText(cost, catalog)}</span></span><span class="actions"><button class="mini" data-action="buy-blueprint" data-kind="module" data-type="${slotType}" data-tier="${tier}" data-testid="buy-blueprint-${slotType}-t${tier}" ${availability.canBuy && !purchasePending && !cooldownActive ? '' : 'disabled'}>Buy blueprint</button></span>`;
       blueprints.appendChild(row);
     }
     const dropNote = document.createElement('div');
@@ -232,51 +227,115 @@ export class HangarNode extends Node {
   }
 
   // PRIVATE
-  #renderCombatLog() {
-    const log = document.getElementById('combat-log');
-    log.innerHTML = '';
-    const stats = this.app.state.stats || {};
-    const summary = document.createElement('li');
-    summary.className = 'killboard-stats';
-    summary.dataset.testid = 'killboard-stats';
-    summary.innerHTML = `<span>Battles Won <strong>${fmt(stats.combatsWon || 0)}</strong></span><span>Ships Lost <strong>${fmt(stats.shipsLost || 0)}</strong></span>`;
-    log.appendChild(summary);
-    if (!this.app.state.combatLog.length) {
-      const empty = document.createElement('li');
-      empty.className = 'empty';
-      empty.textContent = 'No battles yet.';
-      log.appendChild(empty);
+  #renderAgentMissions(state, catalog) {
+    const panel = document.getElementById('hangar-agent-missions');
+    const summary = document.getElementById('agent-mission-cooldown');
+    const missionView = state.agentMission;
+    panel.innerHTML = '';
+    summary.textContent = missionView.station
+      ? `${missionView.station.name} · Complete contracts to unlock the next offer from each agent.`
+      : 'Dock at a station to meet its agents. Accepted contracts continue progressing in space.';
+
+    const localAgentIds = new Set(missionView.agents.map((agent) => agent.id));
+    const distantContracts = missionView.active.filter((mission) => !localAgentIds.has(mission.agentId));
+    if (distantContracts.length) {
+      const heading = document.createElement('h4');
+      heading.className = 'agent-section-heading';
+      heading.textContent = 'Other active contracts';
+      panel.appendChild(heading);
+      for (const mission of distantContracts) {
+        const row = document.createElement('div');
+        row.className = 'agent-active-elsewhere';
+        row.textContent = `${mission.agentName} · ${mission.stationName}: ${mission.name} — ${mission.objective} (${fmt(mission.progress)}/${fmt(mission.target)})`;
+        panel.appendChild(row);
+      }
+    }
+
+    if (!missionView.station) {
+      if (!missionView.active.length) {
+        const empty = document.createElement('p');
+        empty.className = 'agent-empty';
+        empty.textContent = 'No active contracts. Dock at a station to meet its agents.';
+        panel.appendChild(empty);
+      }
       return;
     }
-    for (const e of this.app.state.combatLog) {
-      const li = document.createElement('li');
-      li.className = e.won ? 'win' : 'lose';
-      const tag = e.won ? '<span class="win-tag">VICTORY</span>' : '<span class="lose-tag">DEFEAT</span>';
-      const sysName = e.system ? ` · ${e.system}` : '';
-      let loot;
-      if (e.won) {
-        loot = `+${fmt(e.scrap || 0)} Scrap`;
-        if (e.loot && this.app.catalog.modules[e.loot.slotType]) {
-          loot += ` · loot: ${this.app.catalog.modules[e.loot.slotType].name} ${ROMAN[e.loot.tier] || ''}`;
-        }
-        if (e.blueprint) {
-          if (e.blueprint.kind === 'module') {
-            const module = this.app.catalog.modules[e.blueprint.type];
-            loot += ` · blueprint: ${module ? module.name : e.blueprint.type} T${e.blueprint.tier}`;
-          } else {
-            const ship = this.app.catalog.ships[e.blueprint.type];
-            loot += ` · blueprint: ${ship ? ship.name : e.blueprint.type} ship`;
-          }
-        }
-      } else if (e.shipLost) {
-        const parts = ['ship lost'];
-        if (e.cargoLost > 0) parts.push(`${e.cargoLost} cargo`);
-        loot = parts.join(' · ');
+
+    const heading = document.createElement('h4');
+    heading.className = 'agent-section-heading';
+    heading.textContent = `Agents at ${missionView.station.name}`;
+    panel.appendChild(heading);
+    for (const agent of missionView.agents) {
+      const card = document.createElement('article');
+      card.className = 'agent-card';
+      card.dataset.testid = `agent-card-${agent.role}`;
+      const header = document.createElement('header');
+      header.className = 'agent-card-header';
+      const identity = document.createElement('div');
+      identity.className = 'agent-identity';
+      const name = document.createElement('strong');
+      name.textContent = agent.name;
+      const title = document.createElement('span');
+      title.className = 'agent-role';
+      title.textContent = agent.title;
+      identity.append(name, title);
+      const record = document.createElement('span');
+      record.className = 'agent-completed';
+      record.textContent = `${fmt(agent.completed)} completed`;
+      header.append(identity, record);
+      card.appendChild(header);
+
+      if (agent.active) {
+        const mission = document.createElement('div');
+        mission.className = 'agent-mission-current';
+        const missionName = document.createElement('strong');
+        missionName.textContent = agent.active.name;
+        const objective = document.createElement('span');
+        objective.className = 'sub';
+        objective.textContent = `${agent.active.objective} · reward ${recipeText(agent.active.rewardItems || {}, catalog)}`;
+        const progress = document.createElement('div');
+        progress.className = 'agent-progress';
+        progress.setAttribute('role', 'progressbar');
+        progress.setAttribute('aria-valuemin', '0');
+        progress.setAttribute('aria-valuemax', String(agent.active.target));
+        progress.setAttribute('aria-valuenow', String(agent.active.progress));
+        const fill = document.createElement('span');
+        fill.style.width = `${Math.min(100, agent.active.progress / agent.active.target * 100)}%`;
+        progress.appendChild(fill);
+        const footer = document.createElement('div');
+        footer.className = 'agent-mission-footer';
+        const count = document.createElement('span');
+        count.className = 'sub';
+        count.textContent = `${fmt(agent.active.progress)} / ${fmt(agent.active.target)}`;
+        const cancel = document.createElement('button');
+        cancel.className = 'mini danger';
+        cancel.dataset.action = 'cancel-agent-mission';
+        cancel.dataset.agentId = agent.id;
+        cancel.dataset.testid = `cancel-agent-mission-${agent.role}`;
+        cancel.textContent = 'Abandon';
+        footer.append(count, cancel);
+        mission.append(missionName, objective, progress, footer);
+        card.appendChild(mission);
       } else {
-        loot = 'disengaged';
+        const offer = document.createElement('div');
+        offer.className = 'agent-mission-offer';
+        const missionName = document.createElement('strong');
+        missionName.textContent = agent.offer.name;
+        const objective = document.createElement('span');
+        objective.className = 'sub';
+        objective.textContent = `${agent.offer.objective} · reward ${recipeText(agent.offer.rewardItems || {}, catalog)}`;
+        const accept = document.createElement('button');
+        accept.className = 'mini';
+        accept.dataset.action = 'accept-agent-mission';
+        accept.dataset.agentId = agent.id;
+        accept.dataset.testid = `accept-agent-mission-${agent.role}`;
+        accept.disabled = !state.docked;
+        accept.textContent = 'Accept contract';
+        offer.append(missionName, objective, accept);
+        card.appendChild(offer);
       }
-      li.innerHTML = `${tag} ${e.ship} vs ${e.enemy}${sysName} — ${loot}`;
-      log.appendChild(li);
+      panel.appendChild(card);
     }
   }
+
 }

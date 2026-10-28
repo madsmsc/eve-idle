@@ -38,6 +38,7 @@ export class Input {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (document.querySelector('#offline-report:modal')) return;
       const k = e.key.toLowerCase();
+      if (e.repeat && ['j', 'm'].includes(k)) return;
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
       if (k === 'e') app.doEngage();
       if (k === 'h') app.toggleHangar();
@@ -45,7 +46,10 @@ export class Input {
       if (k === 'l') app.toggleLoot();
       if (k === 'q') app.toggleStorage();
       if (k === 'a') app.setAutoPilotMode('mine');
-      if (k === 'm') app.toggleOverview();
+      if (k === 'm' && app.state.miningTargetId && !app.state.miningPaused && !app.state.cargoFull && !app.state.docked) {
+        app.doAction('mine', {});
+      }
+      if (k === 'j' && app.state.nearby.gateId && !app.state.combat) app.doGateJump();
       if (k === 'b') app.navigateToNearest('belt');
       if (k === 's') app.navigateToNearest('station');
       if (k === 'r') app.navigateToNearest('rat');
@@ -124,6 +128,7 @@ export class Input {
     }, { passive: false });
 
     document.getElementById('engage').addEventListener('click', () => app.doEngage());
+    document.getElementById('mine').addEventListener('click', () => app.doAction('mine', {}));
     document.getElementById('overview-toggle').addEventListener('click', () => app.toggleOverview());
     document.getElementById('left-menu').addEventListener('click', (ev) => {
       const button = ev.target.closest('.menu-card');
@@ -156,12 +161,12 @@ export class Input {
       const a = el.dataset.action;
       if (a === 'set-active') app.doAction('set-active', { shipId: el.dataset.id });
       else if (a === 'train-skill') app.doAction('train-skill', { skill: el.dataset.skill });
-      else if (a === 'buy-blueprint') app.doAction('buy-blueprint', { kind: el.dataset.kind, type: el.dataset.type, tier: el.dataset.tier ? Number(el.dataset.tier) : null });
+      else if (a === 'buy-blueprint') app.ui.hangar.buyBlueprint(el.dataset.type, Number(el.dataset.tier));
       else if (a === 'exchange-items') app.doAction('exchange-items', { family: el.dataset.family, item: el.dataset.item, amount: Number(el.dataset.amount) });
-      else if (a === 'craft-module') app.doAction('craft-module', { slotType: el.dataset.slot, tier: Number(el.dataset.tier) });
-      else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type });
-      else if (a === 'accept-agent-mission') app.doAction('agent-mission', { action: 'accept' });
-      else if (a === 'cancel-agent-mission') app.doAction('agent-mission', { action: 'cancel' });
+      else if (a === 'craft-module') app.doAction('craft-module', { slotType: el.dataset.slot, tier: Number(el.dataset.tier), blueprintId: el.dataset.blueprint });
+      else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type, blueprintId: el.dataset.blueprint });
+      else if (a === 'accept-agent-mission') app.doAction('agent-mission', { action: 'accept', agentId: el.dataset.agentId });
+      else if (a === 'cancel-agent-mission') app.doAction('agent-mission', { action: 'cancel', agentId: el.dataset.agentId });
       else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
       else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
       else if (a === 'retrieve-item') app.doAction('retrieve-item', { kind: el.dataset.kind, id: el.dataset.id });
@@ -185,12 +190,16 @@ export class Input {
       if (!el || el.disabled) return;
       const a = el.dataset.action;
       if (a === 'deposit-filtered') app.doAction('deposit-filtered', { filter: app.ui.inventory.filter });
+      else if (a === 'craft-module') app.doAction('craft-module', { slotType: el.dataset.slot, tier: Number(el.dataset.tier), blueprintId: el.dataset.blueprint });
+      else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type, blueprintId: el.dataset.blueprint });
       else if (a === 'deposit') app.doAction('deposit', { mineral: el.dataset.mineral, amount: el.dataset.amount });
       else if (a === 'withdraw') app.doAction('withdraw', { mineral: el.dataset.mineral, amount: el.dataset.amount });
       else if (a === 'store-item') app.doAction('store-item', { kind: el.dataset.kind, id: el.dataset.id });
+      else if (a === 'retrieve-item') app.doAction('retrieve-item', { kind: el.dataset.kind, id: el.dataset.id });
+      else if (a === 'equip-loot') app.doAction('equip-loot', { lootId: el.dataset.loot });
+      else if (a === 'refine-loot') app.doAction('refine-loot', { lootId: el.dataset.loot });
     };
     document.getElementById('inventory').addEventListener('click', onInventoryClick);
-    document.getElementById('storage-panel').addEventListener('click', onInventoryClick);
 
     window.addEventListener('resize', () => app.resize());
     document.getElementById('station-launch').addEventListener('click', () => app.launch());

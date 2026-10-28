@@ -84,7 +84,7 @@ function itemDescription(cell, catalog, location) {
   const name = blueprintName(cell.blueprint, catalog);
   const blueprintType = cell.blueprint.kind === 'module' ? 'Module' : 'Ship';
   const recipe = recipeDescription(blueprintDefinition(cell.blueprint, catalog).recipe, catalog);
-  return `${name} · ${blueprintType} blueprint · ${where}. Manufacturing requires ${recipe || 'no materials'}. Select to view manufacturing or transfer options.`;
+  return `${name} · ${blueprintType} blueprint · ${where}. Manufacturing requires ${recipe || 'no materials'}. Select to craft it here or transfer it.`;
 }
 
 export class InventoryNode extends Node {
@@ -192,20 +192,10 @@ export class InventoryNode extends Node {
         </span>`;
       el.appendChild(row);
     }
-    for (const item of (state.storage && state.storage.loot) || []) {
-      const module = catalog.modules[item.slotType];
-      if (!module) continue;
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = `
-        <span class="label">${module.name} <span class="sub">Tier ${ROMAN[item.tier] || item.tier} · Quantum Storage</span></span>
-        <span class="actions"><button class="mini" data-action="retrieve-item" data-kind="loot" data-id="${item.id}" data-testid="fitting-retrieve-${item.id}" ${state.docked ? '' : 'disabled'}>Retrieve</button></span>`;
-      el.appendChild(row);
-    }
     if (!el.childElementCount) {
       const note = document.createElement('p');
       note.className = 'sub';
-      note.textContent = 'No modules available. Recover them from rats, or craft modules from blueprints at Industry.';
+      note.textContent = 'No Cargo modules available. Select modules in Cargo or Quantum Storage to equip them, or recover and craft more.';
       el.appendChild(note);
     }
   }
@@ -225,7 +215,7 @@ export class InventoryNode extends Node {
     document.getElementById('unequip-all-hint').textContent = canUnequipAll
       ? 'Returns all fitted modules to inventory.'
       : state.actionAvailability.unequipAllReason;
-    document.getElementById('loadout-hint').textContent = 'Fitted modules are shown here. Equip available modules below; unequipped modules return to ship inventory.';
+    document.getElementById('loadout-hint').textContent = 'Fitted modules are shown here. Equip available Cargo modules below; unequipped modules return to Cargo.';
     this.#renderFittingItems();
     if (!ship) {
       el.innerHTML = '<div class="row"><span class="sub">No active ship.</span></div>';
@@ -359,33 +349,138 @@ export class InventoryNode extends Node {
     if (kind === 'loot') {
       const loot = (state.loot || []).find((item) => item.id === id);
       if (!loot) return;
+      const module = catalog.modules[loot.slotType];
       const row = document.createElement('div');
-      row.className = 'row';
+      row.className = 'row module-detail';
       row.innerHTML = `
-        <span class="label">${loot.name} <span class="sub">Tier ${ROMAN[loot.tier] || loot.tier}</span></span>
-        <span class="actions">
-          <button class="mini" data-action="store-item" data-kind="loot" data-id="${loot.id}" data-testid="inv-store-loot-${loot.id}" ${docked ? '' : 'disabled'}>Store</button>
-          <button class="mini" data-action="refine-loot" data-loot="${loot.id}" data-testid="inv-refine-loot-${loot.id}" ${docked ? '' : 'disabled'}>Salvage</button>
-        </span>`;
+        <span class="label">${module ? module.name : loot.slotType} <span class="sub">Tier ${ROMAN[loot.tier] || loot.tier}</span></span>
+        `;
+      const actions = this.#createModuleActions(loot, 'cargo');
+      const store = document.createElement('button');
+      store.className = 'mini';
+      store.dataset.action = 'store-item';
+      store.dataset.kind = 'loot';
+      store.dataset.id = loot.id;
+      store.dataset.testid = `inv-store-loot-${loot.id}`;
+      store.disabled = !docked;
+      store.textContent = 'Store';
+      actions.appendChild(store);
+      row.appendChild(actions);
       el.appendChild(row);
-      if (!docked) note('Dock at any station to store modules.');
       return;
     }
     if (kind === 'blueprint') {
       const blueprint = (state.blueprints || []).find((item) => item.id === id);
       if (!blueprint) return;
-      const action = blueprint.kind === 'module' ? 'craft-module' : 'craft-ship';
-      const def = blueprint.kind === 'module'
-        ? catalog.blueprints[blueprint.type][blueprint.tier]
-        : catalog.shipBlueprints[blueprint.type];
-      const recipe = def.recipe;
-      const label = blueprint.kind === 'module' ? `${def.name} Blueprint` : `${def.name} Blueprint`;
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = `<span class="label">${label}<span class="sub">Manufacturing: ${Object.entries(recipe).map(([key, amount]) => `${amount} ${(catalog.minerals[key] || catalog.components[key]).name}`).join(' + ')}</span></span><span class="actions"><button class="mini" data-action="${action}" data-slot="${blueprint.type}" data-tier="${blueprint.tier}" data-type="${blueprint.type}" ${docked ? '' : 'disabled'}>Manufacture</button><button class="mini" data-action="store-item" data-kind="blueprints" data-id="${blueprint.id}" data-testid="inv-store-blueprint-${blueprint.id}" ${docked ? '' : 'disabled'}>Store</button></span>`;
-      el.appendChild(row);
+      this.#appendBlueprintCraftingPanel(el, blueprint, 'cargo');
       return;
     }
+  }
+
+  // PRIVATE
+  #appendBlueprintCraftingPanel(container, blueprint, location) {
+    const { state, catalog } = this.app;
+    const definition = blueprint.kind === 'module'
+      ? catalog.blueprints[blueprint.type][blueprint.tier]
+      : catalog.shipBlueprints[blueprint.type];
+    const readiness = blueprint.kind === 'module'
+      ? state.actionAvailability.craftModules[`${blueprint.type}:${blueprint.tier}`]
+      : state.shipProgression[blueprint.type];
+    const requirements = Object.entries(definition.recipe).map(([key, amount]) => {
+      const current = readiness.materialCounts[key];
+      const material = catalog.minerals[key] || catalog.components[key];
+      return `${fmt(current)}/${fmt(amount)} ${material.name}`;
+    }).join(' · ');
+    const missingSkills = blueprint.kind === 'ship'
+      ? catalog.shipProgression.flatMap((tier) => tier.ships)
+        .find((entry) => entry.type === blueprint.type).skills
+        .filter(({ skill, level }) => state.skillTraining[skill].level < level)
+        .map(({ skill, level }) => `${catalog.skills[skill].name} ${level} required`)
+      : [];
+    if (blueprint.kind === 'module' && readiness.skillError) missingSkills.push(readiness.skillError);
+    const panel = document.createElement('section');
+    panel.className = 'crafting-panel';
+    panel.dataset.testid = `inv-crafting-panel-${blueprint.id}`;
+    const heading = document.createElement('h3');
+    heading.textContent = 'Crafting';
+    panel.appendChild(heading);
+    const row = document.createElement('div');
+    row.className = 'crafting-panel-row';
+    const label = document.createElement('div');
+    label.className = 'crafting-panel-recipe';
+    const name = document.createElement('strong');
+    name.textContent = `${definition.name} Blueprint`;
+    const details = document.createElement('span');
+    details.className = 'sub';
+    details.textContent = [
+      ...missingSkills,
+      `Materials: ${requirements || 'None'}`,
+    ].join(' · ');
+    label.append(name, details);
+    const actions = document.createElement('span');
+    actions.className = 'actions';
+    const craft = document.createElement('button');
+    craft.className = 'mini';
+    craft.dataset.action = blueprint.kind === 'module' ? 'craft-module' : 'craft-ship';
+    craft.dataset.slot = blueprint.type;
+    craft.dataset.tier = String(blueprint.tier || '');
+    craft.dataset.type = blueprint.type;
+    craft.dataset.blueprint = blueprint.id;
+    craft.dataset.testid = `craft-blueprint-${blueprint.id}`;
+    craft.title = readiness.canCraft
+      ? 'Craft using the materials in cargo and Quantum Storage.'
+      : 'Requires docking, the listed materials, and any required skills.';
+    craft.disabled = !readiness.canCraft;
+    craft.textContent = 'Craft';
+    actions.appendChild(craft);
+    if (location === 'cargo') {
+      const store = document.createElement('button');
+      store.className = 'mini';
+      store.dataset.action = 'store-item';
+      store.dataset.kind = 'blueprints';
+      store.dataset.id = blueprint.id;
+      store.dataset.testid = `inv-store-blueprint-${blueprint.id}`;
+      store.disabled = !state.docked;
+      store.textContent = 'Store';
+      actions.appendChild(store);
+    } else {
+      actions.appendChild(this.#createRetrieveButton(
+        'blueprints',
+        blueprint.id,
+        `Retrieve the ${definition.name} blueprint to ship cargo.`
+      ));
+    }
+    row.append(label, actions);
+    panel.appendChild(row);
+    container.appendChild(panel);
+  }
+
+  // PRIVATE
+  #createModuleActions(moduleItem, location) {
+    const state = this.app.state;
+    const availability = state.actionAvailability.loot[moduleItem.id];
+    const actions = document.createElement('span');
+    actions.className = 'actions';
+    const equip = document.createElement('button');
+    equip.className = 'mini';
+    equip.dataset.action = 'equip-loot';
+    equip.dataset.loot = moduleItem.id;
+    equip.dataset.testid = `${location === 'storage' ? 'storage' : 'inv'}-equip-loot-${moduleItem.id}`;
+    equip.title = availability.canEquip
+      ? 'Equip this module directly into an open matching slot.'
+      : availability.equipReason;
+    equip.disabled = !availability.canEquip;
+    equip.textContent = 'Equip';
+    const salvage = document.createElement('button');
+    salvage.className = 'mini';
+    salvage.dataset.action = 'refine-loot';
+    salvage.dataset.loot = moduleItem.id;
+    salvage.dataset.testid = `${location === 'storage' ? 'storage' : 'inv'}-salvage-loot-${moduleItem.id}`;
+    salvage.title = 'Salvage this module into components.';
+    salvage.disabled = !state.docked;
+    salvage.textContent = 'Salvage';
+    actions.append(equip, salvage);
+    return actions;
   }
 
   // PRIVATE
@@ -395,14 +490,11 @@ export class InventoryNode extends Node {
     const storage = state.storage || {};
     const grid = document.getElementById('inv-storage-grid');
     const detail = document.getElementById('inv-storage-detail');
+    document.getElementById('storage-readonly-note').hidden = docked;
     grid.innerHTML = '';
     detail.innerHTML = '';
-    if (!docked) {
-      this.#appendStorageNote(detail, 'Dock at any station to access your shared Quantum Storage.');
-      return;
-    }
     const { cells, total } = buildStorageCells(storage, this.app.catalog);
-    if (this.selected && !cells.some((cell) => cell.select === this.selected)) this.selected = null;
+    if (this.selected && this.selected.startsWith('storage:') && !cells.some((cell) => cell.select === this.selected)) this.selected = null;
     if (!cells.length) {
       this.#appendStorageNote(detail, 'Storage is empty. Store materials, modules, and blueprints here to keep them safe between trips.');
       return;
@@ -447,7 +539,9 @@ export class InventoryNode extends Node {
     const { state, catalog } = this.app;
     const el = document.getElementById('inv-storage-detail');
     if (!cell) {
-      this.#appendStorageNote(el, 'Select an item to see its details and retrieve it to your ship.');
+      this.#appendStorageNote(el, state.docked
+        ? 'Select an item to see its details and available actions.'
+        : 'Select an item to view its details. Dock to use or transfer stored items.');
       return;
     }
     const row = document.createElement('div');
@@ -458,6 +552,10 @@ export class InventoryNode extends Node {
     if (cell.kind === 'material') {
       const definition = catalog.minerals[cell.key] || catalog.components[cell.key];
       row.innerHTML = `<span class="label">${definition.name} <span class="sub">${fmt(cell.count)} in storage</span></span>`;
+      if (!state.docked) {
+        el.appendChild(row);
+        return;
+      }
       const partial = document.createElement('button');
       partial.className = 'mini';
       partial.dataset.action = 'withdraw';
@@ -479,11 +577,21 @@ export class InventoryNode extends Node {
     } else if (cell.kind === 'loot') {
       const module = catalog.modules[cell.loot.slotType];
       row.innerHTML = `<span class="label">${module ? module.name : cell.loot.slotType} <span class="sub">Tier ${ROMAN[cell.loot.tier] || cell.loot.tier} module</span></span>`;
-      actions.appendChild(this.#createRetrieveButton('loot', cell.loot.id, `Retrieve this Tier ${ROMAN[cell.loot.tier] || cell.loot.tier} module to ship inventory.`));
+      if (!state.docked) {
+        el.appendChild(row);
+        return;
+      }
+      row.appendChild(this.#createModuleActions(cell.loot, 'storage'));
+      el.appendChild(row);
+      return;
     } else {
-      const name = blueprintName(cell.blueprint, catalog);
-      row.innerHTML = `<span class="label">${name} <span class="sub">Blueprint</span></span>`;
-      actions.appendChild(this.#createRetrieveButton('blueprints', cell.blueprint.id, `Retrieve the ${name} blueprint to ship inventory.`));
+      if (!state.docked) {
+        row.innerHTML = `<span class="label">${blueprintName(cell.blueprint, catalog)} <span class="sub">Blueprint</span></span>`;
+        el.appendChild(row);
+        return;
+      }
+      this.#appendBlueprintCraftingPanel(el, cell.blueprint, 'storage');
+      return;
     }
     row.appendChild(actions);
     el.appendChild(row);

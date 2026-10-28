@@ -16,24 +16,31 @@ and a full cargo hold recalls it to a station to store its materials.
   stay large and open instead of being split into small "pockets".
 - Engage nearby enemies to fight. Use shield boost, weapon overload, or
   disengage. Ship loss destroys the ship's cargo.
-- Docking replaces the world and flight HUD with full-screen station services.
-  Manage ships, modules, fittings, skills, inventory, industry, achievements,
-  and agent contracts there. Skill points are shown in Skills; battle victories
-  and ship losses are shown in Killboard. NPCs at every station exchange three items of a
-  tier for one of the next tier. The Market separates NPC blueprints from the
-  ore/component trade-up exchanges. NPCs sell basic Tier I module blueprints;
+- Docking unlocks station services. Their menus remain visible and inspectable
+  while undocked, but actions are disabled until you dock. Manage ships,
+  modules, fittings, skills, inventory, achievements, and agent contracts.
+  Each station has security, mining, and industry agents with repeatable
+  randomized contracts. Accept one contract per agent; matching actions
+  advance all active contracts, including contracts from other stations.
+  Completing missions and unlocking achievements
+  triggers an automatic celebration toast. NPCs at every station exchange
+  three items of a tier for one of the next tier. The Market separates NPC
+  blueprints from the ore/component trade-up exchanges. NPCs sell basic Tier I module blueprints;
   higher-tier module and ship blueprints drop as rat loot. Blueprints are
-  consumed to manufacture ships or modules; the shipyard progression tree shows
-  skill prerequisites, blueprint status, and material requirements for every
-  hull. Launch leaves the ship floating outside the
-  station; it does not steer back automatically, even if the hold is full.
-  Cargo shows the ship's inventory; store materials, modules, and blueprints in
-  Quantum Storage while docked. The separate Fitting menu shows the active
+  consumed to manufacture ships or modules; select one in Cargo and click
+  Craft. The Ship Tree shows every hull, highlighting ships whose skill
+  prerequisites you meet and listing missing skills. Launch leaves the ship
+  floating outside the station; it does not steer back automatically, even if
+  the hold is full.
+  Cargo shows the ship's inventory with shared Quantum Storage always listed
+  beneath it. Storage is view-only while undocked and supports transfers while
+  docked. The separate Fitting menu shows the active
   ship's loadout and available modules, including modules held in storage.
   Equip or remove modules while docked; larger ship tiers have more total
   fitting slots while hulls keep their role-specific slot layouts.
-- Press I (or Cargo) to view the cargo hold. Quantum Storage is shared across
-  stations and safe from ship loss; retrieve stored items while docked. Use the
+- Press I (or Cargo) to view the cargo hold and Quantum Storage. Storage is
+  shared across stations and safe from ship loss; retrieve stored items from
+  the Cargo menu while docked. Use the
   cargo filters with Store filtered to transfer only the visible item types.
 - Rats drop a small amount of Scrap and may drop modules or higher-tier
   blueprints. The target readout estimates combat difficulty from your fitted
@@ -172,4 +179,3 @@ tests/        Unit, API, client, and Playwright E2E tests
 ## TODOs
 
 ### actions and questions
-

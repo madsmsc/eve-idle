@@ -36,8 +36,8 @@ const {
   SKILLS,
   SP_RATE_PER_SEC,
   ACHIEVEMENTS,
+  AGENT_ROLES,
   AGENT_MISSIONS,
-  AGENT_MISSION_COOLDOWN_MS,
   AMBUSH_BASE_CHANCE,
   AMBUSH_MIN_CHANCE,
   AMBUSH_MAX_CHANCE,
@@ -56,7 +56,7 @@ const {
   DOCK_RANGE,
   GATE_RANGE,
   MAX_SPEED,
-  DAMPING,
+  MAX_ACCELERATION,
   ARRIVE_RADIUS,
   STATE_VERSION,
 } = require('./config');
@@ -96,50 +96,127 @@ function nextId() {
   return `ship_${_counter.toString(36)}_${Date.now().toString(36)}`;
 }
 
-function agentMissionAction(state, action, now = Date.now()) {
+function hashString(value) {
+  let hash = 2166136261;
+  for (const character of value) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function stationAgents(system, station) {
+  return AGENT_ROLES.map((role) => {
+    const seed = hashString(`${system.id}:${station.id}:${role.key}`);
+    return {
+      id: `${system.id}:${station.id}:${role.key}`,
+      name: role.agents[seed % role.agents.length],
+      role: role.key,
+      roleName: role.name,
+      title: role.titles[(seed >>> 8) % role.titles.length],
+      stationId: station.id,
+      stationName: station.name,
+      systemId: system.id,
+      systemName: system.name,
+    };
+  });
+}
+
+function agentMissionOffer(agent, completed, lastMissionKey = null) {
+  const templates = AGENT_MISSIONS[agent.role];
+  const index = hashString(`${agent.id}:${completed}`) % templates.length;
+  let offer = templates[index];
+  if (templates.length > 1 && offer.key === lastMissionKey) {
+    offer = templates[(index + 1) % templates.length];
+  }
+  return { ...offer, rewardItems: { ...offer.rewardItems } };
+}
+
+function agentMissionAction(state, action, agentId, now = Date.now()) {
   if (action !== 'accept' && action !== 'cancel') return { error: 'Unknown agent mission action' };
-  if (action === 'accept' && state.agentMission && state.agentMission.status === 'active') return { error: 'An agent mission is already active' };
-  if (action === 'cancel' && (!state.agentMission || state.agentMission.status !== 'active')) return { error: 'No active agent mission' };
+  const station = dockedStation(state);
+  const ship = state.ships.find((item) => item.id === state.activeShipId);
+  const system = ship && state.systems[ship.systemId];
+  if (!station || !system) return { error: 'Dock at an agent’s station to manage missions' };
+  const agent = stationAgents(system, station).find((item) => item.id === agentId);
+  if (!agent) return { error: 'Agent is not at the docked station' };
   const s = clone(state);
+  if (!s.agentMissions) s.agentMissions = {};
+  const record = s.agentMissions[agent.id] || { completed: 0, lastMissionKey: null, active: null };
+  if (action === 'accept' && record.active) return { error: 'You already have an active mission from this agent' };
+  if (action === 'cancel' && !record.active) return { error: 'No active mission from this agent' };
   if (action === 'cancel') {
-    s.agentMission = null;
-    s.agentMissionCompletedAt = now;
+    record.active = null;
+    s.agentMissions[agent.id] = record;
     return { state: s };
   }
-  if (now < (s.agentMissionCompletedAt || 0) + AGENT_MISSION_COOLDOWN_MS) return { error: 'No agent mission available yet' };
-  const index = Math.floor(now / AGENT_MISSION_COOLDOWN_MS) % AGENT_MISSIONS.length;
-  const offer = AGENT_MISSIONS[index];
-  s.agentMission = { key: offer.key, progress: 0, status: 'active', startedAt: now };
+  const offer = agentMissionOffer(agent, record.completed || 0, record.lastMissionKey);
+  record.active = {
+    ...offer,
+    agentId: agent.id,
+    agentName: agent.name,
+    role: agent.role,
+    roleName: agent.roleName,
+    stationId: station.id,
+    stationName: station.name,
+    systemId: system.id,
+    systemName: system.name,
+    progress: 0,
+    status: 'active',
+    startedAt: now,
+  };
+  s.agentMissions[agent.id] = record;
   return { state: s };
 }
 
-function advanceAgentMission(state, type, amount, enemyType) {
-  const current = state.agentMission;
-  if (!current || current.status !== 'active' || amount <= 0) return;
-  const def = AGENT_MISSIONS.find((mission) => mission.key === current.key);
-  if (!def || def.type !== type || (type === 'kill' && def.enemyType !== enemyType)) return;
-  current.progress = Math.min(def.target, current.progress + amount);
-  if (current.progress < def.target) return;
-  current.status = 'complete';
-  current.completedAt = Date.now();
-  state.agentMissionCompletedAt = current.completedAt;
-  const missionDef = AGENT_MISSIONS.find((mission) => mission.key === current.key);
-  addStoredItems(state, missionDef && missionDef.rewardItems);
-  state.stats.agentMissionsCompleted = (state.stats.agentMissionsCompleted || 0) + 1;
+function advanceAgentMissions(state, type, amount, enemyType) {
+  if (!state.agentMissions || amount <= 0) return;
+  for (const record of Object.values(state.agentMissions)) {
+    const current = record.active;
+    if (!current || current.type !== type || (current.enemyType && current.enemyType !== enemyType)) continue;
+    current.progress = Math.min(current.target, current.progress + amount);
+    if (current.progress < current.target) continue;
+    record.lastMissionKey = current.key;
+    record.completed = (record.completed || 0) + 1;
+    record.lastCompleted = {
+      id: `${current.agentId}:${record.completed}`,
+      name: current.name,
+      agentName: current.agentName,
+      completedAt: Date.now(),
+    };
+    record.active = null;
+    addStoredItems(state, current.rewardItems);
+    state.stats.agentMissionsCompleted = (state.stats.agentMissionsCompleted || 0) + 1;
+  }
 }
 
-function agentMissionView(state, now = Date.now()) {
-  const stored = state.agentMission;
-  const active = stored && stored.status === 'active' && AGENT_MISSIONS.find((mission) => mission.key === stored.key);
-  const availableAt = (state.agentMissionCompletedAt || 0) + AGENT_MISSION_COOLDOWN_MS;
-  const offerIndex = Math.floor(now / AGENT_MISSION_COOLDOWN_MS) % AGENT_MISSIONS.length;
+function agentMissionView(state) {
+  const activeShip = state.ships.find((item) => item.id === state.activeShipId);
+  const system = activeShip && state.systems[activeShip.systemId];
+  const station = dockedStation(state);
+  const active = Object.values(state.agentMissions || {}).flatMap((record) =>
+    record.active ? [{ ...record.active, rewardItems: { ...record.active.rewardItems } }] : []
+  );
+  const completed = Object.values(state.agentMissions || {})
+    .map((record) => record.lastCompleted)
+    .filter(Boolean)
+    .sort((left, right) => right.completedAt - left.completedAt);
+  const stationRoster = station && system
+    ? stationAgents(system, station).map((agent) => {
+      const record = (state.agentMissions || {})[agent.id] || { completed: 0, lastMissionKey: null, active: null };
+      return {
+        ...agent,
+        completed: record.completed || 0,
+        active: record.active ? { ...record.active, rewardItems: { ...record.active.rewardItems } } : null,
+        offer: record.active ? null : agentMissionOffer(agent, record.completed || 0, record.lastMissionKey),
+      };
+    })
+    : [];
   return {
-    active: active ? { ...active, progress: Math.min(active.target, stored.progress), status: 'active' } : null,
-    completed: stored && stored.status === 'complete' ? AGENT_MISSIONS.find((mission) => mission.key === stored.key).name : null,
-    available: !(stored && stored.status === 'active') && now >= availableAt,
-    availableAt,
-    remainingMs: Math.max(0, availableAt - now),
-    offer: AGENT_MISSIONS[offerIndex],
+    station: station ? { id: station.id, name: station.name, systemId: system.id, systemName: system.name } : null,
+    agents: stationRoster,
+    active,
+    completed,
   };
 }
 function resetIds() {
@@ -239,9 +316,10 @@ function shipProgressionView(state, materials, docked) {
     const materialCounts = blueprint
       ? Object.fromEntries(Object.keys(blueprint.recipe).map((key) => [key, materials[key] || 0]))
       : {};
-    const blueprintReady = entry.type === 'rifter' || (state.blueprints || []).some((item) =>
-      item.kind === 'ship' && item.type === entry.type
-    );
+    const blueprintReady = entry.type === 'rifter' ||
+      [...(state.blueprints || []), ...((state.storage && state.storage.blueprints) || [])].some((item) =>
+        item.kind === 'ship' && item.type === entry.type
+      );
     return [entry.type, {
       skillsReady,
       materialsReady,
@@ -257,17 +335,19 @@ function actionAvailability(state, materials, docked, active) {
   const craftModules = {};
   for (const [slotType, tiers] of Object.entries(BLUEPRINTS)) {
     for (const [tier, blueprint] of Object.entries(tiers)) {
-      const hasBlueprint = (state.blueprints || []).some((item) =>
+      const hasBlueprint = [...(state.blueprints || []), ...((state.storage && state.storage.blueprints) || [])].some((item) =>
         item.kind === 'module' && item.type === slotType && item.tier === Number(tier)
       );
       const hasMaterials = Object.entries(blueprint.recipe).every(([key, amount]) =>
         (materials[key] || 0) >= amount
       );
+      const skillError = moduleSkillError(state, slotType, Number(tier));
       craftModules[`${slotType}:${tier}`] = {
         hasBlueprint,
         hasMaterials,
+        skillError,
         materialCounts: Object.fromEntries(Object.keys(blueprint.recipe).map((key) => [key, materials[key] || 0])),
-        canCraft: docked && hasBlueprint && hasMaterials,
+        canCraft: docked && hasBlueprint && hasMaterials && !skillError,
       };
     }
   }
@@ -304,11 +384,12 @@ function actionAvailability(state, materials, docked, active) {
     };
   }
   if (active) {
+    const availableLoot = [...(state.loot || []), ...((state.storage && state.storage.loot) || [])];
     for (const [slotType, tiers] of Object.entries(active.fitting || {})) {
       for (let slotIndex = 0; slotIndex < tiers.length; slotIndex++) {
         const currentTier = tiers[slotIndex] || 0;
         for (let tier = 0; tier <= MODULES[slotType].tiers.length; tier++) {
-          const hasItem = tier === 0 || tier === currentTier || (state.loot || []).some((item) =>
+          const hasItem = tier === 0 || tier === currentTier || availableLoot.some((item) =>
             item.slotType === slotType && item.tier === tier
           );
           const skillError = tier > 0 && tier !== currentTier
@@ -330,7 +411,7 @@ function actionAvailability(state, materials, docked, active) {
       }
     }
   }
-  for (const item of state.loot || []) {
+  for (const item of [...(state.loot || []), ...((state.storage && state.storage.loot) || [])]) {
     const module = MODULES[item.slotType];
     const fitted = active && active.fitting && active.fitting[item.slotType];
     const activeSlots = active && SHIPS[active.type] ? SHIPS[active.type].slots : {};
@@ -456,7 +537,7 @@ function deleteFittingPreset(state, name) {
   return { state: s };
 }
 
-function craftShip(state, type) {
+function craftShip(state, type, blueprintId = null) {
   const blueprint = SHIP_BLUEPRINTS[type];
   if (!blueprint) return { error: `No ship blueprint for ${type}` };
   if (!isDocked(state)) return { error: 'Dock at a station to craft' };
@@ -466,13 +547,20 @@ function craftShip(state, type) {
   if (!active || !sys) return { error: 'No active ship' };
   const skillError = shipSkillError(s, type);
   if (skillError) return { error: skillError };
-  const blueprintIndex = (s.blueprints || []).findIndex((item) =>
-    item.kind === 'ship' && item.type === type
+  let blueprintIndex = (s.blueprints || []).findIndex((item) =>
+    item.kind === 'ship' && item.type === type && (!blueprintId || item.id === blueprintId)
   );
+  let blueprintInventory = s.blueprints;
+  if (blueprintIndex < 0) {
+    blueprintInventory = s.storage && s.storage.blueprints;
+    blueprintIndex = (blueprintInventory || []).findIndex((item) =>
+      item.kind === 'ship' && item.type === type && (!blueprintId || item.id === blueprintId)
+    );
+  }
   if (blueprintIndex < 0) return { error: `You need a ${blueprint.name} blueprint` };
   if (!hasMaterials(s, blueprint.recipe)) return { error: `Need ore and components to build ${blueprint.name}` };
   consumeMaterials(s, blueprint.recipe);
-  s.blueprints.splice(blueprintIndex, 1);
+  blueprintInventory.splice(blueprintIndex, 1);
   const ship = {
     id: nextId(),
     type,
@@ -486,6 +574,7 @@ function craftShip(state, type) {
   };
   s.ships.push(ship);
   s.stats.shipsCrafted = (s.stats.shipsCrafted || 0) + 1;
+  advanceAgentMissions(s, 'craft', 1);
   return { state: s };
 }
 // A fresh, all-level-0 skill set.
@@ -583,9 +672,11 @@ function equipLoot(state, lootId) {
   if (state.combat) return { error: 'Modules cannot be changed during combat' };
   const s = clone(state);
   if (!Array.isArray(s.loot)) s.loot = [];
-  const idx = s.loot.findIndex((l) => l && l.id === lootId);
-  if (idx === -1) return { error: 'Loot not found' };
-  const loot = s.loot[idx];
+  const cargoIndex = s.loot.findIndex((l) => l && l.id === lootId);
+  const storageLoot = s.storage && Array.isArray(s.storage.loot) ? s.storage.loot : [];
+  const storageIndex = cargoIndex < 0 ? storageLoot.findIndex((item) => item && item.id === lootId) : -1;
+  if (cargoIndex < 0 && storageIndex < 0) return { error: 'Loot not found' };
+  const loot = cargoIndex < 0 ? storageLoot[storageIndex] : s.loot[cargoIndex];
   const mod = MODULES[loot.slotType];
   if (!mod) return { error: `Unknown loot module type: ${loot.slotType}` };
   const ship = s.ships.find((sh) => sh.id === s.activeShipId);
@@ -604,28 +695,32 @@ function equipLoot(state, lootId) {
     return { error: `All ${mod.name} slots are occupied` };
   }
   arr[free] = loot.tier;
-  s.loot.splice(idx, 1);
+  if (cargoIndex < 0) storageLoot.splice(storageIndex, 1);
+  else s.loot.splice(cargoIndex, 1);
   return { state: s };
 }
 
 function refineLoot(state, lootId) {
   if (!isDocked(state)) return { error: 'Dock at a station to refine modules' };
   const s = clone(state);
-  const idx = (s.loot || []).findIndex((item) => item && item.id === lootId);
-  if (idx === -1) return { error: 'Loot not found' };
-  const loot = s.loot[idx];
+  const cargoIndex = (s.loot || []).findIndex((item) => item && item.id === lootId);
+  const storageLoot = s.storage && Array.isArray(s.storage.loot) ? s.storage.loot : [];
+  const storageIndex = cargoIndex < 0 ? storageLoot.findIndex((item) => item && item.id === lootId) : -1;
+  if (cargoIndex < 0 && storageIndex < 0) return { error: 'Loot not found' };
+  const loot = cargoIndex < 0 ? storageLoot[storageIndex] : s.loot[cargoIndex];
   if (!MODULES[loot.slotType] || !BLUEPRINTS[loot.slotType] || !BLUEPRINTS[loot.slotType][loot.tier]) {
     return { error: 'Invalid loot module' };
   }
   const component = COMPONENT_EXCHANGE[loot.tier - 1];
   if (!component) return { error: 'Invalid module tier' };
   addStoredItems(s, { [component]: 1 });
-  s.loot.splice(idx, 1);
+  if (cargoIndex < 0) storageLoot.splice(storageIndex, 1);
+  else s.loot.splice(cargoIndex, 1);
   s.stats.modulesSalvaged = (s.stats.modulesSalvaged || 0) + 1;
   return { state: s };
 }
 
-function craftModule(state, slotType, tier) {
+function craftModule(state, slotType, tier, blueprintId = null) {
   const mod = MODULES[slotType];
   if (!mod) return { error: `Unknown module type: ${slotType}` };
   if (!mod.tiers[tier - 1]) return { error: `Invalid tier: ${tier}` };
@@ -634,16 +729,24 @@ function craftModule(state, slotType, tier) {
   const skillError = moduleSkillError(s, slotType, tier);
   if (skillError) return { error: skillError };
   const bp = BLUEPRINTS[slotType][tier];
-  const blueprintIndex = (s.blueprints || []).findIndex((item) =>
-    item.kind === 'module' && item.type === slotType && item.tier === tier
+  let blueprintIndex = (s.blueprints || []).findIndex((item) =>
+    item.kind === 'module' && item.type === slotType && item.tier === tier && (!blueprintId || item.id === blueprintId)
   );
+  let blueprintInventory = s.blueprints;
+  if (blueprintIndex < 0) {
+    blueprintInventory = s.storage && s.storage.blueprints;
+    blueprintIndex = (blueprintInventory || []).findIndex((item) =>
+      item.kind === 'module' && item.type === slotType && item.tier === tier && (!blueprintId || item.id === blueprintId)
+    );
+  }
   if (blueprintIndex < 0) return { error: `You need a ${bp.name} blueprint` };
   if (!hasMaterials(s, bp.recipe)) return { error: `Need ore and components to craft ${bp.name}` };
   consumeMaterials(s, bp.recipe);
-  s.blueprints.splice(blueprintIndex, 1);
+  blueprintInventory.splice(blueprintIndex, 1);
   if (!Array.isArray(s.loot)) s.loot = [];
   s.loot.push({ id: nextId(), slotType, tier });
   s.stats.modulesCrafted = (s.stats.modulesCrafted || 0) + 1;
+  advanceAgentMissions(s, 'craft', 1);
   if (s.mode === 'story' && s.mission && s.mission.active) {
     const mdef = MISSIONS[s.mission.active];
     if (mdef && mdef.objective.type === 'craft') {
@@ -906,8 +1009,7 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
     version: STATE_VERSION,
     mode: MODES.includes(mode) ? mode : 'demo',
     mission: { active: mode === 'story' ? 'm1' : null, step: 0, flags: {}, completed: [] },
-    agentMission: null,
-    agentMissionCompletedAt: 0,
+    agentMissions: {},
     autoPilotMode: null,
     automationLog: [],
     systems,
@@ -982,6 +1084,56 @@ function migrateEconomy(state) {
   return migrated;
 }
 
+function migrateAgentMissionState(state) {
+  if (!state || !Array.isArray(state.ships)) return state;
+  if (state.agentMissions && typeof state.agentMissions === 'object') return state;
+  const migrated = clone(state);
+  migrated.agentMissions = {};
+  const legacy = migrated.agentMission;
+  if (legacy && legacy.key) {
+    const keyMap = {
+      'pirate-hunt': ['pirate-patrol', 'security'],
+      'ore-haul': ['ore-survey', 'mining'],
+      'field-survey': ['field-sample', 'mining'],
+    };
+    const [missionKey, role] = keyMap[legacy.key] || [];
+    if (missionKey && role) {
+      const activeShip = migrated.ships.find((ship) => ship.id === migrated.activeShipId);
+      const system = activeShip && migrated.systems[activeShip.systemId];
+      const station = system && (dockedStation(migrated) || system.stations[0]);
+      if (system && station) {
+        const agent = stationAgents(system, station).find((item) => item.role === role);
+        const record = {
+          completed: legacy.status === 'complete' ? 1 : 0,
+          lastMissionKey: legacy.status === 'complete' ? missionKey : null,
+          active: null,
+        };
+        if (legacy.status === 'active') {
+          const definition = AGENT_MISSIONS[role].find((mission) => mission.key === missionKey);
+          record.active = {
+            ...definition,
+            agentId: agent.id,
+            agentName: agent.name,
+            role: agent.role,
+            roleName: agent.roleName,
+            stationId: station.id,
+            stationName: station.name,
+            systemId: system.id,
+            systemName: system.name,
+            progress: legacy.progress || 0,
+            status: 'active',
+            startedAt: legacy.startedAt || migrated.lastTick,
+          };
+        }
+        migrated.agentMissions[agent.id] = record;
+      }
+    }
+  }
+  delete migrated.agentMission;
+  delete migrated.agentMissionCompletedAt;
+  return migrated;
+}
+
 // True if a persisted state is usable (right version, has systems).
 function isValidState(state) {
   return (
@@ -1039,6 +1191,27 @@ function mineActive(s, active, seconds) {
     s.stats.oreMinedByType = s.stats.oreMinedByType || {};
     s.stats.oreMinedByType[a.mineral] = (s.stats.oreMinedByType[a.mineral] || 0) + take;
   }
+}
+
+function mine(state, now = Date.now()) {
+  if (isDocked(state)) return { error: 'Launch from a station before mining' };
+  if (state.combat) return { error: 'Cannot mine while in combat' };
+  const s = clone(state);
+  const active = s.ships.find((ship) => ship.id === s.activeShipId);
+  if (!active) return { error: 'No active ship' };
+  if (cargoUsed(s) >= cargoCapacity(s)) return { error: 'Cargo hold is full' };
+  if (!nearestAsteroidInRange(s, active)) return { error: 'No asteroid in mining range' };
+  const beforeMined = s.stats.totalMineralsMined || 0;
+  const sys = activeSystem(s);
+  const beforeOreBelts = new Set(sys.asteroids.filter((asteroid) => asteroid.amount > 0).map((asteroid) => asteroid.beltId));
+  mineActive(s, active, 1);
+  const mined = (s.stats.totalMineralsMined || 0) - beforeMined;
+  if (mined <= 0) return { error: 'No ore available to mine' };
+  recordMiningProgress(s, beforeMined, beforeOreBelts, now);
+  const wholeUnits = Math.floor(mined);
+  if (!s.autoPilotMode && wholeUnits > 0) recordAutomation(s, `Mined ${wholeUnits} ore`, now);
+  evaluateMission(s);
+  return { state: s };
 }
 
 function setNavigation(ship, x, y, targetId = null, dockTargetId = null, orbitTargetId = null) {
@@ -1205,15 +1378,40 @@ function moveInOrbit(ship, target, radius, seconds, sys) {
   ship.orbitAngle += seconds * 0.18;
   const desiredX = target.x + Math.cos(ship.orbitAngle) * radius;
   const desiredY = target.y + Math.sin(ship.orbitAngle) * radius;
+  const response = 1 - Math.exp(-seconds * 4);
+  const desiredVx = ((desiredX - ship.x) * response) / seconds;
+  const desiredVy = ((desiredY - ship.y) * response) / seconds;
+  moveVelocityToward(ship, desiredVx, desiredVy, seconds);
   const previousX = ship.x;
   const previousY = ship.y;
-  const response = 1 - Math.exp(-seconds * 4);
-  ship.x = clamp(ship.x + (desiredX - ship.x) * response, 0, sys.width);
-  ship.y = clamp(ship.y + (desiredY - ship.y) * response, 0, sys.height);
-  ship.vx = (ship.x - previousX) / seconds;
-  ship.vy = (ship.y - previousY) / seconds;
+  ship.x = clamp(ship.x + ship.vx * seconds, 0, sys.width);
+  ship.y = clamp(ship.y + ship.vy * seconds, 0, sys.height);
   if (Math.hypot(ship.vx, ship.vy) > 4) ship.heading = Math.atan2(ship.vy, ship.vx);
   ship.distanceTravelled = (ship.distanceTravelled || 0) + Math.hypot(ship.x - previousX, ship.y - previousY);
+}
+
+function moveVelocityToward(ship, targetVx, targetVy, seconds) {
+  let vx = ship.vx || 0;
+  let vy = ship.vy || 0;
+  const deltaX = targetVx - vx;
+  const deltaY = targetVy - vy;
+  const deltaSpeed = Math.hypot(deltaX, deltaY);
+  const maxChange = MAX_ACCELERATION * seconds;
+  if (deltaSpeed <= maxChange) {
+    vx = targetVx;
+    vy = targetVy;
+  } else {
+    vx += (deltaX / deltaSpeed) * maxChange;
+    vy += (deltaY / deltaSpeed) * maxChange;
+  }
+  const speed = Math.hypot(vx, vy);
+  if (speed > MAX_SPEED) {
+    vx = (vx / speed) * MAX_SPEED;
+    vy = (vy / speed) * MAX_SPEED;
+  }
+  ship.vx = vx;
+  ship.vy = vy;
+  return Math.hypot(vx, vy);
 }
 
 function advanceNavigation(ship, sys, seconds, combat = null) {
@@ -1255,14 +1453,22 @@ function advanceNavigation(ship, sys, seconds, combat = null) {
   ship.orbitTargetKey = null;
   ship.orbitAngle = null;
   if (!destination) {
-    ship.vx = 0;
-    ship.vy = 0;
+    const speed = moveVelocityToward(ship, 0, 0, seconds);
+    if (speed > 0) {
+      const oldX = ship.x;
+      const oldY = ship.y;
+      ship.x = clamp(ship.x + ship.vx * seconds, 0, sys.width);
+      ship.y = clamp(ship.y + ship.vy * seconds, 0, sys.height);
+      if (speed > 4) ship.heading = Math.atan2(ship.vy, ship.vx);
+      ship.distanceTravelled = (ship.distanceTravelled || 0) + Math.hypot(ship.x - oldX, ship.y - oldY);
+    }
     return;
   }
   const dx = destination.x - ship.x;
   const dy = destination.y - ship.y;
   const distance = Math.hypot(dx, dy);
-  if (distance <= ARRIVE_RADIUS) {
+  const currentSpeed = Math.hypot(ship.vx || 0, ship.vy || 0);
+  if (distance <= ARRIVE_RADIUS && currentSpeed <= 5) {
     const station = destination.dockTargetId && sys.stations.find((item) => item.id === destination.dockTargetId);
     ship.navigation = null;
     ship.vx = 0;
@@ -1275,18 +1481,11 @@ function advanceNavigation(ship, sys, seconds, combat = null) {
     }
     return;
   }
-  const desired = Math.min(MAX_SPEED, distance * 0.6);
-  const steer = Math.min(1, seconds * 2.2);
-  ship.vx = (ship.vx || 0) + ((dx / distance) * desired - (ship.vx || 0)) * steer;
-  ship.vy = (ship.vy || 0) + ((dy / distance) * desired - (ship.vy || 0)) * steer;
-  const damping = Math.pow(DAMPING, seconds * 60);
-  ship.vx *= damping;
-  ship.vy *= damping;
-  const speed = Math.hypot(ship.vx, ship.vy);
-  if (speed > MAX_SPEED) {
-    ship.vx = (ship.vx / speed) * MAX_SPEED;
-    ship.vy = (ship.vy / speed) * MAX_SPEED;
-  }
+  const stoppingSpeed = Math.sqrt(2 * MAX_ACCELERATION * distance);
+  const desiredSpeed = Math.min(MAX_SPEED, distance * 0.6, stoppingSpeed);
+  const desiredVx = distance > 0 ? (dx / distance) * desiredSpeed : 0;
+  const desiredVy = distance > 0 ? (dy / distance) * desiredSpeed : 0;
+  moveVelocityToward(ship, desiredVx, desiredVy, seconds);
   const oldX = ship.x;
   const oldY = ship.y;
   ship.x = clamp(ship.x + ship.vx * seconds, 0, sys.width);
@@ -1302,8 +1501,9 @@ function recordMiningProgress(state, beforeMined, beforeOreBelts, now) {
   for (const beltId of beforeOreBelts) {
     if (!afterOreBelts.has(beltId)) state.stats.beltsCompleted = (state.stats.beltsCompleted || 0) + 1;
   }
-  advanceAgentMission(state, 'mine', mined);
-  if (state.autoPilotMode && mined > 0) recordAutomation(state, `Mined ${Math.floor(mined)} ore`, now);
+  advanceAgentMissions(state, 'mine', mined);
+  const wholeUnits = Math.floor(mined);
+  if (state.autoPilotMode && wholeUnits > 0) recordAutomation(state, `Mined ${wholeUnits} ore`, now);
   if (state.mode === 'story' && state.mission && state.mission.active) {
     const definition = MISSIONS[state.mission.active];
     if (definition && definition.objective.type === 'mine') {
@@ -1348,7 +1548,8 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
   }
 
   if (active && sys && !pos && seconds > 0 &&
-      (active.navigation || s.autoPilotMode || s.combat || nearestAsteroidInRange(s, active))) {
+      (active.navigation || s.autoPilotMode || s.combat ||
+       Math.hypot(active.vx || 0, active.vy || 0) > 0.1)) {
     const beforeMined = s.stats.totalMineralsMined || 0;
     const beforeOreBelts = new Set(sys.asteroids.filter((asteroid) => asteroid.amount > 0).map((asteroid) => asteroid.beltId));
     let remaining = seconds;
@@ -1362,20 +1563,15 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
         advanceNavigation(active, sys, substep, s.combat);
         movementRemaining -= substep;
       }
-      if (!shipInCombat(s, active.id)) mineActive(s, active, step);
+      if (!shipInCombat(s, active.id) && ['mine', 'mine_hunt'].includes(s.autoPilotMode)) {
+        mineActive(s, active, step);
+      }
       remaining -= step;
     }
     recordMiningProgress(s, beforeMined, beforeOreBelts, now);
     s.stats.distanceTraveled = (s.stats.distanceTraveled || 0) +
       (active.distanceTravelled || 0);
     active.distanceTravelled = 0;
-  } else if (active && !shipInCombat(s, active.id) && seconds > 0) {
-    const beforeMined = s.stats.totalMineralsMined || 0;
-    const beforeOreBelts = sys
-      ? new Set(sys.asteroids.filter((asteroid) => asteroid.amount > 0).map((asteroid) => asteroid.beltId))
-      : new Set();
-    mineActive(s, active, seconds);
-    if (sys) recordMiningProgress(s, beforeMined, beforeOreBelts, now);
   }
   // Skill points accrue over time (idle progression), including offline gaps.
   if (elapsed > 0) {
@@ -1433,7 +1629,7 @@ function resolveCombat(s, now, won, rng = Math.random) {
     scrapDropped = Math.min(dropAmount, Math.floor(cargoRoom));
     if (ship && scrapDropped > 0) ship.cargo.scrap = (ship.cargo.scrap || 0) + scrapDropped;
     if (enemy) enemy.alive = false;
-    if (enemy && !enemy.missionTag) advanceAgentMission(s, 'kill', 1, enemy.type);
+    if (enemy) advanceAgentMissions(s, 'kill', 1, enemy.type);
     s.stats.combatsWon += 1;
     // Loot: the rat can drop a module into your loot inventory. Stronger rats
     // drop better modules, more reliably (see LOOT_DROP_CHANCE / LOOT_TIERS).
@@ -1735,8 +1931,6 @@ function navigate(state, request) {
   if (request && request.cancel) {
     ship.navigation = null;
     ship.dockTargetId = null;
-    ship.vx = 0;
-    ship.vy = 0;
     return { state: s };
   }
 
@@ -2373,11 +2567,13 @@ module.exports = {
   spawnTable,
   DRONES,
   ACHIEVEMENTS,
+  AGENT_ROLES,
   AGENT_MISSIONS,
   BLUEPRINTS,
   SHIP_BLUEPRINTS,
   createInitialState,
   migrateEconomy,
+  migrateAgentMissionState,
   isValidState,
   migrateWorldLayout,
   evaluateMission,
@@ -2390,6 +2586,7 @@ module.exports = {
   MISSIONS,
   MISSION_ORDER,
   tick,
+  mine,
   navigate,
   setAutopilot,
   launch,

@@ -26,7 +26,7 @@
     </div>
 
     <div class="hud-tr">
-      <button id="overview-toggle" class="hud-btn overview-toggle" data-shortcut="M" data-testid="overview-toggle" aria-label="Hide minimap" title="Hide minimap" aria-controls="minimap" aria-expanded="true">X</button>
+      <button id="overview-toggle" class="hud-btn overview-toggle" data-testid="overview-toggle" aria-label="Hide minimap" title="Hide minimap" aria-controls="minimap" aria-expanded="true">X</button>
       <canvas id="minimap" width="180" height="180" role="button" tabindex="0" aria-label="System overview map. Select a destination to fly there." title="System overview — select a destination" data-testid="minimap"></canvas>
     </div>
 
@@ -40,16 +40,19 @@
 
     <div id="ship-status" class="ship-status" data-testid="ship-status" aria-label="Ship status">
       <div class="status-bar speed" data-testid="status-speed">
-        <div class="status-heading"><span>Speed</span><span data-testid="status-speed-value"></span></div>
+        <span class="status-label">Speed</span>
         <div class="status-track"><i></i></div>
+        <span class="status-value" data-testid="status-speed-value"></span>
       </div>
       <div class="status-bar shield" data-testid="status-shield">
-        <div class="status-heading"><span>Shield</span><span data-testid="status-shield-value"></span></div>
+        <span class="status-label">Shield</span>
         <div class="status-track"><i></i></div>
+        <span class="status-value" data-testid="status-shield-value"></span>
       </div>
       <div class="status-bar hull" data-testid="status-hull">
-        <div class="status-heading"><span>Hull</span><span data-testid="status-hull-value"></span></div>
+        <span class="status-label">Hull</span>
         <div class="status-track"><i></i></div>
+        <span class="status-value" data-testid="status-hull-value"></span>
       </div>
     </div>
 
@@ -58,15 +61,16 @@
         <h2>Auto</h2>
         <div class="flight-panel-actions" role="group" aria-label="Autopilot modes">
           <button id="auto-mine" class="menu-card auto-mode" data-auto-mode="mine" data-testid="auto-mine" data-shortcut="A">⛏ Mine</button>
-          <button id="auto-mine-hunt" class="menu-card auto-mode" data-auto-mode="mine_hunt" data-testid="auto-mine-hunt">⛏⚔ Mine + Hunt</button>
           <button id="auto-hunt" class="menu-card auto-mode" data-auto-mode="hunt" data-testid="auto-hunt">⚔ Hunt</button>
+          <button id="auto-mine-hunt" class="menu-card auto-mode" data-auto-mode="mine_hunt" data-testid="auto-mine-hunt">⛏⚔ Both</button>
         </div>
       </div>
       <div class="flight-panel actions-panel" data-testid="actions-panel">
         <h2>Actions</h2>
         <div id="navigation-actions" class="flight-panel-actions" data-testid="navigation-actions" role="group" aria-label="Flight actions">
           <button id="engage" class="menu-card" data-shortcut="E" data-testid="engage-btn" disabled>Engage</button>
-          <button id="gate-jump" class="menu-card gate-btn" data-testid="gate-jump" hidden>⇄ Jump</button>
+          <button id="gate-jump" class="menu-card gate-btn" data-shortcut="J" data-testid="gate-jump" hidden>⇄ Jump</button>
+          <button id="mine" class="menu-card" data-shortcut="M" data-testid="mine-btn" disabled title="Mine one cycle from an asteroid in range">⛏ Mine</button>
           <button id="navigate-belt" class="menu-card" data-shortcut="B" data-testid="navigate-belt" title="Fly to the nearest asteroid belt">⌖ Belt</button>
           <button id="navigate-station" class="menu-card" data-shortcut="S" data-testid="navigate-station" title="Fly to the nearest station">⌖ Station</button>
           <button id="navigate-rat" class="menu-card" data-shortcut="R" data-testid="navigate-rat" title="Fly to the nearest hostile">⌖ Rat</button>
@@ -78,27 +82,17 @@
   </div>
 
   <nav id="left-menu" class="left-menu" data-testid="left-menu" aria-label="Game menus">
-    <div class="left-menu-group">
-      <h2>Ship</h2>
-      <button class="menu-card" data-menu="cargo" data-shortcut="I" data-testid="menu-cargo">Cargo</button>
-      <button class="menu-card" data-menu="fitting" data-station-menu data-testid="menu-fitting" disabled>Fitting</button>
-      <button class="menu-card" data-menu="fleet" data-station-menu data-testid="menu-fleet" disabled>Fleet</button>
-    </div>
-    <div class="left-menu-group">
-      <h2>Progression</h2>
-      <button class="menu-card" data-menu="skills" data-station-menu data-testid="menu-skills" disabled>Skills</button>
-      <button class="menu-card" data-menu="achievements" data-station-menu data-testid="menu-achievements" disabled>Achieve</button>
-    </div>
-    <div class="left-menu-group">
-      <h2>Services</h2>
-      <button class="menu-card" data-menu="storage" data-shortcut="Q" data-station-menu data-testid="menu-storage" disabled>Storage</button>
-      <button class="menu-card" data-menu="market" data-station-menu data-testid="menu-market" disabled>Market</button>
-      <button class="menu-card" data-menu="shipyard" data-station-menu data-testid="menu-shipyard" disabled>Shipyard</button>
-      <button class="menu-card" data-menu="missions" data-station-menu data-testid="menu-missions" disabled>Missions</button>
-      <button class="menu-card" data-menu="industry" data-station-menu data-testid="menu-industry" disabled>Industry</button>
-      <button class="menu-card" data-menu="killboard" data-station-menu data-testid="menu-killboard" disabled>Killboard</button>
-    </div>
+    <h2>Menus</h2>
+    <button class="menu-card" data-menu="cargo" data-shortcut="I" data-testid="menu-cargo">Cargo</button>
+    <button class="menu-card" data-menu="fitting" data-station-menu data-testid="menu-fitting">Fitting</button>
+    <button class="menu-card" data-menu="ship-tree" data-station-menu data-testid="menu-ship-tree">Ship Tree</button>
+    <button class="menu-card" data-menu="skills" data-station-menu data-testid="menu-skills">Skills</button>
+    <button class="menu-card" data-menu="achievements" data-station-menu data-testid="menu-achievements">Achieve</button>
+    <button class="menu-card" data-menu="market" data-station-menu data-testid="menu-market">Market</button>
+    <button class="menu-card" data-menu="missions" data-station-menu data-testid="menu-missions">Missions</button>
   </nav>
+
+  <div id="celebration-toasts" class="celebration-toasts" aria-live="polite" aria-atomic="false"></div>
 
   <!-- Death screen: shown when the active ship is destroyed -->
   <div id="death-screen" class="death-screen" data-testid="death-screen" hidden>
@@ -153,9 +147,11 @@
   <div id="hangar" class="hangar" data-testid="hangar" hidden>
     <div class="hangar-layout">
       <div class="hangar-body">
-        <section data-panel="fleet" class="active">
-          <h3>Fleet</h3>
-          <div id="hangar-fleet" class="hangar-fleet" data-testid="hangar-fleet"></div>
+        <p id="service-readonly-notice" class="service-readonly-notice" data-testid="service-readonly-notice" role="status" hidden>Service information only — dock at a station to make changes.</p>
+        <section data-panel="ship-tree" class="active">
+          <h3>Ship Tree</h3>
+          <p class="sub">Ships are highlighted when your trained skills meet their requirements.</p>
+          <div id="hangar-ship-tree" class="hangar-ship-tree" data-testid="hangar-ship-tree"></div>
         </section>
         <section data-panel="skills">
           <h3>Skills</h3>
@@ -178,7 +174,7 @@
             </section>
             <section class="cargo-column fitting-items-column" data-testid="fitting-items-column" title="Modules in ship inventory available to equip or salvage.">
               <h3>Available modules</h3>
-              <p class="sub">Equip modules carried by this ship. Store or retrieve modules at Quantum Storage.</p>
+              <p class="sub">Manage modules from Cargo or Quantum Storage. Unequipped modules return to Cargo.</p>
               <div id="fitting-items" class="fitting-items" data-testid="fitting-items"></div>
             </section>
           </div>
@@ -188,17 +184,9 @@
           <div id="hangar-achievements" data-testid="hangar-achievements"></div>
         </section>
         <section data-panel="missions">
-          <h3>Agent Missions</h3>
-          <p class="sub" id="agent-mission-cooldown"></p>
+          <h3>Station Agents</h3>
+          <p class="sub" id="agent-mission-cooldown">Dock at a station to meet its agents. Accepted contracts continue progressing in space.</p>
           <div id="hangar-agent-missions" data-testid="hangar-agent-missions"></div>
-        </section>
-        <section id="storage-panel" data-panel="storage" data-testid="storage-panel">
-          <h3>Quantum Storage</h3>
-          <p class="sub storage-hint">Shared by all stations. Select an item to retrieve it to your ship.</p>
-          <div id="inv-storage" class="storage-layout" data-testid="inv-storage">
-            <div id="inv-storage-grid" class="inv-grid" data-testid="inv-storage-grid"></div>
-            <div id="inv-storage-detail" class="inv-detail" data-testid="inv-storage-detail"></div>
-          </div>
         </section>
         <section data-panel="market">
           <h3>NPC Market</h3>
@@ -213,52 +201,50 @@
             </section>
           </div>
         </section>
-        <section data-panel="industry">
-          <h3>Industry</h3>
-          <p class="sub">Craft modules from ore.</p>
-          <div id="hangar-industry" class="hangar-industry" data-testid="hangar-industry"></div>
-        </section>
-        <section data-panel="shipyard">
-          <h3>Shipyard</h3>
-          <div id="hangar-shop" class="hangar-shop" data-testid="hangar-shop"></div>
-        </section>
-        <section data-panel="killboard">
-          <h3>Killboard</h3>
-          <ul id="combat-log" class="combat-log" data-testid="combat-log"></ul>
-        </section>
       </div>
     </div>
   </div>
 
-  <!-- Cargo is a single inventory panel; fitting is a station service above. -->
+  <!-- Cargo and Quantum Storage share one menu; Fitting remains a station service. -->
   <div id="menu-window" class="panel panel--left menu-window" data-testid="menu-window" hidden>
     <div class="panel-body menu-page-body">
       <section id="inventory" class="menu-page active" data-menu-page="cargo" data-testid="inventory">
         <div class="cargo-layout" data-testid="cargo-layout">
           <section class="cargo-column inventory-column" data-testid="inventory-column">
-            <div class="cargo-heading">
-              <h3>Cargo</h3>
-              <div class="cargo-capacity">
-                <span class="sub" id="inv-cargo-usage"></span>
-                <div class="cargo-capacity-track" role="progressbar" aria-label="Cargo capacity" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-testid="cargo-capacity">
-                  <div id="inv-cargo-capacity-fill" class="cargo-capacity-fill"></div>
+              <div class="cargo-heading">
+                <h3>Cargo</h3>
+                <div class="cargo-capacity">
+                  <span class="sub" id="inv-cargo-usage"></span>
+                  <div class="cargo-capacity-track" role="progressbar" aria-label="Cargo capacity" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-testid="cargo-capacity">
+                    <div id="inv-cargo-capacity-fill" class="cargo-capacity-fill"></div>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="cargo-controls">
-              <div class="cargo-filters" role="group" aria-label="Cargo item filter">
-                <button class="mini active" data-cargo-filter="all" data-testid="cargo-filter-all">All</button>
-                <button class="mini" data-cargo-filter="ore" data-testid="cargo-filter-ore">Ore</button>
-                <button class="mini" data-cargo-filter="components" data-testid="cargo-filter-components">Components</button>
-                <button class="mini" data-cargo-filter="loot" data-testid="cargo-filter-loot">Modules</button>
-                <button class="mini" data-cargo-filter="blueprints" data-testid="cargo-filter-blueprints">Blueprints</button>
+              <div class="cargo-controls">
+                <div class="cargo-filters" role="group" aria-label="Cargo item filter">
+                  <button class="mini active" data-cargo-filter="all" data-testid="cargo-filter-all">All</button>
+                  <button class="mini" data-cargo-filter="ore" data-testid="cargo-filter-ore">Ore</button>
+                  <button class="mini" data-cargo-filter="components" data-testid="cargo-filter-components">Components</button>
+                  <button class="mini" data-cargo-filter="loot" data-testid="cargo-filter-loot">Modules</button>
+                  <button class="mini" data-cargo-filter="blueprints" data-testid="cargo-filter-blueprints">Blueprints</button>
+                </div>
+                <button class="mini" data-action="deposit-filtered" data-testid="inv-deposit-filtered" disabled>Store filtered</button>
               </div>
-              <button class="mini" data-action="deposit-filtered" data-testid="inv-deposit-filtered" disabled>Store filtered</button>
-            </div>
-            <div id="inv-grid" class="inv-grid" data-testid="inv-grid"></div>
-            <div id="inv-detail" class="inv-detail" data-testid="inv-detail"></div>
+              <div id="inv-grid" class="inv-grid" data-testid="inv-grid"></div>
+              <div id="inv-detail" class="inv-detail" data-testid="inv-detail"></div>
           </section>
         </div>
+        <section id="storage-panel" class="storage-panel" data-testid="storage-panel">
+          <div class="cargo-column">
+            <h3>Quantum Storage</h3>
+            <p class="sub storage-hint">Shared by all stations. Viewable in space; dock to transfer, equip, or craft stored items.</p>
+            <p id="storage-readonly-note" class="sub storage-readonly-note" data-testid="storage-readonly-note" hidden>Storage is view-only while undocked.</p>
+            <div id="inv-storage" class="storage-layout" data-testid="inv-storage">
+              <div id="inv-storage-grid" class="inv-grid" data-testid="inv-storage-grid"></div>
+              <div id="inv-storage-detail" class="inv-detail" data-testid="inv-storage-detail"></div>
+            </div>
+          </div>
+        </section>
       </section>
 
     </div>
