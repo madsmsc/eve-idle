@@ -1,0 +1,52 @@
+{
+  "_comment": "Single source of truth for enemy combat stats and spawn rules. Rats roll from each type's `spawn` rules by system security; missions pick a type and tier by id. Types with an empty `spawn` list never appear as random rats.",
+  "tiers": {
+    "novice":   { "name": "Novice",   "multiplier": 0.5 },
+    "standard": { "name": "Standard", "multiplier": 1.0 },
+    "elite":    { "name": "Elite",    "multiplier": 2.0 }
+  },
+  "types": {
+    "pirate": {
+      "name": "Pirate Frigate",
+      "shield": 26, "hull": 52, "dps": 4,
+      "spawn": [
+        { "tier": "novice",   "minSecurity": 0.9, "maxSecurity": 1.0, "weight": 5 },
+        { "tier": "standard", "minSecurity": 0.9, "maxSecurity": 1.0, "weight": 5 },
+        { "tier": "standard", "minSecurity": 0.5, "maxSecurity": 0.8, "weight": 4 },
+        { "tier": "elite",    "minSecurity": 0.5, "maxSecurity": 0.8, "weight": 2 }
+      ]
+    },
+    "gang": {
+      "name": "Gang Battleship",
+      "shield": 78, "hull": 162, "dps": 10,
+      "spawn": [
+        { "tier": "novice",   "minSecurity": 0.5, "maxSecurity": 0.8, "weight": 3 },
+        { "tier": "standard", "minSecurity": 0.5, "maxSecurity": 0.8, "weight": 2 },
+        { "tier": "elite",    "minSecurity": 0.0, "maxSecurity": 0.4, "weight": 4 }
+      ]
+    },
+    "faction": {
+      "name": "Faction Destroyer",
+      "shield": 195, "hull": 325, "dps": 22,
+      "spawn": [
+        { "tier": "novice",   "minSecurity": 0.0, "maxSecurity": 0.4, "weight": 2 },
+        { "tier": "standard", "minSecurity": 0.0, "maxSecurity": 0.4, "weight": 3 },
+        { "tier": "elite",    "minSecurity": 0.0, "maxSecurity": 0.4, "weight": 2 }
+      ]
+    },
+    "dread": {
+      "name": "Dreadnought",
+      "shield": 520, "hull": 780, "dps": 45,
+      "spawn": [
+        { "tier": "novice",   "minSecurity": 0.0, "maxSecurity": 0.4, "weight": 1 },
+        { "tier": "standard", "minSecurity": 0.0, "maxSecurity": 0.4, "weight": 2 },
+        { "tier": "elite",    "minSecurity": 0.0, "maxSecurity": 0.4, "weight": 1 }
+      ]
+    },
+    "dronehub": {
+      "name": "Rogue Drone Hub",
+      "shield": 45, "hull": 70, "dps": 6,
+      "spawn": []
+    }
+  }
+}
