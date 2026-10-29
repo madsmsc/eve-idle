@@ -285,17 +285,17 @@ export class StationNode extends Node {
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.rotate(pseudo(st.x + st.y) * Math.PI);
-      ctx.strokeStyle = 'rgba(120, 200, 255, 0.72)';
+      ctx.strokeStyle = 'rgba(110, 232, 138, 0.72)';
       ctx.lineWidth = Math.max(1, 2 * zoom);
       regularPolygonPath(ctx, r, 8, Math.PI / 8);
       ctx.stroke();
-      ctx.strokeStyle = 'rgba(120, 200, 255, 0.4)';
+      ctx.strokeStyle = 'rgba(110, 232, 138, 0.4)';
       regularPolygonPath(ctx, r * 0.65, 6, 0);
       ctx.stroke();
-      ctx.fillStyle = 'rgba(50, 115, 165, 0.3)';
+      ctx.fillStyle = 'rgba(45, 150, 80, 0.3)';
       regularPolygonPath(ctx, r * 0.38, 6, Math.PI / 6);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(120, 200, 255, 0.6)';
+      ctx.strokeStyle = 'rgba(110, 232, 138, 0.6)';
       for (let i = 0; i < 4; i++) {
         const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
         ctx.beginPath();
@@ -308,12 +308,12 @@ export class StationNode extends Node {
         ctx.save();
         ctx.translate(podX, podY);
         ctx.rotate(a);
-        ctx.fillStyle = 'rgba(30, 70, 105, 0.8)';
+        ctx.fillStyle = 'rgba(25, 95, 55, 0.8)';
         ctx.fillRect(-r * 0.16, -r * 0.11, r * 0.32, r * 0.22);
         ctx.strokeRect(-r * 0.16, -r * 0.11, r * 0.32, r * 0.22);
         ctx.restore();
       }
-      ctx.fillStyle = 'rgba(170, 235, 255, 0.95)';
+      ctx.fillStyle = 'rgba(190, 255, 205, 0.95)';
       regularPolygonPath(ctx, r * 0.17, 4, Math.PI / 4);
       ctx.fill();
       ctx.restore();
@@ -523,14 +523,9 @@ export class EnemyNode extends Node {
     const small = Math.max(9, Math.min(11, 10 * zoom));
     const tierName = (e.tierName || e.tier || '').toUpperCase();
     const tierColor = TIER_COLORS[e.tier] || TIER_COLORS.standard;
-    const stats = `🛡${Math.round(shieldMax)}  🧱${Math.round(hullMax)}  ⚔${Math.round(e.dps || 0)}`;
+    const stats = `SHD ${Math.round(shieldMax)}  HULL ${Math.round(hullMax)}  DPS ${Math.round(e.dps || 0)}`;
 
     ctx.save();
-    ctx.fillStyle = 'rgba(5, 9, 17, 0.9)';
-    ctx.fillRect(sx - 82, top - 7, 164, 47);
-    ctx.strokeStyle = 'rgba(255, 92, 122, 0.55)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(sx - 82, top - 7, 164, 47);
     ctx.font = `600 ${label}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -786,7 +781,7 @@ class WorldLabelsNode extends Node {
     }
     for (const station of world.stations) {
       const point = camera.worldToScreen(station.x, station.y);
-      add(station, station.name, '#78c8ff', point.y - 34 * zoom - 8);
+      add(station, station.name, '#6ee88a', point.y - 34 * zoom - 8);
     }
     for (const outpost of world.outposts || []) {
       const point = camera.worldToScreen(outpost.x, outpost.y);

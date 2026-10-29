@@ -9,7 +9,7 @@ import { HangarNode } from './hangar.js';
 import { InventoryNode } from './inventory.js';
 import { OverlaysNode } from './overlays.js';
 
-const STATION_MENUS = ['fitting', 'ship-tree', 'market', 'skills', 'achievements', 'missions'];
+const STATION_MENUS = ['fitting', 'ship-tree', 'market', 'skills', 'achievements', 'missions', 'star-map'];
 
 class MenuGroupNode extends Node {
   // PUBLIC
@@ -97,7 +97,7 @@ export class UINode extends Node {
     if (app.hangarOpen) this.hangar.showService(app.activeMenu);
     app.lastHangarTab = app.activeMenu;
     const readonlyNotice = document.getElementById('service-readonly-notice');
-    readonlyNotice.hidden = !!docked || !app.hangarOpen;
+    readonlyNotice.hidden = !!docked || !app.hangarOpen || app.activeMenu === 'star-map';
     document.querySelectorAll('.menu-card').forEach((button) => {
       const selected = app.activeMenu === button.dataset.menu && (app.menuPageOpen || app.hangarOpen);
       button.classList.toggle('active', selected);
@@ -120,7 +120,7 @@ export class UINode extends Node {
     app.activeMenu = name;
     app.menuPageOpen = shipMenus.includes(name);
     app.hangarOpen = stationMenus.includes(name);
-    document.getElementById('service-readonly-notice').hidden = !!app.state.docked || !app.hangarOpen;
+    document.getElementById('service-readonly-notice').hidden = !!app.state.docked || !app.hangarOpen || name === 'star-map';
     document.body.classList.toggle('menu-window-open', app.menuPageOpen);
     document.getElementById('menu-window').hidden = !app.menuPageOpen;
     document.getElementById('hangar').hidden = !app.hangarOpen;

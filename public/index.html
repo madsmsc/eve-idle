@@ -80,7 +80,7 @@
         <div class="flight-panel-actions" role="group" aria-label="Autopilot modes">
           <button id="auto-mine" class="menu-card auto-mode" data-auto-mode="mine" data-testid="auto-mine" data-shortcut="A">⛏ Mine</button>
           <button id="auto-fight" class="menu-card auto-mode" data-auto-mode="fight" data-testid="auto-fight" data-shortcut="F">⚔ Fight</button>
-          <button id="auto-both" class="menu-card auto-mode" data-auto-mode="mine_fight" data-testid="auto-both" data-shortcut="B">⛏ &amp; ⚔ Both</button>
+          <button id="auto-both" class="menu-card auto-mode" data-auto-mode="mine_fight" data-testid="auto-both" data-shortcut="B">&amp; Both</button>
         </div>
       </div>
       <div class="flight-panel actions-panel" data-testid="actions-panel">
@@ -88,21 +88,17 @@
         <div id="navigation-actions" class="flight-panel-actions" data-testid="navigation-actions" role="group" aria-label="Flight actions">
           <button id="engage" class="menu-card" data-shortcut="E" data-testid="engage-btn" disabled title="An enemy must be in range to engage">Engage</button>
           <button id="gate-jump" class="menu-card gate-btn" data-shortcut="J" data-testid="gate-jump" disabled title="A jump gate must be in range to jump">⇄ Jump</button>
-          <button id="mine" class="menu-card" data-shortcut="M" data-testid="mine-btn" disabled title="Mine one cycle from an asteroid in range">⛏ Mine</button>
-          <button id="navigate-belt" class="menu-card" data-testid="navigate-belt" title="Fly to the nearest asteroid belt">⌖ Belt</button>
-          <button id="navigate-station" class="menu-card" data-shortcut="S" data-testid="navigate-station" title="Fly to the nearest station">⌖ Station</button>
-          <button id="navigate-enemy" class="menu-card" data-shortcut="R" data-testid="navigate-enemy" title="Fly to the nearest enemy">⌖ Enemy</button>
+          <button id="mine" class="menu-card" data-shortcut="M" data-testid="mine-btn" aria-pressed="false" disabled title="Start continuous mining of an asteroid in range">⛏ Mine</button>
         </div>
       </div>
     </div>
-    <div id="combat-banner" class="combat-banner" data-testid="combat-banner" hidden></div>
     <div id="auto-banner" class="auto-banner" data-testid="auto-banner" hidden></div>
-    <div id="combat-hud" class="combat-hud" data-testid="combat-hud" hidden></div>
   </div>
 
   <nav id="left-menu" class="left-menu" data-testid="left-menu" aria-label="Game menus">
     <h2>Menus</h2>
     <button class="menu-card" data-menu="cargo" data-shortcut="I" data-testid="menu-cargo">Cargo</button>
+    <button class="menu-card" data-menu="star-map" data-testid="menu-star-map">Star Map</button>
     <button class="menu-card" data-menu="fitting" data-station-menu data-testid="menu-fitting">Fitting</button>
     <button class="menu-card" data-menu="ship-tree" data-station-menu data-testid="menu-ship-tree">Ship Tree</button>
     <button class="menu-card" data-menu="skills" data-station-menu data-testid="menu-skills">Skills</button>
@@ -198,6 +194,11 @@
             </section>
           </div>
         </section>
+        <section data-panel="star-map">
+          <h3>Star Map</h3>
+          <p class="sub">Systems are colored by security (green high, red low). Lines are gate connections.</p>
+          <div id="hangar-star-map" class="hangar-star-map" data-testid="hangar-star-map"></div>
+        </section>
         <section data-panel="achievements">
           <h3>Achievements</h3>
           <div id="hangar-achievements" data-testid="hangar-achievements"></div>
@@ -250,7 +251,6 @@
                   <button class="mini" data-cargo-filter="blueprints" data-testid="cargo-filter-blueprints">Blueprints</button>
                 </div>
                 <button class="mini" data-action="deposit-filtered" data-testid="inv-deposit-filtered" disabled>Store filtered</button>
-                <button class="mini" data-action="deposit-all" data-testid="inv-deposit-all" disabled>Store cargo</button>
               </div>
               <div id="inv-grid" class="inv-grid" data-testid="inv-grid"></div>
               <div id="inv-detail" class="inv-detail" data-testid="inv-detail"></div>

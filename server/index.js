@@ -103,7 +103,9 @@ function serveStatic(req, res, pathname, liveReload = false) {
 // mode keeps its own progress, so switching modes never clobbers the other.
 function normalizeStore(loaded) {
   const migrate = (state) => {
-    const current = game.migrateTerminology(game.migrateAgentMissionState(game.migrateEconomy(state)));
+    const current = game.migrateSkillTree(
+      game.migrateTerminology(game.migrateAgentMissionState(game.migrateEconomy(state)))
+    );
     return game.isValidState(current) ? game.migrateWorldLayout(current) : null;
   };
   if (loaded && typeof loaded === 'object' && (loaded.demo || loaded.story || loaded.__slots)) {
@@ -436,6 +438,8 @@ function createApp({ dataFile, liveReload = false } = {}) {
           blueprints: game.BLUEPRINTS,
           shipBlueprints: game.SHIP_BLUEPRINTS,
           shipProgression: game.SHIP_PROGRESSION,
+          shipClasses: game.SHIP_CLASSES,
+          shipFamilies: game.SHIP_FAMILIES,
           constants: {
             worldSize: cfg.WORLD_SIZE,
             miningRange: cfg.MINING_RANGE,

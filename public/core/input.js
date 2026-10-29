@@ -133,14 +133,11 @@ export class Input {
     document.querySelectorAll('[data-overview-mode]').forEach((button) => {
       button.addEventListener('click', () => app.setOverviewMode(button.dataset.overviewMode));
     });
-    document.getElementById('edge-map').addEventListener('click', (ev) => {
-      const toggle = ev.target.closest('[data-cluster-toggle]');
-      if (toggle) {
-        const options = toggle.nextElementSibling;
-        options.hidden = !options.hidden;
-        toggle.setAttribute('aria-expanded', String(!options.hidden));
-        return;
-      }
+    const edgeMap = document.getElementById('edge-map');
+    edgeMap.addEventListener('pointerdown', () => { app.edgeMapPointerDown = true; });
+    document.addEventListener('pointerup', () => { app.edgeMapPointerDown = false; });
+    document.addEventListener('pointercancel', () => { app.edgeMapPointerDown = false; });
+    edgeMap.addEventListener('click', (ev) => {
       const marker = ev.target.closest('[data-target-id]');
       if (!marker) return;
       app.navigate(marker.dataset.targetId, null, { silent: true });
@@ -150,9 +147,6 @@ export class Input {
       if (button) app.openMenu(button.dataset.menu);
     });
     document.getElementById('death-dismiss').addEventListener('click', () => app.overlays.hideDeath());
-    document.getElementById('navigate-belt').addEventListener('click', () => app.navigateToNearest('belt'));
-    document.getElementById('navigate-station').addEventListener('click', () => app.navigateToNearest('station'));
-    document.getElementById('navigate-enemy').addEventListener('click', () => app.navigateToNearest('enemy'));
     document.getElementById('gate-jump').addEventListener('click', () => app.doGateJump());
     document.querySelectorAll('[data-auto-mode]').forEach((button) => {
       button.addEventListener('click', () => app.setAutoPilotMode(button.dataset.autoMode));
@@ -160,13 +154,6 @@ export class Input {
     document.getElementById('mission-continue').addEventListener('click', async () => {
       await app.doAction('mission', { action: 'continue' });
       document.getElementById('mission-dialogue').hidden = true;
-    });
-
-    // in-fight actions (delegated — the combat HUD is re-rendered every frame)
-    document.getElementById('combat-hud').addEventListener('click', (ev) => {
-      const btn = ev.target.closest('button[data-action]');
-      if (!btn || btn.disabled) return;
-      app.doCombatAction(btn.dataset.action);
     });
 
     // event delegation for all hangar buttons

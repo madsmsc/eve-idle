@@ -3,6 +3,7 @@
 function createCombatMath({
   ENEMIES,
   ENEMY_TIERS,
+  MAX_SPEED,
   OVERLOAD_DPS_MULT,
   skillMults,
   shipShield,
@@ -33,13 +34,23 @@ function createCombatMath({
   function estimateCombatDifficulty(state, ship, enemy) {
     const enemyStats = enemyCombatStats(enemy);
     const mults = skillMults(state);
-    const playerDurability = shipShield(ship, mults) + shipHull(ship, mults);
-    const playerDps = shipDps(ship, mults, droneBonus(state, 'combat'));
+    const playerDurability = shipShield(ship, mults, state.skills) + shipHull(ship, mults, state.skills);
+    const playerDps = shipDps(ship, mults, droneBonus(state, 'combat'), state.skills);
     if (playerDps <= 0) return { key: 'unknown', label: 'Unknown', ratio: null };
 
     const timeToKill = (enemyStats.shield + enemyStats.hull) / playerDps;
+    const relativeSpeed = Math.hypot(
+      (ship.vx || 0) - (enemy.vx || 0),
+      (ship.vy || 0) - (enemy.vy || 0),
+    );
+    const speedReduction = Math.min(0.5, Math.max(0, relativeSpeed / (MAX_SPEED / 12) * 0.5));
+    const skillReduction = Math.min(0.3,
+      Math.max(0, ((state.skills && state.skills.evasiveManeuver) || 0) * 0.04) +
+      Math.max(0, ((state.skills && state.skills.damageControl) || 0) * 0.025));
+    const incomingMultiplier = Math.max(0.2, 1 - speedReduction - skillReduction);
     const timeToLose = enemyStats.dps > 0
-      ? enemyStats.rangeDelay + moduleBonus(ship, 'range') + playerDurability / enemyStats.dps
+      ? enemyStats.rangeDelay + moduleBonus(ship, 'range', state.skills, mults) +
+        playerDurability / (enemyStats.dps * incomingMultiplier)
       : Infinity;
     const ratio = timeToLose / timeToKill;
     if (ratio >= 1.5) return { key: 'favorable', label: 'Favorable', ratio };
@@ -54,9 +65,10 @@ function createCombatMath({
 
   function playerTtd(combat) {
     const pool = combat.shipShield + combat.shipHull;
-    if (combat.enemyDps <= 0) return Infinity;
+    const incomingDps = combat.enemyDps * (combat.incomingDamageMultiplier || 1);
+    if (incomingDps <= 0) return Infinity;
     const remainingWindow = Math.max(0, combat.enemyRangeDelay - combat.fightTime);
-    return remainingWindow + pool / combat.enemyDps;
+    return remainingWindow + pool / incomingDps;
   }
 
   function enemyTtd(combat) {

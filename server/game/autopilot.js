@@ -193,6 +193,8 @@ function createAutopilot({
     const nextState = clone(state);
     if (nextState.autoPilotMode !== canonicalMode) delete nextState.autoPilotSequence;
     nextState.autoPilotMode = canonicalMode;
+    nextState.manualMining = false;
+    nextState.manualMiningTargetId = null;
     recordAutomation(nextState, canonicalMode ? `Auto-pilot set to ${canonicalMode.replace('_', ' & ')}` : 'Auto-pilot stopped');
     return { state: nextState };
   }

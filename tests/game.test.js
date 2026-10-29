@@ -6,6 +6,7 @@ const game = require('../server/game');
 const cfg = require('../server/config');
 
 const T0 = 1_000_000_000_000;
+const SYSTEM_COUNT = 13;
 
 function fresh(seed = 42) {
   return game.createInitialState(T0, seed);
@@ -71,6 +72,19 @@ function withModule(state, slotType, tier) {
 function withBlueprint(state, kind, type, tier = null) {
   if (!Array.isArray(state.blueprints)) state.blueprints = [];
   state.blueprints.push({ id: `bp_${kind}_${type}_${tier}`, kind, type, tier });
+  return state;
+}
+
+function unlockShip(state, type) {
+  const entry = cfg.SHIP_PROGRESSION.flatMap((tier) => tier.ships).find((ship) => ship.type === type);
+  for (const { skill, level } of entry.skills) state.skills[skill] = level;
+  return state;
+}
+
+function fundShip(state, type) {
+  for (const [item, amount] of Object.entries(cfg.SHIP_BLUEPRINTS[type].recipe)) {
+    state.storage.items[item] = (state.storage.items[item] || 0) + amount;
+  }
   return state;
 }
 
@@ -506,9 +520,9 @@ describe('missions (storyline)', () => {
     const s = story();
     game.startMission(s, 'm5');
     atAsteroid(s);
-    let cur = s;
+    let cur = game.mine(s, T0).state;
     for (let i = 0; i < 30 && !cur.mission.ready; i++) {
-      cur = game.mine(cur, T0 + i * 1000 + 1000).state;
+      cur = game.tick(cur, T0 + (i + 1) * 1000);
     }
     assert.ok((cur.mission.flags.mined || 0) >= 40, 'mined ore counted');
     assert.equal(cur.mission.active, 'm5', 'mining only marks the mission ready');
@@ -523,12 +537,15 @@ describe('missions (storyline)', () => {
   test('m7 crafting objective counts each target recipe', () => {
     let s = story();
     game.startMission(s, 'm7');
+    s.skills.gunnery = 1;
+    s.skills.shieldUpgrades = 1;
+    s.skills.moduleEngineering = 1;
     assert.deepEqual(game.view(s).mission.objectives, [
       { label: 'Craft Weapon I', progress: 0, target: 1 },
       { label: 'Craft Shield Extender II', progress: 0, target: 1 },
     ]);
     assert.equal(s.ships[0].fitting.cargo[0], 3, 'm7 grant fits a cargo expander');
-    s.skillPoints = 1000;
+    s.skillPoints = 5000;
     s = game.trainSkill(s, 'shieldUpgrades').state; // crafting a tier-II module needs the skill
     let cur = game.craftModule(s, 'weapon', 1).state;
     assert.equal(cur.mission.active, 'm7', 'one craft is not enough');
@@ -673,33 +690,87 @@ describe('spatial mining', () => {
     const manual = fresh();
     atAsteroid(manual);
     manual.drones.mining = [1];
-    const manualResult = game.mine(manual, T0 + 1000).state;
-    const manualYield = manualResult.stats.totalMineralsMined;
+    const manualYield = game.shipMining(
+      manual.ships[0],
+      game.skillMults(manual),
+      game.droneBonus(manual, 'mining'),
+      manual.skills,
+    );
 
     const automatic = fresh();
     atAsteroid(automatic);
     automatic.drones.mining = [1];
     automatic.autoPilotMode = 'mine';
-    const automaticResult = game.mine(automatic, T0 + 1000).state;
-    const automaticYield = automaticResult.stats.totalMineralsMined;
+    const automaticYield = game.shipMining(
+      automatic.ships[0],
+      game.skillMults(automatic),
+      game.droneBonus(automatic, 'mining'),
+      automatic.skills,
+    ) * game.autoEfficiency(automatic);
 
     assert.equal(game.autoEfficiency(automatic), cfg.AUTOPILOT_EFFICIENCY);
     assert.ok(Math.abs(automaticYield / manualYield - cfg.AUTOPILOT_EFFICIENCY) < 1e-9);
   });
 
-  test('manual mine action extracts one cycle from an asteroid in range', () => {
+  test('manual mine action toggles continuous mining on and off', () => {
     const s = fresh();
     const a = atAsteroid(s);
     const before = a.amount;
     const rate = game.shipMining(s.ships[0]);
     const result = game.mine(s, T0 + 1000);
     assert.ok(!result.error, result.error);
-    const s2 = result.state;
+    assert.equal(result.state.manualMining, true);
+    const s2 = game.tick(result.state, T0 + 1000);
     const a2 = sys(s2).asteroids.find((x) => x.id === a.id);
     assert.ok(a2.amount < before);
     assert.ok(Math.abs(s2.ships[0].cargo[a.mineral] - (before - a2.amount)) < 1e-6);
     assert.ok(Math.abs(s2.stats.totalMineralsMined - (before - a2.amount)) < 1e-6);
     assert.ok(rate > 0);
+    const stopped = game.mine(s2, T0 + 1000).state;
+    assert.equal(stopped.manualMining, false);
+  });
+
+  test('manual mining remains enabled while its selected asteroid is out of range', () => {
+    const state = fresh();
+    const asteroid = atAsteroid(state);
+    const started = game.mine(state, T0).state;
+    const awayX = asteroid.x > 300 ? asteroid.x - 300 : asteroid.x + 300;
+    const away = game.tick(started, T0 + 1000, { x: awayX, y: asteroid.y });
+    assert.equal(away.manualMining, true);
+    assert.equal(game.view(away).miningRate, 0);
+
+    const returned = game.tick(away, T0 + 2000, { x: asteroid.x, y: asteroid.y });
+    const mining = game.tick(returned, T0 + 3000);
+    assert.equal(mining.manualMining, true);
+    assert.ok(mining.stats.totalMineralsMined > 0);
+  });
+
+  test('manual mining keeps the ship near its selected asteroid when another is nearby', () => {
+    const state = fresh();
+    const system = sys(state);
+    const asteroid = atAsteroid(state);
+    const other = system.asteroids.find((item) => item.id !== asteroid.id);
+    for (const item of system.asteroids) item.amount = 0;
+    asteroid.x = 1000;
+    asteroid.y = 1000;
+    asteroid.amount = 1000;
+    other.x = 1200;
+    other.y = 1000;
+    other.amount = 1000;
+    const ship = state.ships.find((item) => item.id === state.activeShipId);
+    ship.x = asteroid.x;
+    ship.y = asteroid.y;
+
+    let mining = game.mine(state, T0).state;
+    for (let second = 1; second <= 15; second++) {
+      mining = game.tick(mining, T0 + second * 1000);
+    }
+
+    assert.equal(mining.manualMining, true);
+    assert.equal(mining.manualMiningTargetId, asteroid.id);
+    const active = mining.ships.find((item) => item.id === mining.activeShipId);
+    assert.ok(Math.hypot(active.x - asteroid.x, active.y - asteroid.y) <= cfg.MINING_RANGE);
+    assert.ok(mining.stats.totalMineralsMined > 20);
   });
 
   test('ordinary ticks do not passively mine an asteroid in range', () => {
@@ -791,27 +862,79 @@ describe('position sync', () => {
 });
 
 describe('ships: crafting and command', () => {
+  test('catalog contains 45 new hulls across five classes and nine families', () => {
+    const newHulls = Object.values(game.SHIPS).filter((ship) => ship.familyKey);
+    assert.equal(game.SHIP_CLASSES.length, 5);
+    assert.equal(game.SHIP_FAMILIES.length, 9);
+    assert.equal(newHulls.length, 45);
+    assert.equal(Object.keys(game.SKILLS).length, 30);
+    assert.equal(new Set(newHulls.map((ship) => ship.classKey)).size, 5);
+  });
+
+  test('hull speed and skills affect maximum speed and combat mitigation uses relative velocity', () => {
+    const state = fresh();
+    const fastType = Object.keys(game.SHIPS).find((type) =>
+      game.SHIPS[type].classKey === 'frigate' && game.SHIPS[type].role === 'fast'
+    );
+    state.ships[0].type = fastType;
+    state.ships[0].fitting = game.emptyFitting(fastType);
+    const baseSpeed = game.view(state).activeShip.maxSpeed;
+    state.skills.navigation = 1;
+    assert.ok(game.view(state).activeShip.maxSpeed > baseSpeed);
+
+    const enemy = sys(state).enemies[0];
+    const active = state.ships[0];
+    active.x = enemy.x;
+    active.y = enemy.y;
+    active.vx = cfg.MAX_SPEED / 6;
+    const combat = game.engage(state, enemy.id, T0).state.combat;
+    assert.equal(combat.speedMitigation, 0.5);
+    assert.equal(combat.incomingDamageMultiplier, 0.5);
+  });
+
+  test('new skill gates apply to ship ownership and module fitting', () => {
+    const state = fresh();
+    const falcon = { id: 'locked-falcon', type: 'falcon', systemId: sys(state).id, cargo: {}, fitting: game.emptyFitting('falcon') };
+    state.ships.push(falcon);
+    assert.match(game.setActive(state, falcon.id).error, /requires/i);
+    state.loot.push({ id: 'tier-two-weapon', slotType: 'weapon', tier: 2 });
+    assert.match(game.equipLoot(state, 'tier-two-weapon').error, /gunnery/i);
+    state.skills.gunnery = 1;
+    assert.match(game.equipLoot(state, 'tier-two-weapon').error, /module engineering/i);
+    state.skills.moduleEngineering = 1;
+    assert.ok(!game.equipLoot(state, 'tier-two-weapon').error);
+  });
+
+  test('enabling autopilot stops manual mining and its old target', () => {
+    const state = fresh();
+    atAsteroid(state);
+    const mining = game.mine(state, T0).state;
+    assert.equal(mining.manualMining, true);
+    const autopilot = game.setAutopilot(mining, 'mine').state;
+    assert.equal(autopilot.manualMining, false);
+    assert.equal(autopilot.manualMiningTargetId, null);
+  });
+
   test('craftShip builds a ship from a blueprint and materials at a station', () => {
-    const s = fresh();
-    s.skills.miningYield = 1;
-    const recipe = cfg.SHIP_BLUEPRINTS.falcon.recipe;
+    const s = fundShip(unlockShip(fresh(), 'falcon'), 'falcon');
     const r = game.craftShip(withBlueprint(s, 'ship', 'falcon'), 'falcon');
     assert.ok(!r.error, r.error);
     assert.equal(r.state.ships.length, 2);
     assert.equal(r.state.ships[1].type, 'falcon');
     assert.equal(r.state.stats.shipsCrafted, 1);
-    assert.equal(r.state.storage.items.iron, (fresh().storage.items.iron || 0) - recipe.iron);
-    assert.equal(r.state.storage.items.scrap, (fresh().storage.items.scrap || 0) - recipe.scrap);
+    assert.equal(r.state.storage.items.iron, fresh().storage.items.iron || 0);
+    assert.equal(r.state.storage.items.scrap, fresh().storage.items.scrap || 0);
   });
 
   test('craftShip rejects without a blueprint, materials, or docking', () => {
-    const skilled = fresh();
-    skilled.skillPoints = 1000;
+    const skilled = unlockShip(fresh(), 'falcon');
+    skilled.skillPoints = 5000;
     assert.match(game.craftShip(game.trainSkill(skilled, 'miningYield').state, 'falcon').error, /blueprint/i);
     const noSkill = withBlueprint(fresh(), 'ship', 'falcon');
     assert.match(game.craftShip(noSkill, 'falcon').error, /Requires/i);
     const poor = withBlueprint(fresh(), 'ship', 'falcon');
-    poor.skillPoints = 1000;
+    poor.skillPoints = 5000;
+    unlockShip(poor, 'falcon');
     poor.storage.items.iron = 0;
     poor.storage.items.scrap = 0;
     assert.match(game.craftShip(game.trainSkill(poor, 'miningYield').state, 'falcon').error, /need/i);
@@ -819,7 +942,7 @@ describe('ships: crafting and command', () => {
   });
 
   test('setActive switches the piloted ship', () => {
-    const s = fresh();
+    const s = unlockShip(fresh(), 'falcon');
     s.ships.push({ id: 'second', type: 'falcon', x: 1, y: 1, systemId: sys(s).id, cargo: {}, fitting: game.emptyFitting('falcon') });
     const s2 = game.setActive(s, 'second').state;
     assert.equal(s2.activeShipId, 'second');
@@ -1052,8 +1175,7 @@ describe('engage + combat', () => {
 
   test('losing a ship when you have others just switches to the next ship', () => {
     // Dock at the station, craft a second ship, then fly the rifter to a dread.
-    let s = fresh();
-    s.skills.miningYield = 1;
+    let s = fundShip(unlockShip(fresh(), 'falcon'), 'falcon');
     s = game.craftShip(withBlueprint(s, 'ship', 'falcon'), 'falcon').state;
     const rifter = s.ships.find((sh) => sh.id === s.activeShipId);
     rifter.systemId = 'sys_1';
@@ -1615,12 +1737,12 @@ describe('skill tree', () => {
 
   test('trainSkill spends skill points and raises the level', () => {
     const s = fresh();
-    s.skillPoints = 1000;
+    s.skillPoints = 5000;
     const cost = game.skillCost(cfg.SKILLS.gunnery, 0);
     const r = game.trainSkill(s, 'gunnery');
     assert.ok(!r.error);
     assert.equal(r.state.skills.gunnery, 1);
-    assert.ok(Math.abs(r.state.skillPoints - (1000 - cost)) < 1e-6);
+    assert.ok(Math.abs(r.state.skillPoints - (5000 - cost)) < 1e-6);
   });
 
   test('trainSkill rejects an unknown skill', () => {
@@ -1646,7 +1768,7 @@ describe('skill tree', () => {
 
   test('a mining skill raises the mining rate', () => {
     const s = fresh();
-    s.skillPoints = 1000;
+    s.skillPoints = 5000;
     const before = game.shipMining(s.ships[0], game.skillMults(s));
     const s2 = game.trainSkill(s, 'miningYield').state;
     const after = game.shipMining(s2.ships[0], game.skillMults(s2));
@@ -1656,7 +1778,7 @@ describe('skill tree', () => {
 
   test('a gunnery skill raises the ship DPS in a fight', () => {
     const s = fresh();
-    s.skillPoints = 1000;
+    s.skillPoints = 5000;
     const e = sys(s).enemies[0];
     s.ships[0].x = e.x;
     s.ships[0].y = e.y;
@@ -1791,6 +1913,51 @@ describe('gate jump', () => {
     const backGate = newSys.gates.find((g) => g.id === gate.targetGateId);
     s = game.gateJump(s, backGate.id, () => 1).state;
     assert.equal(s.ships[0].systemId, originId, 'should be back in the origin system');
+  });
+
+  test('re-entering a system respawns outpost enemies and refills asteroids', () => {
+    let s = fresh();
+    const gate = sys(s).gates[0];
+    const target = s.systems[gate.targetSystemId];
+    target.enemies.forEach((enemy) => { enemy.alive = false; });
+    target.asteroids.forEach((asteroid) => { asteroid.amount = 0; });
+    s = game.warp(s, gate.id).state;
+    s = game.gateJump(s, gate.id, () => 1).state;
+    const arrived = s.systems[gate.targetSystemId];
+    assert.ok(arrived.enemies.every((enemy) => enemy.alive));
+    assert.ok(arrived.asteroids.every((asteroid) => asteroid.amount === asteroid.maxAmount));
+  });
+});
+
+describe('star map', () => {
+  test('systems span high to low security and are all connected by gates', () => {
+    const s = fresh();
+    const names = game.view(s).systemNames;
+    assert.equal(names.length, SYSTEM_COUNT);
+    const securities = names.map((item) => item.security);
+    assert.equal(Math.max(...securities), 1);
+    assert.ok(Math.min(...securities) <= 0.2);
+    assert.ok(names.every((item) => item.map && item.links.length >= 2));
+    const seen = new Set(['sys_0']);
+    const queue = ['sys_0'];
+    while (queue.length) {
+      const current = queue.shift();
+      for (const link of names.find((item) => item.id === current).links) {
+        if (!seen.has(link)) { seen.add(link); queue.push(link); }
+      }
+    }
+    assert.equal(seen.size, SYSTEM_COUNT);
+  });
+
+  test('older saves gain the new systems and gates on migration', () => {
+    const s = fresh();
+    for (const id of Object.keys(s.systems)) {
+      if (!['sys_0', 'sys_1', 'sys_2'].includes(id)) delete s.systems[id];
+    }
+    for (const id of ['sys_0', 'sys_1', 'sys_2']) s.systems[id].gates = s.systems[id].gates.slice(0, 2);
+    game.migrateWorldLayout(s);
+    assert.equal(Object.keys(s.systems).length, SYSTEM_COUNT);
+    assert.ok(s.systems.sys_0.gates.length >= 3);
   });
 });
 
@@ -1928,11 +2095,12 @@ describe('repeatable agent missions', () => {
     current.target = 1;
     const missionKey = current.key;
     const asteroid = atAsteroid(accepted.state);
-    const result = game.mine(accepted.state, T0 + 1000);
-    assert.ok(!result.error, result.error);
-    assert.equal(result.state.stats.agentMissionsCompleted, 1);
-    assert.ok(result.state.storage.items[current.rewardItems && Object.keys(current.rewardItems)[0]] > 0);
-    const updated = game.view(atStation(result.state)).agentMission.agents.find((entry) => entry.id === agent.id);
+    const started = game.mine(accepted.state, T0);
+    assert.ok(!started.error, started.error);
+    const result = game.tick(started.state, T0 + 1000);
+    assert.equal(result.stats.agentMissionsCompleted, 1);
+    assert.ok(result.storage.items[current.rewardItems && Object.keys(current.rewardItems)[0]] > 0);
+    const updated = game.view(atStation(result)).agentMission.agents.find((entry) => entry.id === agent.id);
     assert.equal(updated.active, null);
     assert.ok(updated.offer);
     assert.notEqual(updated.offer.key, missionKey);
@@ -1960,10 +2128,11 @@ describe('repeatable agent missions', () => {
 
     accepted.state.ships[0].dockedStationId = null;
     atAsteroid(accepted.state);
-    const result = game.mine(accepted.state, T0 + 1000);
-    assert.ok(!result.error, result.error);
-    assert.equal(result.state.stats.agentMissionsCompleted, 2);
-    assert.equal(game.view(result.state).agentMission.active.length, 0);
+    const started = game.mine(accepted.state, T0);
+    assert.ok(!started.error, started.error);
+    const result = game.tick(started.state, T0 + 1000);
+    assert.equal(result.stats.agentMissionsCompleted, 2);
+    assert.equal(game.view(result).agentMission.active.length, 0);
   });
 
   test('old single-agent mission saves migrate to the matching station agent', () => {
@@ -1999,6 +2168,20 @@ describe('repeatable agent missions', () => {
     assert.equal(migrated.agentMissions.agent_1.active.name, 'Pirate Patrol');
     assert.equal(migrated.agentMissions.agent_1.active.progress, 2);
     assert.equal(migrated.agentMissions.agent_1.active.objective, 'Destroy 3 Enemies');
+  });
+
+  test('skill migration preserves locked hulls and provides an eligible loaner ship', () => {
+    const state = fresh();
+    state.ships[0].type = 'falcon';
+    state.ships[0].fitting = game.emptyFitting('falcon');
+    state.version = cfg.STATE_VERSION - 1;
+    state.skills = game.emptySkills();
+    const migrated = game.migrateSkillTree(game.migrateTerminology(state));
+
+    assert.ok(migrated.ships.some((ship) => ship.type === 'falcon'));
+    assert.ok(migrated.ships.some((ship) => ship.type === 'rifter'));
+    assert.equal(migrated.ships.find((ship) => ship.id === migrated.activeShipId).type, 'rifter');
+    assert.ok(game.isDocked(migrated));
   });
 });
 
@@ -2036,6 +2219,12 @@ describe('loot drops', () => {
     assert.match(away.error, /dock/i);
     Object.assign(s.ships[0], { x: home.x, y: home.y, systemId: home.systemId, dockedStationId: home.dockedStationId });
     s.skills.gunnery = 3; // tier-III loot needs the skill to fit
+    s.skills.moduleEngineering = 3;
+    s.skills.projectileWeapons = 3;
+    s.skills.missileWeapons = 3;
+    s.skills.laserWeapons = 3;
+    s.skills.droneCommand = 3;
+    s.skills.droneDamage = 3;
     const r = game.equipLoot(s, loot.id);
     assert.ok(!r.error, r.error);
     assert.ok(r.state.ships[0].fitting[loot.slotType].includes(loot.tier), 'loot lands in an empty slot');
@@ -2274,9 +2463,9 @@ describe('view', () => {
     assert.equal(v.world.color, v.system.color);
     // Every system has a color, and they are all distinct.
     const colors = v.systemNames.map((x) => x.color);
-    assert.equal(colors.length, 3);
+    assert.equal(colors.length, SYSTEM_COUNT);
     assert.ok(colors.every((c) => /^#[0-9a-f]{6}$/i.test(c)));
-    assert.equal(new Set(colors).size, 3);
+    assert.equal(new Set(colors).size, SYSTEM_COUNT);
   });
 
   test('exposes cargo, storage, drones, skills and achievements', () => {

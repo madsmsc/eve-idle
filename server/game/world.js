@@ -10,11 +10,27 @@ const {
 } = require('../config');
 
 const SYSTEM_DEFS = [
-  { id: 'sys_0', name: 'Jita', color: '#ff9f45', security: 1.0, stationCount: 2 },
-  { id: 'sys_1', name: 'Placid', color: '#3fd6a0', security: 0.5, stationCount: 2 },
-  { id: 'sys_2', name: 'Domain', color: '#a970ff', security: 0.1, stationCount: 1 },
+  { id: 'sys_0', name: 'Jita', color: '#ff9f45', security: 1.0, stationCount: 2, map: { x: 50, y: 18 } },
+  { id: 'sys_1', name: 'Placid', color: '#3fd6a0', security: 0.5, stationCount: 2, map: { x: 22, y: 66 } },
+  { id: 'sys_2', name: 'Domain', color: '#a970ff', security: 0.1, stationCount: 1, map: { x: 78, y: 66 } },
+  { id: 'sys_3', name: 'Perimeter', color: '#5cc8ff', security: 0.9, stationCount: 2, map: { x: 32, y: 6 } },
+  { id: 'sys_4', name: 'Sivala', color: '#7be0a8', security: 0.8, stationCount: 1, map: { x: 14, y: 18 } },
+  { id: 'sys_5', name: 'Otela', color: '#e0d65c', security: 0.7, stationCount: 2, map: { x: 32, y: 32 } },
+  { id: 'sys_6', name: 'Altrinur', color: '#e0894c', security: 0.6, stationCount: 1, map: { x: 8, y: 50 } },
+  { id: 'sys_7', name: 'Kaunokka', color: '#c95ce0', security: 0.4, stationCount: 1, map: { x: 6, y: 74 } },
+  { id: 'sys_8', name: 'Onatoh', color: '#5c9ce0', security: 0.35, stationCount: 1, map: { x: 20, y: 90 } },
+  { id: 'sys_9', name: 'Heimatar', color: '#e05c7a', security: 0.3, stationCount: 1, map: { x: 92, y: 48 } },
+  { id: 'sys_10', name: 'Vard', color: '#9ce05c', security: 0.25, stationCount: 1, map: { x: 96, y: 70 } },
+  { id: 'sys_11', name: 'Ysiette', color: '#5ce0c8', security: 0.2, stationCount: 1, map: { x: 86, y: 90 } },
+  { id: 'sys_12', name: 'Tash', color: '#ffb454', security: 0.2, stationCount: 1, map: { x: 66, y: 90 } },
 ];
-const GATE_LINKS = [[0, 1], [1, 2], [2, 0]];
+// The original triangle comes first so every pre-existing system keeps its gate order.
+const GATE_LINKS = [
+  [0, 1], [1, 2], [2, 0],
+  [0, 3], [3, 4], [4, 5], [5, 0],
+  [1, 6], [6, 7], [7, 8], [8, 1],
+  [2, 9], [9, 10], [10, 11], [11, 12], [12, 2],
+];
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
@@ -49,9 +65,13 @@ function recoverWorldSeed(homeSystemSeed) {
 
 function gateSlot(index) {
   const center = WORLD_SIZE / 2;
-  return index === 0
-    ? { x: center - 1700, y: center - 500 }
-    : { x: center + 1700, y: center + 500 };
+  const slots = [
+    { x: center - 1700, y: center - 500 },
+    { x: center + 1700, y: center + 500 },
+    { x: center - 1700, y: center + 600 },
+    { x: center + 1700, y: center - 600 },
+  ];
+  return slots[index];
 }
 
 function generateWorld(seed, profile, rollEnemy) {
@@ -72,7 +92,7 @@ function generateWorld(seed, profile, rollEnemy) {
   const star = { id: 'star_1', x: centerX, y: centerY, size: 130 + random() * 60, name: 'Sol' };
   const home = { id: 'stn_1', x: centerX + 520, y: centerY, name: 'Station A' };
   stations.push(home);
-  const placedSites = [home, gateSlot(0), gateSlot(1)];
+  const placedSites = [home, gateSlot(0), gateSlot(1), gateSlot(2), gateSlot(3)];
   const placeSite = () => {
     for (let attempt = 0; attempt < 500; attempt++) {
       const x = 600 + random() * (size - 1200);

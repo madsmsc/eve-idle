@@ -262,19 +262,22 @@ export class InventoryNode extends Node {
       slots.className = 'loadout-slots';
       for (let i = 0; i < count; i++) {
         const t = tiers[i] || 0;
-        const card = document.createElement('div');
-        card.className = 'loadout-card';
         const slot = document.createElement('div');
-        slot.className = 'loadout-slot';
+        slot.className = `loadout-slot${t ? ' fitted' : ' empty'}${ship.fittingLocks && ship.fittingLocks[slotType] && ship.fittingLocks[slotType][i] ? ' locked' : ''}`;
         slot.dataset.testid = `fit-slot-${slotType}-${i}`;
         slot.setAttribute('role', 'group');
-        const description = `${catalog.modules[slotType].name} slot ${i + 1}: ${t ? `Tier ${ROMAN[t] || t} fitted` : 'empty'}.`;
+        const module = catalog.modules[slotType];
+        const tier = t && module.tiers[t - 1];
+        const lockReason = ship.fittingLocks && ship.fittingLocks[slotType] && ship.fittingLocks[slotType][i];
+        const description = t
+          ? `${module.name}, Tier ${ROMAN[t] || t}${lockReason ? `. ${lockReason}.` : '. Fitted.'}`
+          : `Open ${module.name} slot.`;
         slot.setAttribute('aria-label', description);
         slot.title = description;
-        const tierLabel = t ? `Tier ${ROMAN[t] || t}` : 'Empty';
-        slot.innerHTML = `<span class="loadout-slot-name">Slot ${i + 1}</span><span class="loadout-slot-tier">${tierLabel}</span>`;
-        card.appendChild(slot);
-        slots.appendChild(card);
+        slot.innerHTML = t
+          ? `<span class="loadout-slot-name">${module.name}</span><span class="loadout-slot-tier">Tier ${ROMAN[t] || t}</span><span class="loadout-slot-effect">+${fmt(tier.bonus)} ${module.stat}</span>${lockReason ? `<span class="loadout-slot-lock">${lockReason}</span>` : ''}`
+          : `<span class="loadout-slot-tier">Open slot</span><span class="loadout-slot-name">${module.name}</span>`;
+        slots.appendChild(slot);
       }
       group.appendChild(slots);
       el.appendChild(group);
@@ -298,8 +301,6 @@ export class InventoryNode extends Node {
     if (this.selected && !this.selected.startsWith('storage:') && !cells.some((c) => c.select === this.selected)) this.selected = null;
     const storeFiltered = document.querySelector('[data-testid="inv-deposit-filtered"]');
     storeFiltered.disabled = !state.docked || cells.length === 0;
-    const storeCargo = document.querySelector('[data-testid="inv-deposit-all"]');
-    storeCargo.disabled = !state.docked || state.cargoUsed <= 0;
 
     grid.innerHTML = '';
     for (let i = 0; i < total; i++) {

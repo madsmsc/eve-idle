@@ -57,6 +57,10 @@ function createMissions({ clone, addStoredItems, emptyCargo, emptyFitting, docke
     if (!definition) return;
     const grant = definition.grant || {};
     addStoredItems(state, grant.items);
+    if (grant.skillPoints) {
+      state.skillPoints = (state.skillPoints || 0) + grant.skillPoints;
+      state.stats.totalSpEarned = (state.stats.totalSpEarned || 0) + grant.skillPoints;
+    }
     if (!Array.isArray(state.blueprints)) state.blueprints = [];
     for (const blueprint of grant.blueprints || []) {
       state.blueprints.push({ id: nextId(), ...blueprint });

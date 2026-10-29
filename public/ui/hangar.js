@@ -6,6 +6,25 @@ import { Node } from '../core/node.js';
 import { fmt } from '../core/util.js';
 
 const ROMAN = ['—', 'I', 'II', 'III', 'IV'];
+const SHIP_LANES = [
+  { key: 'drone', label: 'Drone Combat', description: 'Drone-focused combat hulls' },
+  { key: 'missile', label: 'Missile Combat', description: 'Missile-focused combat hulls' },
+  { key: 'projectile', label: 'Projectile Combat', description: 'Projectile-focused combat hulls' },
+  { key: 'laser', label: 'Laser Combat', description: 'Laser-focused combat hulls' },
+  { key: 'mining', label: 'Mining', description: 'Dedicated mining hulls' },
+  { key: 'legacy', label: 'Legacy', description: 'Versatile hulls outside the specialized lines' },
+];
+const LEGACY_SHIP_LANES = {
+  rifter: 'projectile',
+  vexor: 'drone',
+  manticore: 'missile',
+};
+
+function shipLaneForEntry(entry) {
+  if (entry.familyKey === 'legacy') return LEGACY_SHIP_LANES[entry.type] || 'legacy';
+  if (entry.role === 'miner') return 'mining';
+  return entry.weaponType || 'legacy';
+}
 
 function itemName(catalog, key) {
   return (catalog.minerals[key] || catalog.components[key] || {}).name || key;
@@ -49,6 +68,9 @@ export class HangarNode extends Node {
       agentMission: state.agentMission,
       skillPointRate: state.skillPointRate,
       skillTraining: state.skillTraining,
+      trainableSkills: Object.entries(state.skillTraining)
+        .filter(([, training]) => training.canTrain)
+        .map(([key]) => key),
       achievements: state.achievements,
       shipProgression: state.shipProgression,
       ships: state.ships.map(({ id, type }) => ({ id, type })),
@@ -64,6 +86,8 @@ export class HangarNode extends Node {
       blueprints: state.blueprints,
       storage: state.storage,
       actionAvailability: state.actionAvailability,
+      systemId: state.system && state.system.id,
+      systemNames: state.systemNames,
     });
     document.getElementById('hangar-sp').textContent =
       `${Math.floor(state.skillPoints || 0)} SP · ${state.skillPointRate} SP/s, offline`;
@@ -125,78 +149,212 @@ export class HangarNode extends Node {
     shipTree.innerHTML = '';
     const flow = document.createElement('div');
     flow.className = 'ship-tree-flow';
+    const header = document.createElement('div');
+    header.className = 'ship-tree-header';
+    const laneHeader = document.createElement('span');
+    laneHeader.textContent = 'Ship progression';
+    header.appendChild(laneHeader);
     for (let tierIndex = 0; tierIndex < catalog.shipProgression.length; tierIndex++) {
       const tier = catalog.shipProgression[tierIndex];
-      const column = document.createElement('section');
-      column.className = 'ship-tree-tier';
-      column.dataset.testid = `ship-tree-tier-${tier.tier}`;
-      const header = document.createElement('h3');
-      header.textContent = `Tier ${tier.tier}`;
-      column.appendChild(header);
-      for (const entry of tier.ships) {
-        const definition = catalog.ships[entry.type];
-        const progression = state.shipProgression[entry.type];
-        const ownedShips = state.ships.filter((ship) => ship.type === entry.type);
-        const missingSkills = entry.skills
-          .filter(({ skill, level }) => state.skillTraining[skill].level < level)
-          .map(({ skill, level }) => `${catalog.skills[skill].name} ${level} (you have ${state.skillTraining[skill].level})`);
-        const row = document.createElement('div');
-        row.className = `ship-tree-entry ${progression.skillsReady ? 'skill-ready' : 'skills-locked'}`;
-        row.dataset.testid = `ship-tree-${entry.type}`;
-        const ownedText = ownedShips.length ? ` · Owned: ${ownedShips.length}` : '';
-        const statusText = progression.skillsReady
-          ? `Skills ready${progression.blueprintReady ? ' · Blueprint acquired' : ' · Blueprint not acquired'}`
-          : `Requires ${missingSkills.join(', ')}`;
-        const actions = ownedShips.map((ship) => {
-          const isActive = state.activeShipId === ship.id;
-          return `<button class="mini" data-action="set-active" data-id="${ship.id}" data-testid="ship-${ship.id}-active" ${isActive ? 'disabled' : ''}>${isActive ? 'Active' : 'Use ship'}</button>`;
-        }).join('');
-        row.innerHTML = `
-          <div class="ship-tree-model" title="${definition.name} hull model">${shipModelMarkup(entry.type)}</div>
-          <div class="ship-tree-info">
-            <strong>${definition.name}</strong>
-            <span class="sub">${definition.mining}/s mining · ${definition.combat} combat · ${fmt(definition.cargo)} cargo</span>
-            <span class="ship-tree-status">${statusText}${ownedText}</span>
-            <span class="actions">${actions}</span>
-          </div>`;
-        column.appendChild(row);
-      }
-      flow.appendChild(column);
+      const tierHeader = document.createElement('h3');
+      tierHeader.textContent = tier.className || `Tier ${tier.tier}`;
+      tierHeader.dataset.testid = `ship-tree-tier-${tier.tier}`;
+      header.appendChild(tierHeader);
       if (tierIndex < catalog.shipProgression.length - 1) {
-        const arrow = document.createElement('div');
-        arrow.className = 'ship-tree-arrow';
-        arrow.dataset.testid = `ship-tree-arrow-${tier.tier}-${catalog.shipProgression[tierIndex + 1].tier}`;
-        arrow.setAttribute('aria-hidden', 'true');
-        arrow.innerHTML = '<svg viewBox="0 0 36 24"><path d="M2 12h27M20 3l9 9-9 9"/></svg>';
-        flow.appendChild(arrow);
+        const spacer = document.createElement('span');
+        spacer.className = 'ship-tree-header-spacer';
+        spacer.setAttribute('aria-hidden', 'true');
+        header.appendChild(spacer);
       }
+    }
+    flow.appendChild(header);
+
+    for (const lane of SHIP_LANES) {
+      const row = document.createElement('section');
+      row.className = 'ship-tree-lane';
+      row.dataset.lane = lane.key;
+      row.dataset.testid = `ship-tree-lane-${lane.key}`;
+      const label = document.createElement('div');
+      label.className = 'ship-tree-lane-label';
+      label.innerHTML = `<strong>${lane.label}</strong><span>${lane.description}</span>`;
+      row.appendChild(label);
+
+      for (let tierIndex = 0; tierIndex < catalog.shipProgression.length; tierIndex++) {
+        const tier = catalog.shipProgression[tierIndex];
+        const cell = document.createElement('div');
+        cell.className = 'ship-tree-cell';
+        const entries = tier.ships.filter((entry) => shipLaneForEntry(entry) === lane.key);
+        for (const entry of entries) {
+          const definition = catalog.ships[entry.type];
+          const progression = state.shipProgression[entry.type];
+          const ownedShips = state.ships.filter((ship) => ship.type === entry.type);
+          const missingSkills = progression.missingSkills
+            .map(({ skill, level }) => `${catalog.skills[skill].name} ${level} (you have ${state.skillTraining[skill].level})`);
+          const card = document.createElement('article');
+          card.className = `ship-tree-entry ${progression.skillsReady ? 'skill-ready' : 'skills-locked'}`;
+          card.dataset.testid = `ship-tree-${entry.type}`;
+          card.dataset.role = entry.role || 'legacy';
+          const ownedText = ownedShips.length ? ` · Owned: ${ownedShips.length}` : '';
+          const statusText = progression.skillsReady
+            ? `Skills ready${progression.blueprintReady ? ' · Blueprint acquired' : ' · Blueprint not acquired'}`
+            : `Requires ${missingSkills.join(', ')}`;
+          const actions = ownedShips.map((ship) => {
+            const isActive = state.activeShipId === ship.id;
+            const canUse = progression.skillsReady && !isActive;
+            return `<button class="mini" data-action="set-active" data-id="${ship.id}" data-testid="ship-${ship.id}-active" title="${canUse ? 'Switch to this ship.' : statusText}" ${canUse ? '' : 'disabled'}>${isActive ? 'Active' : 'Use ship'}</button>`;
+          }).join('');
+          card.innerHTML = `
+            <div class="ship-tree-model" title="${definition.name} hull model">${shipModelMarkup(entry.type)}</div>
+            <div class="ship-tree-info">
+              <strong>${definition.name}</strong>
+              <span class="sub">${entry.role || 'Existing hull'}${entry.weaponType ? ` · ${entry.weaponType}` : ''} · ${definition.mining}/s mining · ${definition.dps} DPS · ${fmt(definition.cargo)} cargo · ${definition.speedMultiplier || 1}× speed</span>
+              <span class="ship-tree-status">${statusText}${ownedText}</span>
+              <span class="actions">${actions}</span>
+            </div>`;
+          cell.appendChild(card);
+        }
+        if (!entries.length) {
+          const empty = document.createElement('span');
+          empty.className = 'ship-tree-empty';
+          empty.textContent = '—';
+          cell.appendChild(empty);
+        }
+        row.appendChild(cell);
+        if (tierIndex < catalog.shipProgression.length - 1) {
+          const arrow = document.createElement('div');
+          arrow.className = 'ship-tree-arrow';
+          const nextTier = catalog.shipProgression[tierIndex + 1];
+          const nextEntries = nextTier.ships.filter((entry) => shipLaneForEntry(entry) === lane.key);
+          const nextProgression = nextEntries.map((entry) => state.shipProgression[entry.type]);
+          const canProgress = nextProgression.some((item) => item.skillsReady);
+          const hasLaneShips = entries.length > 0 && nextEntries.length > 0;
+          arrow.classList.toggle('not-applicable', !hasLaneShips);
+          arrow.classList.toggle('skills-locked', nextEntries.length > 0 && !canProgress);
+          arrow.dataset.testid = `ship-tree-arrow-${lane.key}-${tier.tier}-${nextTier.tier}`;
+          if (nextEntries.length && !canProgress) {
+            const requirements = nextEntries.map((entry, index) => {
+              const skills = nextProgression[index].missingSkills
+                .map(({ skill, level }) => `${catalog.skills[skill].name} Lv${level}`)
+                .join(', ');
+              return `${catalog.ships[entry.type].name}: ${skills}`;
+            });
+            arrow.title = `Unlock ${nextTier.className}: ${requirements.join(', ')}`;
+            arrow.setAttribute('aria-label', arrow.title);
+          } else if (!hasLaneShips) {
+            arrow.title = 'No hull progression in this class';
+            arrow.setAttribute('aria-label', arrow.title);
+          } else {
+            arrow.title = `Progress to ${nextTier.className}`;
+            arrow.setAttribute('aria-label', arrow.title);
+          }
+          arrow.innerHTML = '<svg viewBox="0 0 36 24"><path d="M2 12h27M20 3l9 9-9 9"/></svg>';
+          if (nextEntries.length && !canProgress) {
+            const gate = document.createElement('span');
+            gate.className = 'ship-tree-gate';
+            gate.textContent = 'LOCKED';
+            arrow.appendChild(gate);
+          }
+          row.appendChild(arrow);
+        }
+      }
+      flow.appendChild(row);
     }
     shipTree.appendChild(flow);
 
     const skills = document.getElementById('hangar-skills');
     const spLabel = document.getElementById('hangar-sp');
+    const openCategories = new Set(
+      [...skills.querySelectorAll('details[data-skill-category][open]')]
+        .map((group) => group.dataset.skillCategory)
+    );
     skills.innerHTML = '';
     spLabel.textContent = `${Math.floor(state.skillPoints || 0)} SP · ${state.skillPointRate} SP/s, offline`;
+    const skillDefinitions = Object.values(catalog.skills);
+    const trainedSkills = skillDefinitions.filter((definition) => state.skillTraining[definition.key].level > 0);
+    const trainedLevels = trainedSkills.reduce((sum, definition) => sum + state.skillTraining[definition.key].level, 0);
+    const bonusNames = {
+      mining: 'Mining output',
+      miningCycle: 'Mining cycle speed',
+      miningRange: 'Mining range',
+      miningDrone: 'Mining drone output',
+      cargo: 'Cargo capacity',
+      dps: 'General weapon damage',
+      projectileDps: 'Projectile damage',
+      missileDps: 'Missile damage',
+      laserDps: 'Laser damage',
+      droneDps: 'Drone damage',
+      shield: 'Shield capacity',
+      hull: 'Hull capacity',
+      speed: 'Navigation speed',
+      acceleration: 'Acceleration',
+      evasion: 'Evasion',
+      damageReduction: 'Damage control',
+      moduleEffectiveness: 'Module strength',
+    };
+    const activeBonuses = Object.entries(state.skillMults || {})
+      .filter(([, multiplier]) => multiplier > 1)
+      .map(([stat, multiplier]) => `<span class="skill-bonus">${bonusNames[stat] || stat}: +${Math.round((multiplier - 1) * 100)}%</span>`)
+      .join('');
+    const dashboard = document.createElement('section');
+    dashboard.className = 'skill-dashboard';
+    dashboard.dataset.testid = 'skill-dashboard';
+    dashboard.setAttribute('aria-label', 'Skill training overview');
+    dashboard.innerHTML = `
+      <div class="skill-dashboard-count"><strong>${trainedSkills.length}/${skillDefinitions.length}</strong><span>skills trained</span><span>${trainedLevels} total levels</span></div>
+      <div class="skill-dashboard-bonuses"><strong>Current bonuses</strong><div>${activeBonuses || '<span class="sub">Train skills to unlock bonuses.</span>'}</div></div>`;
+    skills.appendChild(dashboard);
     const categories = {};
-    for (const key of Object.keys(catalog.skills)) {
-      const def = catalog.skills[key];
+    for (const def of skillDefinitions) {
       (categories[def.category] = categories[def.category] || []).push(def);
     }
     for (const cat of Object.keys(categories)) {
-      const head = document.createElement('div');
-      head.className = 'skill-cat';
-      head.textContent = cat;
-      skills.appendChild(head);
+      const definitions = categories[cat];
+      const currentLevels = definitions.reduce((sum, def) =>
+        sum + state.skillTraining[def.key].level, 0
+      );
+      const possibleLevels = definitions.reduce((sum, def) => sum + def.maxLevel, 0);
+      const group = document.createElement('details');
+      group.className = 'skill-theme';
+      group.dataset.skillCategory = cat;
+      group.dataset.testid = `skill-theme-${cat.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+      group.open = openCategories.has(cat);
+      const summary = document.createElement('summary');
+      summary.innerHTML = `
+        <span class="skill-theme-name">${cat}</span>
+        <span class="skill-theme-progress">${currentLevels}/${possibleLevels} levels · ${definitions.length} skills</span>`;
+      group.appendChild(summary);
+      const cards = document.createElement('div');
+      cards.className = 'skill-theme-cards';
+      group.appendChild(cards);
       for (const def of categories[cat]) {
         const training = state.skillTraining[def.key];
         const lvl = training.level;
-        const row = document.createElement('div');
-        row.className = 'row';
-        row.innerHTML = `
-          <span class="label">${def.name} <span class="sub">Lv${lvl}/${def.maxLevel} · +${Math.round(def.effect.pctPerLevel * 100)}% ${def.effect.stat}/lv</span></span>
-          <span class="actions"><button class="mini" data-action="train-skill" data-skill="${def.key}" data-testid="skill-${def.key}" ${training.maxed || !training.canTrain ? 'disabled' : ''}>${training.maxed ? 'Max' : `Train ${fmt(training.cost)} SP`}</button></span>`;
-        skills.appendChild(row);
+        const card = document.createElement('article');
+        card.className = `skill-card${lvl > 0 ? ' trained' : ''}${training.requirementsMet ? '' : ' locked'}`;
+        card.dataset.testid = `skill-card-${def.key}`;
+        const effect = def.effect
+          ? `Current bonus +${Math.round(def.effect.pctPerLevel * lvl * 100)}% · +${Math.round(def.effect.pctPerLevel * 100)}% per level`
+          : def.description;
+        const missingRequirements = training.missingRequirements
+          .map(({ skill, level }) => `${catalog.skills[skill].name} Lv${level}`)
+          .join(', ');
+        const status = training.maxed
+          ? 'Maximum level reached'
+          : missingRequirements
+            ? `Requires ${missingRequirements}`
+            : `${fmt(training.cost)} SP to train next level`;
+        const progress = lvl / def.maxLevel * 100;
+        card.innerHTML = `
+          <div class="skill-card-heading"><strong>${def.name}</strong><span class="skill-level-label">Lv ${lvl}/${def.maxLevel}</span></div>
+          <div class="skill-level-track" role="img" aria-label="Level ${lvl} of ${def.maxLevel}"><span style="width:${progress}%"></span></div>
+          <p>${def.description}</p>
+          <span class="skill-effect">${effect}</span>
+          <div class="skill-card-footer"><span class="sub">${status}</span>
+            <button class="mini" data-action="train-skill" data-skill="${def.key}" data-testid="skill-${def.key}" title="${missingRequirements || status}" ${training.maxed || !training.canTrain ? 'disabled' : ''}>${training.maxed ? 'Max' : 'Train'}</button>
+          </div>`;
+        cards.appendChild(card);
       }
+      skills.appendChild(group);
     }
 
     const achievementsEl = document.getElementById('hangar-achievements');
@@ -209,6 +367,7 @@ export class HangarNode extends Node {
     }
 
     this.#renderStoryline(state);
+    this.#renderStarMap(state);
     this.#renderAgentMissions(state, catalog);
 
     const tradeUp = document.getElementById('market-trade-up');
@@ -257,6 +416,38 @@ export class HangarNode extends Node {
     dropNote.className = 'sub';
     dropNote.textContent = 'Higher-tier module and ship blueprints are recovered from enemy loot; NPCs do not sell them.';
     blueprints.appendChild(dropNote);
+  }
+
+  // PRIVATE
+  // Systems as security-colored nodes, joined by a line for every gate link.
+  #renderStarMap(state) {
+    const container = document.getElementById('hangar-star-map');
+    if (!container) return;
+    const systems = (state.systemNames || []).filter((item) => item.map);
+    const byId = new Map(systems.map((item) => [item.id, item]));
+    const securityColor = (security) => `hsl(${Math.round(Math.max(0, Math.min(1, security)) * 120)}, 80%, 55%)`;
+    const currentId = state.system ? state.system.id : null;
+    const drawn = new Set();
+    const lines = [];
+    for (const system of systems) {
+      for (const link of system.links || []) {
+        const other = byId.get(link);
+        const key = [system.id, link].sort().join('|');
+        if (!other || drawn.has(key)) continue;
+        drawn.add(key);
+        lines.push(`<line x1="${system.map.x}" y1="${system.map.y}" x2="${other.map.x}" y2="${other.map.y}" class="star-map-link" data-testid="star-link-${system.id}-${link}"/>`);
+      }
+    }
+    const nodes = systems.map((system) => {
+      const current = system.id === currentId;
+      return `<g class="star-map-system${current ? ' current' : ''}" data-testid="star-system-${system.id}" data-security="${system.security}">
+        <title>${system.name} — security ${system.security.toFixed(1)}${current ? ' (you are here)' : ''}</title>
+        <circle cx="${system.map.x}" cy="${system.map.y}" r="${current ? 3.4 : 2.6}" fill="${securityColor(system.security)}"/>
+        ${current ? `<circle cx="${system.map.x}" cy="${system.map.y}" r="5" class="star-map-here"/>` : ''}
+        <text x="${system.map.x}" y="${system.map.y + 6.2}" text-anchor="middle">${system.name} ${system.security.toFixed(1)}</text>
+      </g>`;
+    });
+    container.innerHTML = `<svg viewBox="-4 -2 108 102" class="star-map-svg" role="img" aria-label="Star map">${lines.join('')}${nodes.join('')}</svg>`;
   }
 
   // PRIVATE

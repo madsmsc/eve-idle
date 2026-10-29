@@ -162,10 +162,10 @@ html, body {
   pointer-events: auto;
 }
 .hud-btn.overview-mode {
-  padding: 4.5px 8px;
-  font-size: 0.45rem;
+  padding: 6px 10px;
+  font-size: 0.82rem;
   font-weight: 700;
-  letter-spacing: 0.25px;
+  letter-spacing: 0.5px;
 }
 .overview-mode[aria-pressed="true"] {
   border-color: var(--accent);
@@ -196,6 +196,7 @@ html, body {
 #minimap {
   cursor: crosshair;
   pointer-events: auto;
+  background: rgba(5, 9, 17, 0.1);
 }
 #minimap[hidden] { display: none; }
 .edge-map { position: fixed; inset: 0; z-index: 12; pointer-events: none; }
@@ -206,9 +207,8 @@ html, body {
 }
 .edge-marker {
   position: relative;
-  display: flex;
-  align-items: center;
-  gap: 5px;
+  display: grid;
+  gap: 1px;
   max-width: min(190px, 42vw);
   padding: 4px 7px;
   border: 1px solid rgba(79, 209, 255, 0.48);
@@ -216,13 +216,16 @@ html, body {
   background: rgba(5, 9, 17, 0.9);
   color: var(--text);
   font-size: 0.7rem;
-  white-space: nowrap;
+  white-space: normal;
   pointer-events: auto;
   cursor: pointer;
 }
 .edge-marker:hover, .edge-marker:focus-visible { border-color: var(--accent); color: var(--accent); }
-.edge-direction { color: #fff; font-weight: 700; }
-.edge-marker-icon { color: var(--accent); font-weight: 700; }
+.edge-marker-name, .edge-destination-name { font-weight: 700; }
+.edge-marker-name--belt, .edge-destination-name--belt { color: #79dfff; }
+.edge-marker-name--station, .edge-destination-name--station { color: #6ee88a; }
+.edge-marker-name--outpost, .edge-destination-name--outpost { color: #ffcf5c; }
+.edge-marker-name--gate, .edge-destination-name--gate { color: #b69aff; }
 .edge-marker-distance { color: var(--muted); font-variant-numeric: tabular-nums; }
 .edge-marker-options {
   position: absolute;
@@ -240,6 +243,8 @@ html, body {
 .edge-marker-options[hidden] { display: none; }
 .edge-marker-options-up { top: auto; bottom: calc(100% + 4px); }
 .edge-destination-option {
+  display: grid;
+  gap: 1px;
   padding: 5px 7px;
   border: 0;
   border-radius: 4px;
@@ -247,7 +252,7 @@ html, body {
   color: var(--text);
   font-size: 0.7rem;
   text-align: left;
-  white-space: nowrap;
+  white-space: normal;
 }
 .edge-destination-option:hover, .edge-destination-option:focus-visible {
   background: rgba(79, 209, 255, 0.12);
@@ -260,7 +265,6 @@ body.edge-overview {
 body.edge-overview .hud-tl { top: var(--edge-ui-inset); left: var(--edge-ui-inset); }
 body.edge-overview .hud-tr { top: var(--edge-ui-inset); right: var(--edge-ui-inset); }
 body.edge-overview .hud-bl { top: var(--edge-ui-inset); }
-body.edge-overview .hud-bl.combat-active { top: calc(var(--edge-ui-inset) + 148px); }
 body.edge-overview .ship-status { bottom: var(--edge-ui-inset); }
 body.edge-overview .flight-actions { right: var(--edge-ui-inset); bottom: var(--edge-ui-inset); }
 body.edge-overview .left-menu { left: var(--edge-ui-inset); bottom: var(--edge-ui-inset); }
@@ -272,7 +276,6 @@ body.edge-overview .left-menu { left: var(--edge-ui-inset); bottom: var(--edge-u
   transform: translateX(-50%);
   width: min(320px, calc(100vw - 32px));
 }
-.hud-bl.combat-active { top: 142px; }
 .context {
   margin: 0;
   font-size: 0.85rem;
@@ -309,7 +312,7 @@ body.edge-overview .left-menu { left: var(--edge-ui-inset); bottom: var(--edge-u
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(5, 9, 17, 0.88);
+  background: rgba(5, 9, 17, 0.3);
   backdrop-filter: blur(8px);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   pointer-events: auto;
@@ -388,49 +391,27 @@ body.edge-overview .left-menu { left: var(--edge-ui-inset); bottom: var(--edge-u
 .hud-btn.engage-ready { border-color: var(--bad); color: var(--bad); }
 .hud-btn.engage-ready:hover { background: rgba(255, 92, 122, 0.12); }
 
-.combat-banner {
-  position: absolute;
-  top: 64px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(60, 12, 24, 0.8);
-  border: 1px solid var(--bad);
-  color: #ffd7de;
-  padding: 8px 18px;
-  border-radius: 8px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  backdrop-filter: blur(4px);
-}
-
 .auto-banner {
   position: absolute;
-  top: 14px;
+  top: auto;
+  bottom: 96px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 8;
-  max-width: calc(100% - 32px);
+  width: min(320px, calc(100vw - 32px));
   background: rgba(68, 43, 8, 0.9);
   border: 1px solid var(--warn);
   color: #ffe3b0;
-  padding: 10px 18px;
+  padding: 6px 9px;
   border-radius: 8px;
-  font-size: 2rem;
+  font-size: 1.5rem;
   font-weight: 700;
   text-align: center;
   pointer-events: none;
   backdrop-filter: blur(4px);
 }
 .auto-banner[hidden] { display: none; }
-
-.combat-hud {
-  position: absolute;
-  top: 114px;
-  left: 50%;
-  transform: translateX(-50%);
-  pointer-events: none;
-}
-.combat-hud[hidden] { display: none; }
+body.edge-overview .auto-banner { bottom: calc(var(--edge-ui-inset) + 80px); }
 
 /* Full-screen death screen shown when the active ship is destroyed. */
 .death-screen {
@@ -484,23 +465,7 @@ body.edge-overview .left-menu { left: var(--edge-ui-inset); bottom: var(--edge-u
   from { opacity: 0; }
   to { opacity: 1; }
 }
-.chud-actions { display: flex; gap: 6px; pointer-events: auto; }
-.chud-btn {
-  flex: 1;
-  font-size: 0.72rem;
-  font-weight: 700;
-  padding: 6px 4px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.04);
-  color: var(--text);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.chud-btn:hover:not(:disabled) { background: rgba(255,255,255,0.1); }
-.chud-btn:disabled { opacity: 0.4; cursor: default; }
-.chud-btn.disengage { border-color: var(--bad); color: var(--bad); }
-.chud-btn.disengage:hover:not(:disabled) { background: rgba(255, 92, 122, 0.12); }
+.menu-card.mining-active { border-color: var(--good); color: var(--good); }
 
 /* ---------- Station view (docked) ---------- */
 .station-view {
@@ -564,7 +529,7 @@ body.edge-overview .left-menu { left: var(--edge-ui-inset); bottom: var(--edge-u
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(5, 9, 17, 0.88);
+  background: rgba(5, 9, 17, 0.3);
   backdrop-filter: blur(8px);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   pointer-events: auto;
@@ -756,6 +721,8 @@ body.edge-overview .left-menu { left: var(--edge-ui-inset); bottom: var(--edge-u
   :root { --menu-rail-width: 92px; }
   .hud-tl { left: 8px; }
   .ship-status { bottom: 200px; left: calc(var(--menu-rail-width) + 8px); transform: none; width: min(300px, calc(100vw - var(--menu-rail-width) - 24px)); gap: 3px; padding: 5px 7px; }
+  .auto-banner { bottom: 278px; width: min(300px, calc(100vw - var(--menu-rail-width) - 24px)); }
+  body.edge-overview .auto-banner { bottom: calc(var(--edge-ui-inset) + 80px); }
   .status-bar { grid-template-columns: 44px minmax(32px, 1fr) 72px; gap: 4px; }
   .status-label, .status-value { font-size: 0.64rem; }
   .flight-actions { right: 8px; bottom: 12px; gap: 4px; }
@@ -763,7 +730,6 @@ body.edge-overview .left-menu { left: var(--edge-ui-inset); bottom: var(--edge-u
   .flight-panel .menu-card { min-height: 26px; padding: 2px 3px; font-size: 0.62rem; }
   .flight-panel h2 { padding-inline: 3px; font-size: 0.55rem; }
   .flight-panel .menu-card[data-shortcut]::after { display: none; }
-  .hud-bl.combat-active { top: 162px; }
   #minimap { width: 140px; height: 140px; }
   .station-header { min-height: 68px; padding: 10px 14px; }
   .station-header-actions { gap: 8px; }
@@ -784,6 +750,7 @@ body.edge-overview .left-menu { left: var(--edge-ui-inset); bottom: var(--edge-u
   .fitting-layout { grid-template-areas: "fitted" "available" "ship"; }
   .fitting-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ship-status { left: calc(var(--menu-rail-width) + 12px); transform: none; width: min(200px, calc(30vw - 30px)); }
+  .auto-banner { width: min(200px, calc(30vw - 30px)); }
   .flight-panel { width: 110px; }
 }
 
@@ -796,15 +763,24 @@ body.docked .flight-actions { display: none; }
 
 .hangar-cargo, .hangar-ship-tree, .hangar-market, .hangar-fitting, .hangar-skills, .hangar-loot { display: flex; flex-direction: column; gap: 6px; }
 .hangar-ship-tree { overflow-x: auto; padding: 4px 2px 10px; }
+.hangar-star-map { display: flex; justify-content: center; }
+.star-map-svg { width: min(100%, 760px); max-height: 70vh; }
+.star-map-link { stroke: rgba(122, 137, 173, 0.7); stroke-width: 0.5; }
+.star-map-system text { fill: var(--text); font-size: 2.6px; }
+.star-map-here { fill: none; stroke: var(--accent); stroke-width: 0.5; }
 .ship-tree-flow {
-  display: grid;
-  grid-template-columns: minmax(176px, 1fr) 30px minmax(176px, 1fr) 30px minmax(176px, 1fr) 30px minmax(176px, 1fr);
-  align-items: center;
-  min-width: 860px;
-  gap: 5px;
+  display: flex;
+  min-width: 1390px;
+  flex-direction: column;
+  gap: 8px;
 }
-.ship-tree-tier { display: flex; flex-direction: column; align-self: stretch; gap: 8px; }
-.ship-tree-tier > h3 {
+.ship-tree-header, .ship-tree-lane {
+  display: grid;
+  grid-template-columns: 140px repeat(4, minmax(215px, 1fr) 30px) minmax(215px, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+.ship-tree-header > h3 {
   margin: 0;
   padding: 8px 10px;
   border: 1px solid rgba(79, 209, 255, 0.34);
@@ -812,33 +788,55 @@ body.docked .flight-actions { display: none; }
   background: linear-gradient(110deg, rgba(79, 209, 255, 0.16), rgba(124, 92, 255, 0.08));
   color: var(--accent);
 }
+.ship-tree-header > span:first-child {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.ship-tree-header-spacer { min-height: 1px; }
+.ship-tree-lane {
+  min-height: 124px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.ship-tree-lane-label { display: flex; flex-direction: column; gap: 4px; padding-right: 8px; }
+.ship-tree-lane-label strong { color: var(--accent); font-size: 0.78rem; }
+.ship-tree-lane-label span { color: var(--muted); font-size: 0.64rem; line-height: 1.35; }
+.ship-tree-cell { display: flex; min-width: 0; flex-direction: column; justify-content: center; gap: 7px; }
+.ship-tree-empty { color: var(--muted); text-align: center; }
 .ship-tree-entry {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: 46px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  min-height: 112px;
-  padding: 8px;
+  gap: 6px;
+  min-height: 108px;
+  padding: 6px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 8px;
   background: rgba(9, 15, 27, 0.72);
   transition: border-color 160ms ease, opacity 160ms ease;
 }
 .ship-tree-entry.skill-ready { border-color: rgba(53, 208, 127, 0.65); background: rgba(53, 208, 127, 0.09); }
 .ship-tree-entry.skills-locked { opacity: 0.72; }
-.ship-tree-model { display: grid; place-items: center; width: 58px; height: 58px; border: 1px solid rgba(79, 209, 255, 0.22); border-radius: 8px; background: radial-gradient(circle, rgba(79, 209, 255, 0.12), transparent 72%); color: var(--accent); }
+.ship-tree-model { display: grid; place-items: center; width: 46px; height: 46px; border: 1px solid rgba(79, 209, 255, 0.22); border-radius: 7px; background: radial-gradient(circle, rgba(79, 209, 255, 0.12), transparent 72%); color: var(--accent); }
 .ship-tree-entry.skills-locked .ship-tree-model { color: #8290a4; }
-.ship-tree-model svg { width: 50px; height: 42px; overflow: visible; }
+.ship-tree-model svg { width: 40px; height: 34px; overflow: visible; }
 .ship-model-hull { fill: currentColor; fill-opacity: 0.24; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
 .ship-model-core { fill: #a9efff; fill-opacity: 0.72; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
 .ship-tree-info { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
-.ship-tree-info > strong { color: var(--text); font-size: 0.8rem; }
-.ship-tree-info .sub { font-size: 0.61rem; line-height: 1.3; }
-.ship-tree-status { color: var(--good); font-size: 0.62rem; }
+.ship-tree-info > strong { color: var(--text); font-size: 0.72rem; }
+.ship-tree-info .sub { font-size: 0.57rem; line-height: 1.25; }
+.ship-tree-status { color: var(--good); font-size: 0.58rem; line-height: 1.25; }
 .ship-tree-entry.skills-locked .ship-tree-status { color: var(--muted); }
 .ship-tree-info .actions { margin-top: 2px; }
-.ship-tree-arrow { display: grid; place-items: center; color: var(--accent); filter: drop-shadow(0 0 5px rgba(79, 209, 255, 0.45)); }
-.ship-tree-arrow svg { width: 30px; height: 24px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; }
+.ship-tree-info .mini { padding: 3px 5px; font-size: 0.6rem; }
+.ship-tree-arrow { display: grid; justify-items: center; gap: 3px; color: var(--good); filter: drop-shadow(0 0 5px rgba(79, 209, 255, 0.3)); }
+.ship-tree-arrow.skills-locked { color: var(--muted); filter: none; }
+.ship-tree-arrow.not-applicable { opacity: 0.16; filter: none; }
+.ship-tree-arrow svg { width: 28px; height: 22px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; }
+.ship-tree-gate { color: var(--warn); font-size: 0.48rem; font-weight: 700; letter-spacing: 0.5px; }
 .crafting-panel {
   margin-top: 8px;
   padding: 10px;
@@ -851,7 +849,69 @@ body.docked .flight-actions { display: none; }
 .crafting-panel-recipe { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .crafting-panel-recipe .sub { line-height: 1.4; }
 .crafting-panel .actions { flex-shrink: 0; }
-.skill-cat { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-top: 4px; }
+.skill-dashboard {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.7fr) minmax(0, 3fr);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(79, 209, 255, 0.3);
+  border-radius: 9px;
+  background: linear-gradient(110deg, rgba(79, 209, 255, 0.09), rgba(124, 92, 255, 0.05));
+}
+.skill-dashboard-count, .skill-dashboard-bonuses { display: flex; flex-direction: column; gap: 4px; }
+.skill-dashboard-count strong { color: var(--accent); font-size: 1.15rem; }
+.skill-dashboard-count span, .skill-dashboard-bonuses { color: var(--muted); font-size: 0.72rem; }
+.skill-dashboard-bonuses > strong { color: var(--text); font-size: 0.75rem; }
+.skill-dashboard-bonuses > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.skill-bonus {
+  padding: 3px 6px;
+  border: 1px solid rgba(53, 208, 127, 0.28);
+  border-radius: 999px;
+  background: rgba(53, 208, 127, 0.07);
+  color: var(--good);
+  font-size: 0.68rem;
+}
+.skill-card {
+  display: grid;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+.skill-card.trained { border-color: rgba(53, 208, 127, 0.35); }
+.skill-card.locked { opacity: 0.72; }
+.skill-card-heading, .skill-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.skill-card-heading strong { color: var(--text); font-size: 0.82rem; }
+.skill-level-label { color: var(--accent); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+.skill-level-track { height: 4px; overflow: hidden; border-radius: 4px; background: rgba(255, 255, 255, 0.09); }
+.skill-level-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+.skill-card p { margin: 0; color: var(--muted); font-size: 0.72rem; line-height: 1.35; }
+.skill-effect { color: var(--good); font-size: 0.68rem; }
+.skill-card-footer .sub { min-width: 0; font-size: 0.66rem; }
+.skill-theme {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(9, 15, 27, 0.4);
+}
+.skill-theme > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.skill-theme > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.skill-theme > summary::-webkit-details-marker { display: none; }
+.skill-theme > summary::before { content: "▸"; color: var(--accent); font-size: 1rem; transition: transform 120ms ease; }
+.skill-theme[open] > summary::before { transform: rotate(90deg); }
+.skill-theme-name { flex: 1; color: var(--text); font-size: 0.82rem; font-weight: 700; }
+.skill-theme-progress { color: var(--muted); font-size: 0.7rem; font-variant-numeric: tabular-nums; text-align: right; }
+.skill-theme-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 7px; padding: 0 8px 8px; }
 .ship-tree-row { margin-left: 14px; border-left: 2px solid rgba(124, 92, 255, 0.45); }
 .ship-tree-row .label { align-items: flex-start; flex-direction: column; gap: 3px; }
 .row {
@@ -1034,26 +1094,30 @@ body.docked .flight-actions { display: none; }
   font-size: 0.68rem;
 }
 .loadout-group h4 .sub { white-space: nowrap; font-weight: 400; }
-.loadout-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(50px, 1fr)); gap: 3px; }
-.loadout-card { min-width: 0; }
+.loadout-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 5px; }
 .loadout-slot {
   width: 100%;
-  min-height: 27px;
+  min-height: 58px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 1px;
-  padding: 2px 4px;
+  gap: 3px;
+  padding: 7px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(79, 209, 255, 0.06), rgba(255, 255, 255, 0.02));
   color: var(--text);
   text-align: left;
   cursor: default;
 }
-.loadout-slot-name { color: var(--muted); font-size: 0.62rem; }
-.loadout-slot-tier { font-size: 0.7rem; font-weight: 600; }
+.loadout-slot.fitted { border-color: rgba(79, 209, 255, 0.38); }
+.loadout-slot.empty { align-items: center; border-style: dashed; color: var(--muted); }
+.loadout-slot.locked { border-color: rgba(255, 207, 92, 0.55); }
+.loadout-slot-name { color: var(--muted); font-size: 0.68rem; }
+.loadout-slot-tier { font-size: 0.76rem; font-weight: 700; }
+.loadout-slot-effect { color: var(--good); font-size: 0.67rem; }
+.loadout-slot-lock { color: var(--gold); font-size: 0.62rem; }
 .char-stat {
   display: flex;
   justify-content: space-between;
@@ -1210,7 +1274,7 @@ body.docked .flight-actions { display: none; }
   top: 210px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 12;
+  z-index: 30;
   width: min(460px, calc(100vw - 32px));
   display: flex;
   align-items: center;

@@ -97,7 +97,7 @@ function withdraw(state, mineral, amount, { shipCargo, skillMults }) {
   const requested = amount === 'all' ? have : Number(amount);
   if (!Number.isFinite(requested) || requested <= 0) return { error: 'Invalid amount' };
   if (requested > have + 1e-9) return { error: `Not enough ${definition.name} in storage` };
-  const room = shipCargo(active, skillMults(next)) - cargoUsed(next);
+  const room = shipCargo(active, skillMults(next), next.skills) - cargoUsed(next);
   const moved = Math.min(requested, have, Math.max(0, room));
   if (moved <= 0) return { error: 'Cargo hold is full' };
   active.cargo[mineral] += moved;

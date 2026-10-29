@@ -90,6 +90,10 @@ describe('HTTP API', () => {
     assert.ok(r.data.components.scrap);
     assert.deepEqual(r.data.oreExchange, ['iron', 'bauxite', 'gadolinium', 'megacyte']);
     assert.ok(r.data.shipProgression.some((tier) => tier.ships.some((ship) => ship.type === 'brutix')));
+    assert.equal(r.data.shipClasses.length, 5);
+    assert.equal(r.data.shipFamilies.length, 9);
+    assert.equal(Object.keys(r.data.ships).length, Object.keys(cfg.SHIPS).length);
+    assert.equal(Object.keys(r.data.skills).length, 30);
     assert.deepEqual(r.data.npcBlueprints, Object.keys(cfg.MODULES).map((slotType) => `module:${slotType}:1`));
     assert.ok(r.data.achievements.miner);
     assert.equal(r.data.constants.worldSize, cfg.WORLD_SIZE);
@@ -115,7 +119,7 @@ describe('HTTP API', () => {
     assert.ok(s.storage.items.scrap >= 0);
     assert.equal(s.standing, undefined);
     assert.equal(s.isk, undefined);
-    assert.ok(s.ambush && Object.keys(s.ambush).length === 3);
+    assert.ok(s.ambush && Object.keys(s.ambush).length === 13);
     assert.ok(s.skillTraining.gunnery);
     assert.equal(typeof s.shipProgression.falcon.canBuild, 'boolean');
     assert.equal(s.agentMission.agents.length, 3);
@@ -189,6 +193,11 @@ describe('HTTP API', () => {
   test('POST /api/craft-ship builds a ship using a found blueprint and materials', async () => {
     const state = srv.app.getState();
     state.skills.miningYield = 1;
+    state.skills.frigateCommand = 2;
+    state.skills.destroyerCommand = 2;
+    for (const [item, amount] of Object.entries(cfg.SHIP_BLUEPRINTS.falcon.recipe)) {
+      state.storage.items[item] = (state.storage.items[item] || 0) + amount;
+    }
     state.storage.blueprints.push({ id: 'found-falcon', kind: 'ship', type: 'falcon', tier: null });
     srv.app.setState(state);
     const r = await api(srv.base, '/api/craft-ship', { type: 'falcon', blueprintId: 'found-falcon' });
@@ -408,6 +417,7 @@ describe('HTTP API', () => {
   test('POST /api/equip-loot fits a looted module into the active ship', async () => {
     const cur = srv.app.getState();
     cur.skills.gunnery = 1;
+    cur.skills.moduleEngineering = 1;
     cur.loot = [{ id: 'loot_api', slotType: 'weapon', tier: 2 }];
     srv.app.setState(cur);
     const r = await api(srv.base, '/api/equip-loot', { lootId: 'loot_api' });
@@ -583,17 +593,26 @@ describe('HTTP API', () => {
     assert.match(wd.data.error, /dock/i);
   });
 
-  test('manual mining works over HTTP and ordinary ticks do not mine', async () => {
+  test('manual mining toggles on over HTTP and mines during simulation ticks', async () => {
     const st = (await api(srv.base, '/api/state')).data.state;
     const a = st.world.asteroids.find((x) => x.amount > 0);
     await flyTo(srv.base, a.x, a.y);
     const tick = await api(srv.base, '/api/tick', {});
     assert.equal(tick.status, 200);
     assert.equal(tick.data.state.stats.totalMineralsMined, 0);
-    const mined = await api(srv.base, '/api/mine', {});
+    const started = await api(srv.base, '/api/mine', {});
+    assert.equal(started.status, 200);
+    assert.equal(started.data.state.manualMining, true);
+    const before = started.data.state.stats.totalMineralsMined;
+    const state = srv.app.getState();
+    state.lastTick = Date.now() - 1000;
+    srv.app.setState(state);
+    const mined = await api(srv.base, '/api/tick', {});
     assert.equal(mined.status, 200);
-    assert.ok(mined.data.state.stats.totalMineralsMined > 0);
+    assert.ok(mined.data.state.stats.totalMineralsMined > before);
     assert.ok(Object.values(mined.data.state.minerals).some((amount) => amount > 0));
+    const stopped = await api(srv.base, '/api/mine', {});
+    assert.equal(stopped.data.state.manualMining, false);
   });
 
   test('POST /api/warp moves the ship to a POI in its system', async () => {
@@ -818,6 +837,11 @@ describe('persistence', () => {
     const astCount = before.world.asteroids.length;
     const state = a.app.getState();
     state.skills.miningYield = 1;
+    state.skills.frigateCommand = 2;
+    state.skills.destroyerCommand = 2;
+    for (const [item, amount] of Object.entries(cfg.SHIP_BLUEPRINTS.falcon.recipe)) {
+      state.storage.items[item] = (state.storage.items[item] || 0) + amount;
+    }
     state.blueprints.push({ id: 'found-falcon', kind: 'ship', type: 'falcon', tier: null });
     a.app.setState(state);
     const crafted = await api(a.base, '/api/craft-ship', { type: 'falcon' });

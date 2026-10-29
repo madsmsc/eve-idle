@@ -187,7 +187,7 @@ export class App {
 
     const depositing = phase === 'deposit';
     const button = document.querySelector(
-      depositing ? '[data-testid="inv-deposit-all"]' : '[data-testid="station-launch"]',
+      depositing ? '[data-testid="inv-deposit-filtered"]' : '[data-testid="station-launch"]',
     );
     if (!button) {
       this.toast(

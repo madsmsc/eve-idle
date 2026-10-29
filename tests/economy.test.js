@@ -75,14 +75,17 @@ describe('item economy', () => {
       assert.ok(cfg.SHIP_BLUEPRINTS[entry.type].recipe);
       assert.ok(entry.skills.length > 0);
     }
-    const slotCountsByTier = cfg.SHIP_PROGRESSION.map((tier) =>
-      tier.ships.map((ship) => Object.values(cfg.SHIPS[ship.type].slots).reduce((total, count) => total + count, 0))
-    );
-    for (let tier = 1; tier < slotCountsByTier.length; tier++) {
-      assert.ok(
-        Math.min(...slotCountsByTier[tier]) > Math.max(...slotCountsByTier[tier - 1]),
-        `Tier ${tier + 1} ships must have more module slots than every Tier ${tier} ship`
-      );
+    for (const family of cfg.SHIP_FAMILIES) {
+      const familySlotCounts = cfg.SHIP_PROGRESSION.map((tier) => {
+        const ship = tier.ships.find((entry) => entry.familyKey === family.key);
+        return Object.values(cfg.SHIPS[ship.type].slots).reduce((total, count) => total + count, 0);
+      });
+      for (let tier = 1; tier < familySlotCounts.length; tier++) {
+        assert.ok(
+          familySlotCounts[tier] > familySlotCounts[tier - 1],
+          `${family.name} hulls should gain module slots as class size increases`
+        );
+      }
     }
   });
 

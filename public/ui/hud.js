@@ -166,7 +166,6 @@ export class HudNode extends Node {
   // PRIVATE
   #refreshFast() {
     const state = this.app.state;
-    document.querySelector('.hud-bl').classList.toggle('combat-active', !!state.combat);
     this.#renderContext();
     this.#renderEventLog();
 
@@ -216,45 +215,52 @@ export class HudNode extends Node {
       gateBtn.title = 'A jump gate must be in range to jump';
     }
     const mineButton = document.getElementById('mine');
-    mineButton.disabled = state.docked || state.combat || state.cargoFull || !state.miningTargetId;
+    const miningActive = !!state.manualMining;
+    mineButton.textContent = miningActive ? '⛏ Stop mining' : '⛏ Mine';
+    mineButton.setAttribute('aria-pressed', String(miningActive));
+    mineButton.classList.toggle('mining-active', miningActive);
+    mineButton.disabled = state.docked || state.combat || state.cargoFull ||
+      state.autoPilotMode || (!miningActive && !state.miningTargetId);
+    mineButton.title = miningActive
+      ? 'Stop continuous mining'
+      : 'Start continuous mining of the current asteroid while it is in range';
 
-    const banner = document.getElementById('combat-banner');
     const autoBanner = document.getElementById('auto-banner');
     autoBanner.hidden = !state.autoPilotMode || state.docked;
     if (!autoBanner.hidden) {
       autoBanner.textContent = autoPilotBannerText(state.autoPilotEfficiency);
     }
-    const chud = document.getElementById('combat-hud');
-    if (state.combat) {
-      const c = state.combat;
-      const pool = c.shipShield + c.shipHull;
-      if (this.lastCombatPool !== null && pool < this.lastCombatPool - 0.5) this.app.camera.addShake(0.3);
-      this.lastCombatPool = pool;
+    this.#trackCombat(state);
+  }
+
+  // PRIVATE
+  // Fight status goes to the activity log: one line at the start and again
+  // whenever the damage mitigation changes.
+  #trackCombat(state) {
+    const c = state.combat;
+    if (!c) {
+      this.lastCombatPool = null;
+      this.combatKey = null;
+      this.lastMitigation = null;
+      return;
+    }
+    const pool = c.shipShield + c.shipHull;
+    if (this.lastCombatPool !== null && pool < this.lastCombatPool - 0.5) this.app.camera.addShake(0.3);
+    this.lastCombatPool = pool;
+    const mitigation = Math.round((1 - c.incomingDamageMultiplier) * 100);
+    if (this.combatKey !== c.enemyId) {
+      this.combatKey = c.enemyId;
       const e = state.world.enemies.find((x) => x.id === c.enemyId);
       const edef = e ? this.app.catalog.enemies[e.type] : null;
-      const active = state.activeShip;
-      const remain = Math.max(0, Math.ceil(c.remaining));
-      const windowLeft = c.enemyRangeDelay > 0 ? Math.max(0, Math.ceil(c.enemyRangeDelay - c.fightTime)) : 0;
-      const tierTxt = e && e.tierName ? ` (${e.tierName})` : '';
-      banner.hidden = false;
-      banner.textContent = windowLeft > 0
-        ? `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'}${tierTxt} — free fire ${windowLeft}s`
-        : `⚔ ${active ? active.name : 'Ship'} vs ${edef ? edef.name : 'target'}${tierTxt} — ${remain}s`;
-      chud.hidden = false;
-      chud.innerHTML = `
-        <div class="chud-actions">
-          <button class="chud-btn" data-action="shieldBoost" data-testid="act-boost" ${c.boostReady ? '' : 'disabled'}>
-            🛡 Boost${c.boostReady ? ` · 1 ${c.boostItem}` : ` · ${Math.ceil(c.boostCooldown)}s`}
-          </button>
-          <button class="chud-btn" data-action="overload" data-testid="act-overload" ${c.overloadReady ? '' : 'disabled'}>
-            ⚡ Overload${c.overloadReady ? ` · 1 ${c.overloadItem}` : ` · ${Math.ceil(c.overloadCooldown)}s`}${c.overloaded ? ' ✦' : ''}
-          </button>
-          <button class="chud-btn disengage" data-action="disengage" data-testid="act-disengage">🏃 Disengage</button>
-        </div>`;
-    } else {
-      banner.hidden = true;
-      chud.hidden = true;
-      this.lastCombatPool = null;
+      const tier = e && e.tierName ? ` (${e.tierName})` : '';
+      const ship = state.activeShip ? state.activeShip.name : 'Ship';
+      this.pushEvent(`⚔ ${ship} vs ${edef ? edef.name : 'target'}${tier}`, 'warn');
+      if (c.enemyRangeDelay > 0) this.pushEvent(`Free fire for ${Math.ceil(c.enemyRangeDelay)}s`, 'good');
+      this.pushEvent(`Taking ${mitigation}% less damage from speed & skills`, '');
+      this.lastMitigation = mitigation;
+    } else if (mitigation !== this.lastMitigation) {
+      this.lastMitigation = mitigation;
+      this.pushEvent(`Taking ${mitigation}% less damage from speed & skills`, '');
     }
   }
 
@@ -325,10 +331,10 @@ export class HudNode extends Node {
         let progress = '';
         if (Array.isArray(objective.progress)) {
           progress = ` — ${objective.progress.map((value, index) =>
-            `${value}/${objective.target[index]}`
+            `${Math.floor(value)}/${Math.floor(objective.target[index])}`
           ).join(', ')}`;
         } else if (objective.progress != null && objective.target != null) {
-          progress = ` — ${objective.progress}/${objective.target}`;
+          progress = ` — ${Math.floor(objective.progress)}/${Math.floor(objective.target)}`;
         }
         line.textContent = `${objective.label}${progress}${objective.ready ? ' — return to a station' : ''}`;
         list.appendChild(line);
@@ -385,6 +391,14 @@ export class HudNode extends Node {
       const ore = this.app.catalog.minerals[a.mineral].name;
       const rate = active.mining.toFixed(1);
       const cargo = `${fmt(state.cargoUsed)}/${fmt(state.cargoCapacity)}`;
+      if (state.manualMining) {
+        const inRange = Math.hypot(a.x - active.x, a.y - active.y) <= state.miningRange;
+        return {
+          label: inRange ? 'Mining' : 'Mining paused',
+          color: CTX_COLORS.mining,
+          detail: `${ore}${belt ? ' · ' + belt.name : ''} · ${inRange ? `+${fmt(state.miningRate)}/s` : 'target out of range'} · Cargo ${cargo} · press M to stop`,
+        };
+      }
       if (['mine', 'mine_fight'].includes(state.autoPilotMode)) {
         return { label: 'Mining', color: CTX_COLORS.mining, detail: `${ore}${belt ? ' · ' + belt.name : ''} · +${rate}/s · Cargo ${cargo}` };
       }

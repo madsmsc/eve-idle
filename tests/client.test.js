@@ -419,7 +419,7 @@ describe('EnemyNode status labels', () => {
 });
 
 describe('edge navigation overview', () => {
-  test('shows off-screen destinations with bearings, distances, and selectable clusters', async () => {
+  test('shows every off-screen destination as its own color-coded marker with the distance below', async () => {
     const { renderEdgeMap } = await import('../public/ui/edge-map.js');
     const createElement = () => ({
       children: [],
@@ -430,6 +430,7 @@ describe('edge navigation overview', () => {
       append(...children) { this.children.push(...children); },
       appendChild(child) { this.children.push(child); },
       setAttribute(name, value) { this.attributes[name] = value; },
+      getBoundingClientRect() { return { left: 0, top: 0, width: 80, height: 30 }; },
     });
     const container = {
       children: [],
@@ -460,21 +461,24 @@ describe('edge navigation overview', () => {
 
     try {
       renderEdgeMap(app, 500);
-      assert.equal(container.children.length, 3);
-      const cluster = container.children.find((group) => group.children[0].dataset.clusterToggle);
-      assert.ok(cluster);
-      assert.equal(cluster.style.left, '800px');
-      assert.equal(cluster.style.top, '300px');
-      assert.equal(cluster.style.transform, 'translate(-100%, -50%)');
-      const toggle = cluster.children[0];
-      assert.match(toggle.attributes['aria-label'], /2 destinations/);
-      assert.match(toggle.children[0].textContent, /→|↘|↓|↙|←|↖|↑|↗/);
-      assert.equal(cluster.children[1].children.length, 2);
+      assert.equal(container.children.length, 4);
+      assert.ok(container.children.every((group) => !group.children[0].dataset.clusterToggle));
       assert.deepEqual(
-        cluster.children[1].children.map((option) => option.dataset.targetId),
-        ['belt-1', 'station-1'],
+        container.children.map((group) => group.children[0].dataset.targetId).sort(),
+        ['belt-1', 'gate-1', 'outpost-1', 'station-1'],
       );
-      assert.ok(cluster.children[1].children.every((option) => /m$/.test(option.textContent)));
+      const rightLefts = container.children
+        .filter((group) => group.dataset.edgeSide === 'right')
+        .map((group) => group.style.top);
+      assert.equal(new Set(rightLefts).size, 2, 'same-side markers are spread apart');
+      const belt = container.children.find((group) => group.children[0].dataset.targetId === 'belt-1');
+      const beltButton = belt.children[0];
+      assert.equal(beltButton.children[0].className, 'edge-marker-name edge-marker-name--belt');
+      assert.match(beltButton.children[1].textContent, /m$/);
+      const outpost = container.children.find((group) => group.children[0].dataset.targetId === 'outpost-1');
+      assert.equal(outpost.children[0].children.length, 2);
+      assert.equal(outpost.children[0].children[0].textContent, 'Outpost A');
+      assert.equal(outpost.children[0].children[0].className, 'edge-marker-name edge-marker-name--outpost');
     } finally {
       global.document = previousDocument;
     }

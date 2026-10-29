@@ -1,5 +1,7 @@
 'use strict';
 
+const { SYSTEM_DEFS } = require('./world');
+
 function createView(config, helpers) {
   const {
     MINERALS,
@@ -12,15 +14,20 @@ function createView(config, helpers) {
     COMPONENTS,
     SHIELD_BOOST_ITEM,
     OVERLOAD_ITEM,
-    MAX_SPEED,
-    MAX_ACCELERATION,
+    OVERLOAD_DURATION,
+    OVERLOAD_DPS_MULT,
     MINING_RANGE,
     ENGAGE_RANGE,
     GATE_RANGE,
   } = config;
   const {
     skillMults,
+    shipMaxSpeed,
+    shipMaxAcceleration,
     droneBonus,
+    shipDps,
+    shipShield,
+    shipHull,
     emptyMaterials,
     dockedStation,
     missionView,
@@ -28,6 +35,7 @@ function createView(config, helpers) {
     emptySkills,
     emptyDroneBay,
     moduleBonus,
+    moduleRequirements,
     shipMining,
     shipCargo,
     skillTrainingView,
@@ -44,15 +52,30 @@ function createView(config, helpers) {
     autoEfficiency,
     dist,
   } = helpers;
-  const { SHIPS } = config;
+  const { SHIPS, SKILLS } = config;
 
-  function shipView(ship, mults, drone) {
+  function shipView(ship, mults, drone, skills) {
     const definition = SHIPS[ship.type];
     const bonuses = drone || { mining: 0, dps: 0 };
+    const fitting = ship.fitting || helpers.emptyFitting(ship.type);
+    const fittingLocks = Object.fromEntries(Object.entries(fitting).map(([slotType, tiers]) => [
+      slotType,
+      tiers.map((tier) => {
+        const missing = tier > 0
+          ? moduleRequirements(slotType, tier).find(({ skill, level }) => ((skills && skills[skill]) || 0) < level)
+          : null;
+        return missing
+          ? `Requires ${SKILLS[missing.skill].name} level ${missing.level}`
+          : null;
+      }),
+    ]));
     return {
       id: ship.id,
       type: ship.type,
       name: definition.name,
+      className: definition.className || null,
+      role: definition.role || 'legacy',
+      weaponType: definition.weaponType || null,
       x: ship.x,
       y: ship.y,
       vx: ship.vx || 0,
@@ -60,30 +83,41 @@ function createView(config, helpers) {
       heading: ship.heading || 0,
       speed: Math.hypot(ship.vx || 0, ship.vy || 0),
       systemId: ship.systemId,
-      mining: shipMining(ship, mults, bonuses.mining),
+      mining: shipMining(ship, mults, bonuses.mining, skills),
       combat: definition.combat,
-      dps: (definition.dps + moduleBonus(ship, 'weapon') + moduleBonus(ship, 'combatDrone') + bonuses.dps) *
-        (mults ? mults.dps : 1),
-      shield: (definition.shield + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1),
-      hull: (definition.hull + moduleBonus(ship, 'armor')) * (mults ? mults.hull : 1),
-      cargo: shipCargo(ship, mults),
+      dps: shipDps(ship, mults, bonuses.dps, skills),
+      shield: shipShield(ship, mults, skills),
+      hull: shipHull(ship, mults, skills),
+      cargo: shipCargo(ship, mults, skills),
+      maxSpeed: shipMaxSpeed(ship, mults),
       slots: definition.slots,
-      fitting: ship.fitting || helpers.emptyFitting(ship.type),
+      fitting,
+      fittingLocks,
     };
   }
 
-  function combatView(combat) {
+  function combatView(combat, state) {
     const timeToDeath = Math.min(helpers.playerTtd(combat), helpers.enemyTtd(combat));
+    const ship = state.ships.find((item) => item.id === combat.shipId);
+    const scrap = ship && ship.cargo[SHIELD_BOOST_ITEM] || 0;
+    const boostReady = combat.fightTime >= combat.boostReadyAt;
+    const overloadReady = combat.fightTime >= combat.overloadReadyAt;
     return {
       ...combat,
       remaining: Math.max(0, timeToDeath),
       overloaded: combat.fightTime < combat.overloadUntil,
-      boostReady: combat.fightTime >= combat.boostReadyAt,
-      overloadReady: combat.fightTime >= combat.overloadReadyAt,
+      boostReady,
+      overloadReady,
+      boostAvailable: boostReady && scrap > 0 && combat.shipShield < combat.shipShieldMax,
+      overloadAvailable: overloadReady && scrap > 0,
       boostCooldown: Math.max(0, combat.boostReadyAt - combat.fightTime),
       overloadCooldown: Math.max(0, combat.overloadReadyAt - combat.fightTime),
       boostItem: COMPONENTS[SHIELD_BOOST_ITEM].name,
       overloadItem: COMPONENTS[OVERLOAD_ITEM].name,
+      overloadDuration: OVERLOAD_DURATION,
+      overloadDpsMultiplier: OVERLOAD_DPS_MULT,
+      scrap,
+      incomingDamageMultiplier: combat.incomingDamageMultiplier || 1,
     };
   }
 
@@ -107,7 +141,7 @@ function createView(config, helpers) {
       automationLog: state.automationLog || [],
       materials,
       minerals: Object.fromEntries(Object.keys(MINERALS).map((key) => [key, materials[key] || 0])),
-      ships: state.ships.map((ship) => shipView(ship, multipliers, drone)),
+      ships: state.ships.map((ship) => shipView(ship, multipliers, drone, state.skills || emptySkills())),
       activeShipId: state.activeShipId,
       lastTick: state.lastTick,
       skillPoints: state.skillPoints || 0,
@@ -123,8 +157,8 @@ function createView(config, helpers) {
           : (state.drones || emptyDroneBay()).combat,
       },
       droneBonuses: {
-        mining: moduleBonus(active, 'miningDrone') + droneBonus(state, 'mining'),
-        dps: moduleBonus(active, 'combatDrone') + droneBonus(state, 'combat'),
+        mining: moduleBonus(active, 'miningDrone', state.skills, multipliers) + droneBonus(state, 'mining'),
+        dps: moduleBonus(active, 'combatDrone', state.skills, multipliers) + droneBonus(state, 'combat'),
       },
       loot: (state.loot || []).map((item) => ({
         id: item.id,
@@ -145,7 +179,7 @@ function createView(config, helpers) {
           ? state.storage.blueprints.map((blueprint) => ({ ...blueprint }))
           : [],
       },
-      combat: state.combat ? combatView(state.combat) : null,
+      combat: state.combat ? combatView(state.combat, state) : null,
       combatLog: state.combatLog.slice(),
       stats: { ...state.stats },
       achievements: Object.values(ACHIEVEMENTS).map((achievement) => {
@@ -196,12 +230,17 @@ function createView(config, helpers) {
       system: system
         ? { id: system.id, name: system.name, color: system.color, security: system.security, gates: system.gates }
         : null,
-      systemNames: Object.values(state.systems).map((item) => ({
-        id: item.id,
-        name: item.name,
-        color: item.color,
-        security: item.security,
-      })),
+      systemNames: Object.values(state.systems).map((item) => {
+        const definition = SYSTEM_DEFS.find((def) => def.id === item.id);
+        return {
+          id: item.id,
+          name: item.name,
+          color: item.color,
+          security: item.security,
+          map: definition ? definition.map : null,
+          links: (item.gates || []).map((gate) => gate.targetSystemId),
+        };
+      }),
       ambush: Object.fromEntries(
         Object.values(state.systems).map((item) => [item.id, ambushChance(state, item.id)])
       ),
@@ -214,23 +253,29 @@ function createView(config, helpers) {
     result.autoPilotMode = state.autoPilotMode || null;
     result.autoPilotSequence = state.autoPilotSequence ? { ...state.autoPilotSequence } : null;
     result.autoPilotEfficiency = autoEfficiency(state);
-    result.maxSpeed = MAX_SPEED * result.autoPilotEfficiency;
-    result.maxAcceleration = MAX_ACCELERATION * result.autoPilotEfficiency;
+    result.maxSpeed = shipMaxSpeed(active, multipliers) * result.autoPilotEfficiency;
+    result.maxAcceleration = shipMaxAcceleration(active, multipliers) * result.autoPilotEfficiency;
     result.skillTraining = skillTrainingView(state);
     result.shipProgression = shipProgressionView(state, progressionMaterials, result.docked);
     result.actionAvailability = actionAvailability(state, progressionMaterials, result.docked, active);
     result.cargoUsed = cargoUsed(state);
     result.cargoCapacity = cargoCapacity(state);
     result.cargoFull = result.cargoCapacity > 0 && result.cargoUsed >= result.cargoCapacity;
-    result.miningPaused = active ? shipInCombat(state, active.id) : true;
-    result.miningRange = active ? miningRange(active) : MINING_RANGE;
+    result.manualMining = !!state.manualMining;
+    result.manualMiningTargetId = state.manualMiningTargetId || null;
+    result.miningPaused = active ? shipInCombat(state, active.id) || result.docked : true;
+    result.miningRange = active ? miningRange(active, multipliers, state.skills) : MINING_RANGE;
     result.miningRate = 0;
     result.miningTargetId = null;
     if (active && !result.miningPaused) {
-      const target = nearestAsteroidInRange(state, active);
+      const target = state.manualMining
+        ? system && system.asteroids.find((asteroid) => asteroid.id === state.manualMiningTargetId && asteroid.amount > 0)
+        : nearestAsteroidInRange(state, active);
       if (target) {
-        result.miningRate = shipMining(active, multipliers, drone.mining) * result.autoPilotEfficiency;
         result.miningTargetId = target.id;
+        if (dist(target.x, target.y, active.x, active.y) <= result.miningRange) {
+          result.miningRate = shipMining(active, multipliers, drone.mining, state.skills) * result.autoPilotEfficiency;
+        }
       }
     }
     if (active && system) {

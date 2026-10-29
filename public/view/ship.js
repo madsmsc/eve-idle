@@ -61,10 +61,11 @@ export class ShipNode extends Node {
   }
 
   // PUBLIC
-  navigate(targetId, coordinates, opts = {}) {
+  async navigate(targetId, coordinates, opts = {}) {
     if (this.app.state.combat) {
-      this.app.toast('Cannot navigate while in combat', true);
-      return false;
+      // Navigating away from a fight disengages it; clicking the enemy itself does not.
+      if (targetId && targetId === this.app.state.combat.enemyId) return false;
+      if (!(await this.doCombatAction('disengage'))) return false;
     }
     if (this.app.state.docked) {
       this.app.toast('Launch from the station before navigating', true);
@@ -76,19 +77,20 @@ export class ShipNode extends Node {
       this.app.toast('Invalid navigation destination', true);
       return false;
     }
-    return this.app.doAction('navigate', payload).then((ok) => {
-      if (ok) {
-        this.app.targetEnemyId = this.app.state.navigation && this.app.state.navigation.targetId;
-        if (!opts.silent) this.app.toast('Destination set');
-      }
-      return ok;
-    });
+    const ok = await this.app.doAction('navigate', payload);
+    if (ok) {
+      this.app.targetEnemyId = this.app.state.navigation && this.app.state.navigation.targetId;
+      if (!opts.silent) this.app.toast('Destination set');
+    }
+    return ok;
   }
 
   // PUBLIC
-  navigateToNearest(kind) {
+  async navigateToNearest(kind) {
+    if (this.app.state.combat && !(await this.doCombatAction('disengage'))) return false;
     return this.app.doAction('navigate', { kind });
   }
+
 
   // PUBLIC
   async doGateJump() {
@@ -123,11 +125,8 @@ export class ShipNode extends Node {
   // PUBLIC
   async doCombatAction(action) {
     const ok = await this.app.doAction('combat-action', { action });
-    if (ok) {
-      if (action === 'disengage') this.app.toast('Disengaged — enemy escaped');
-      else if (action === 'shieldBoost') this.app.toast('Shield boosted');
-      else if (action === 'overload') this.app.toast('Weapons overloaded');
-    }
+    if (ok && action === 'disengage') this.app.toast('Disengaged — enemy escaped');
+    return ok;
   }
 
   // PUBLIC

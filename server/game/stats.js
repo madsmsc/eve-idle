@@ -10,48 +10,90 @@ const {
   SKILLS,
   DRONES,
   AUTOPILOT_EFFICIENCY,
+  MAX_SPEED,
+  MAX_ACCELERATION,
 } = require('../config');
 
 function autoEfficiency(state) {
   return state && state.autoPilotMode ? AUTOPILOT_EFFICIENCY : 1;
 }
 
-function shipMining(ship, mults, drone = 0) {
-  return (SHIPS[ship.type].mining + moduleBonus(ship, 'mining') + moduleBonus(ship, 'miningDrone') + drone) *
-    (mults ? mults.mining : 1) * MINING_RATE_MULTIPLIER;
+function shipMining(ship, mults, drone = 0, skills = null) {
+  const definition = SHIPS[ship.type];
+  const droneMining = (moduleBonus(ship, 'miningDrone', skills, mults) + drone) *
+    (mults ? mults.miningDrone || 1 : 1);
+  return (definition.mining +
+    moduleBonus(ship, 'mining', skills, mults) +
+    droneMining) *
+    (mults ? mults.mining : 1) *
+    (mults ? mults.miningCycle || 1 : 1) *
+    MINING_RATE_MULTIPLIER;
 }
 
-function miningRange(ship) {
-  return MINING_RANGE + moduleBonus(ship, 'mining');
+function miningRange(ship, mults, skills = null) {
+  return (MINING_RANGE + moduleBonus(ship, 'mining', skills, mults)) *
+    (mults ? mults.miningRange || 1 : 1);
 }
 
 function shipCombat(ship) {
   return SHIPS[ship.type].combat;
 }
 
-function shipDps(ship, mults, drone = 0) {
-  return (SHIPS[ship.type].dps + moduleBonus(ship, 'weapon') + moduleBonus(ship, 'combatDrone') + drone) *
-    (mults ? mults.dps : 1);
+function shipDps(ship, mults, drone = 0, skills = null) {
+  const definition = SHIPS[ship.type];
+  const weaponSkill = definition.weaponType ? mults && mults[`${definition.weaponType}Dps`] || 1 : 1;
+  const genericWeapon = moduleBonus(ship, 'weapon', skills, mults);
+  const variantWeapon = moduleBonus(ship, definition.weaponSlot, skills, mults);
+  const rawDroneDamage = moduleBonus(ship, 'combatDrone', skills, mults) + drone;
+  const hullWeaponDamage = definition.weaponType === 'drone'
+    ? (definition.dps + genericWeapon + variantWeapon + rawDroneDamage) * weaponSkill
+    : (definition.dps + genericWeapon + variantWeapon) * weaponSkill +
+      rawDroneDamage * (mults ? mults.droneDps || 1 : 1);
+  return hullWeaponDamage * (mults ? mults.dps : 1);
 }
 
-function shipShield(ship, mults) {
-  return (SHIPS[ship.type].shield + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1);
+function shipShield(ship, mults, skills = null) {
+  return (SHIPS[ship.type].shield + moduleBonus(ship, 'shield', skills, mults)) * (mults ? mults.shield : 1);
 }
 
-function shipHull(ship, mults) {
-  return (SHIPS[ship.type].hull + moduleBonus(ship, 'armor')) * (mults ? mults.hull : 1);
+function shipHull(ship, mults, skills = null) {
+  return (SHIPS[ship.type].hull + moduleBonus(ship, 'armor', skills, mults)) * (mults ? mults.hull : 1);
 }
 
-function shipCargo(ship, mults) {
-  return (SHIPS[ship.type].cargo + moduleBonus(ship, 'cargo')) * (mults ? mults.cargo : 1);
+function shipCargo(ship, mults, skills = null) {
+  return (SHIPS[ship.type].cargo + moduleBonus(ship, 'cargo', skills, mults)) * (mults ? mults.cargo : 1);
 }
 
-function moduleBonus(ship, slotType) {
+function moduleRequirements(slotType, tier) {
+  const definition = MODULES[slotType];
+  if (!definition || tier <= 1) return [];
+  const skill = definition.skill || ({
+    weapon: 'gunnery',
+    shield: 'shieldUpgrades',
+    armor: 'hullUpgrades',
+    mining: 'miningYield',
+    cargo: 'cargoManagement',
+    range: 'gunnery',
+    miningDrone: 'miningDrones',
+    combatDrone: 'droneDamage',
+  })[slotType];
+  const requirements = [{ skill, level: tier - 1 }, { skill: 'moduleEngineering', level: tier - 1 }];
+  return requirements.filter((requirement) => requirement.skill && SKILLS[requirement.skill]);
+}
+
+function moduleBonus(ship, slotType, skills = null, mults = null) {
   const fit = ship && ship.fitting && ship.fitting[slotType];
   if (!fit) return 0;
   const tiers = MODULES[slotType] && MODULES[slotType].tiers;
   if (!tiers) return 0;
-  return fit.reduce((sum, tier) => sum + (tier > 0 ? tiers[tier - 1].bonus : 0), 0);
+  const bonus = fit.reduce((sum, tier) => {
+    if (tier <= 0) return sum;
+    const locked = skills && moduleRequirements(slotType, tier).some(({ skill, level }) =>
+      (skills[skill] || 0) < level
+    );
+    return sum + (locked ? 0 : tiers[tier - 1].bonus);
+  }, 0);
+  return bonus * (mults ? mults.moduleEffectiveness || 1 : 1);
 }
 
 function emptyFitting(type) {
@@ -64,14 +106,26 @@ function emptyFitting(type) {
 }
 
 function skillMults(state) {
-  const multipliers = { mining: 1, cargo: 1, dps: 1, shield: 1, hull: 1 };
+  const multipliers = {};
+  for (const def of Object.values(SKILLS)) {
+    if (def.effect) multipliers[def.effect.stat] = 1;
+  }
   const skills = state.skills || {};
   for (const key of Object.keys(SKILLS)) {
     const def = SKILLS[key];
     const level = skills[key] || 0;
-    if (level > 0) multipliers[def.effect.stat] *= 1 + def.effect.pctPerLevel * level;
+    if (level > 0 && def.effect) multipliers[def.effect.stat] *= 1 + def.effect.pctPerLevel * level;
   }
   return multipliers;
+}
+
+function shipMaxSpeed(ship, mults) {
+  const definition = ship && SHIPS[ship.type];
+  return MAX_SPEED * (definition && definition.speedMultiplier || 1) * (mults ? mults.speed || 1 : 1);
+}
+
+function shipMaxAcceleration(ship, mults) {
+  return MAX_ACCELERATION * (mults ? mults.acceleration || 1 : 1);
 }
 
 function skillCost(def, currentLevel) {
@@ -83,11 +137,17 @@ function skillTrainingView(state) {
     const level = (state.skills && state.skills[key]) || 0;
     const maxed = level >= def.maxLevel;
     const cost = maxed ? 0 : skillCost(def, level);
+    const missingRequirements = def.requirements.filter(({ skill, level: required }) =>
+      ((state.skills && state.skills[skill]) || 0) < required
+    );
+    const requirementsMet = missingRequirements.length === 0;
     return [key, {
       level,
       cost,
       maxed,
-      canTrain: !maxed && (state.skillPoints || 0) >= cost,
+      canTrain: !maxed && requirementsMet && (state.skillPoints || 0) >= cost,
+      requirementsMet,
+      missingRequirements,
     }];
   }));
 }
@@ -115,6 +175,9 @@ function shipProgressionView(state, materials, docked) {
       canBuild: entry.type !== 'rifter' && docked && skillsReady && materialsReady && blueprintReady,
       materials: blueprint ? { ...blueprint.recipe } : {},
       materialCounts,
+      missingSkills: entry.skills.filter(({ skill, level }) =>
+        ((state.skills && state.skills[skill]) || 0) < level
+      ),
     }];
   })));
 }
@@ -146,7 +209,10 @@ module.exports = {
   shipShield,
   shipHull,
   shipCargo,
+  shipMaxSpeed,
+  shipMaxAcceleration,
   moduleBonus,
+  moduleRequirements,
   emptyFitting,
   skillMults,
   skillCost,

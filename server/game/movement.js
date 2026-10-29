@@ -1,20 +1,21 @@
 'use strict';
 
-function createMovement({ ARRIVE_RADIUS, MAX_SPEED, MAX_ACCELERATION, dist, clamp, miningRange }) {
-  function moveInOrbit(ship, target, radius, seconds, sys, efficiency) {
+function createMovement({ SHIPS, ARRIVE_RADIUS, MAX_SPEED, MAX_ACCELERATION, dist, clamp, miningRange }) {
+  function moveInOrbit(ship, target, radius, seconds, sys, efficiency, multipliers) {
     const distance = dist(target.x, target.y, ship.x, ship.y);
     const targetKey = target.id || `${target.x}:${target.y}`;
     if (ship.orbitTargetKey !== targetKey) {
       ship.orbitTargetKey = targetKey;
       ship.orbitAngle = distance > 0 ? Math.atan2(ship.y - target.y, ship.x - target.x) : ship.heading || 0;
     }
-    ship.orbitAngle += seconds * 0.18;
+    const speedScale = (SHIPS[ship.type].speedMultiplier || 1) * (multipliers ? multipliers.speed || 1 : 1);
+    ship.orbitAngle += seconds * 0.18 * speedScale;
     const desiredX = target.x + Math.cos(ship.orbitAngle) * radius;
     const desiredY = target.y + Math.sin(ship.orbitAngle) * radius;
     const response = 1 - Math.exp(-seconds * 4);
     const desiredVx = ((desiredX - ship.x) * response) / seconds;
     const desiredVy = ((desiredY - ship.y) * response) / seconds;
-    moveVelocityToward(ship, desiredVx, desiredVy, seconds, efficiency);
+    moveVelocityToward(ship, desiredVx, desiredVy, seconds, efficiency, multipliers);
     const previousX = ship.x;
     const previousY = ship.y;
     ship.x = clamp(ship.x + ship.vx * seconds, 0, sys.width);
@@ -23,14 +24,16 @@ function createMovement({ ARRIVE_RADIUS, MAX_SPEED, MAX_ACCELERATION, dist, clam
     ship.distanceTravelled = (ship.distanceTravelled || 0) + Math.hypot(ship.x - previousX, ship.y - previousY);
   }
 
-  function moveVelocityToward(ship, targetVx, targetVy, seconds, efficiency = 1) {
+  function moveVelocityToward(ship, targetVx, targetVy, seconds, efficiency = 1, multipliers = null) {
     let vx = ship.vx || 0;
     let vy = ship.vy || 0;
     const deltaX = targetVx - vx;
     const deltaY = targetVy - vy;
     const deltaSpeed = Math.hypot(deltaX, deltaY);
-    const maxAcceleration = MAX_ACCELERATION * efficiency;
-    const maxSpeed = MAX_SPEED * efficiency;
+    const definition = SHIPS[ship.type];
+    const maxAcceleration = MAX_ACCELERATION * efficiency * (multipliers ? multipliers.acceleration || 1 : 1);
+    const maxSpeed = MAX_SPEED * efficiency * (definition.speedMultiplier || 1) *
+      (multipliers ? multipliers.speed || 1 : 1);
     const maxChange = maxAcceleration * seconds;
     if (deltaSpeed <= maxChange) {
       vx = targetVx;
@@ -49,7 +52,7 @@ function createMovement({ ARRIVE_RADIUS, MAX_SPEED, MAX_ACCELERATION, dist, clam
     return Math.hypot(vx, vy);
   }
 
-  function advanceNavigation(ship, sys, seconds, combat = null, efficiency = 1) {
+  function advanceNavigation(ship, sys, seconds, combat = null, efficiency = 1, multipliers = null, skills = null, miningTargetId = null) {
     if (ship.dockedStationId) return;
     let destination = ship.navigation;
     const combatEnemy = combat && combat.shipId === ship.id
@@ -61,17 +64,28 @@ function createMovement({ ARRIVE_RADIUS, MAX_SPEED, MAX_ACCELERATION, dist, clam
     const asteroid = destination && destination.orbitTargetId
       ? sys.asteroids.find((item) => item.id === destination.orbitTargetId && item.amount > 0)
       : null;
+    const manualAsteroid = miningTargetId
+      ? sys.asteroids.find((item) => item.id === miningTargetId && item.amount > 0)
+      : null;
     if (destination && destination.orbitTargetId && !asteroid) {
       ship.navigation = null;
       destination = null;
     }
-    const nearbyAsteroid = !destination && !combat
-      ? sys.asteroids
-        .filter((item) => item.amount > 0)
-        .map((item) => ({ item, distance: dist(item.x, item.y, ship.x, ship.y) }))
-        .filter(({ distance }) => distance <= miningRange(ship))
-        .sort((a, b) => a.distance - b.distance)[0]?.item || null
-      : null;
+    let nearbyAsteroid = null;
+    if (!destination && !combat) {
+      if (miningTargetId) {
+        if (manualAsteroid && dist(manualAsteroid.x, manualAsteroid.y, ship.x, ship.y) <=
+            miningRange(ship, multipliers, skills)) {
+          nearbyAsteroid = manualAsteroid;
+        }
+      } else {
+        nearbyAsteroid = sys.asteroids
+          .filter((item) => item.amount > 0)
+          .map((item) => ({ item, distance: dist(item.x, item.y, ship.x, ship.y) }))
+          .filter(({ distance }) => distance <= miningRange(ship, multipliers, skills))
+          .sort((a, b) => a.distance - b.distance)[0]?.item || null;
+      }
+    }
     const orbit = combatEnemy
       ? { target: combatEnemy, radius: 150 }
       : enemy && destination && dist(enemy.x, enemy.y, ship.x, ship.y) <= 162
@@ -82,13 +96,13 @@ function createMovement({ ARRIVE_RADIUS, MAX_SPEED, MAX_ACCELERATION, dist, clam
             ? { target: nearbyAsteroid, radius: 100 }
             : null;
     if (orbit) {
-      moveInOrbit(ship, orbit.target, orbit.radius, seconds, sys, efficiency);
+      moveInOrbit(ship, orbit.target, orbit.radius, seconds, sys, efficiency, multipliers);
       return;
     }
     ship.orbitTargetKey = null;
     ship.orbitAngle = null;
     if (!destination) {
-      const speed = moveVelocityToward(ship, 0, 0, seconds, efficiency);
+      const speed = moveVelocityToward(ship, 0, 0, seconds, efficiency, multipliers);
       if (speed > 0) {
         const oldX = ship.x;
         const oldY = ship.y;
@@ -116,13 +130,16 @@ function createMovement({ ARRIVE_RADIUS, MAX_SPEED, MAX_ACCELERATION, dist, clam
       }
       return;
     }
-    const maxSpeed = MAX_SPEED * efficiency;
-    const maxAcceleration = MAX_ACCELERATION * efficiency;
+    const definition = SHIPS[ship.type];
+    const maxSpeed = MAX_SPEED * efficiency * (definition.speedMultiplier || 1) *
+      (multipliers ? multipliers.speed || 1 : 1);
+    const maxAcceleration = MAX_ACCELERATION * efficiency *
+      (multipliers ? multipliers.acceleration || 1 : 1);
     const stoppingSpeed = Math.sqrt(2 * maxAcceleration * distance);
     const desiredSpeed = Math.min(maxSpeed, distance * 0.6, stoppingSpeed);
     const desiredVx = distance > 0 ? (dx / distance) * desiredSpeed : 0;
     const desiredVy = distance > 0 ? (dy / distance) * desiredSpeed : 0;
-    moveVelocityToward(ship, desiredVx, desiredVy, seconds, efficiency);
+    moveVelocityToward(ship, desiredVx, desiredVy, seconds, efficiency, multipliers);
     const oldX = ship.x;
     const oldY = ship.y;
     ship.x = clamp(ship.x + ship.vx * seconds, 0, sys.width);

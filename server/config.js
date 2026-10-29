@@ -23,19 +23,133 @@ const SHIPS = {
   brutix:    { key: 'brutix',    name: 'Brutix',    mining: 170, combat: 60,  cargo: 3000, shield: 400, hull: 800, dps: 70, slots: { weapon: 2, shield: 3, armor: 3, mining: 5, cargo: 5, range: 1, miningDrone: 1, combatDrone: 1 } },
 };
 
-const SHIP_PROGRESSION = [
-  { tier: 1, ships: [{ type: 'rifter', skills: [] }] },
-  { tier: 2, ships: [
-    { type: 'falcon', skills: [{ skill: 'miningYield', level: 1 }] },
-    { type: 'raptor', skills: [{ skill: 'gunnery', level: 1 }] },
-  ] },
-  { tier: 3, ships: [
-    { type: 'vexor', skills: [{ skill: 'miningYield', level: 2 }] },
-    { type: 'gnosis', skills: [{ skill: 'cargoManagement', level: 2 }] },
-    { type: 'manticore', skills: [{ skill: 'gunnery', level: 3 }] },
-  ] },
-  { tier: 4, ships: [{ type: 'brutix', skills: [{ skill: 'miningYield', level: 4 }] }] },
+const SHIP_CLASSES = [
+  { key: 'frigate', name: 'Frigate', speed: 1.25, mining: 18, dps: 20, shield: 90, hull: 170, cargo: 90, slots: 1 },
+  { key: 'destroyer', name: 'Destroyer', speed: 1.1, mining: 32, dps: 34, shield: 170, hull: 310, cargo: 220, slots: 2 },
+  { key: 'cruiser', name: 'Cruiser', speed: 0.95, mining: 55, dps: 58, shield: 330, hull: 600, cargo: 500, slots: 3 },
+  { key: 'battlecruiser', name: 'Battlecruiser', speed: 0.8, mining: 95, dps: 92, shield: 640, hull: 1150, cargo: 1100, slots: 4 },
+  { key: 'battleship', name: 'Battleship', speed: 0.65, mining: 150, dps: 145, shield: 1200, hull: 2200, cargo: 2500, slots: 5 },
 ];
+
+const SHIP_FAMILIES = [
+  { key: 'miner', name: 'Prospector', role: 'miner', weaponType: null, skill: 'miningYield' },
+  { key: 'fast_projectile', name: 'Projectile Scout', role: 'fast', weaponType: 'projectile', skill: 'projectileWeapons' },
+  { key: 'fast_missile', name: 'Missile Scout', role: 'fast', weaponType: 'missile', skill: 'missileWeapons' },
+  { key: 'fast_laser', name: 'Laser Scout', role: 'fast', weaponType: 'laser', skill: 'laserWeapons' },
+  { key: 'fast_drone', name: 'Drone Scout', role: 'fast', weaponType: 'drone', skill: 'droneCommand' },
+  { key: 'heavy_projectile', name: 'Projectile Bulwark', role: 'heavy', weaponType: 'projectile', skill: 'projectileWeapons' },
+  { key: 'heavy_missile', name: 'Missile Bulwark', role: 'heavy', weaponType: 'missile', skill: 'missileWeapons' },
+  { key: 'heavy_laser', name: 'Laser Bulwark', role: 'heavy', weaponType: 'laser', skill: 'laserWeapons' },
+  { key: 'heavy_drone', name: 'Drone Bulwark', role: 'heavy', weaponType: 'drone', skill: 'droneCommand' },
+];
+
+const WEAPON_SLOT_BY_TYPE = {
+  projectile: 'projectileWeapon',
+  missile: 'missileWeapon',
+  laser: 'laserWeapon',
+  drone: 'droneWeapon',
+};
+
+const SHIP_PROGRESSION = SHIP_CLASSES.map((shipClass, classIndex) => ({
+  tier: classIndex + 1,
+  classKey: shipClass.key,
+  className: shipClass.name,
+  ships: [],
+}));
+
+const legacyShipEntries = [
+  { type: 'rifter', classIndex: 0, skills: [] },
+  { type: 'falcon', classIndex: 1, skills: [{ skill: 'miningYield', level: 1 }] },
+  { type: 'raptor', classIndex: 1, skills: [{ skill: 'gunnery', level: 1 }] },
+  { type: 'vexor', classIndex: 2, skills: [{ skill: 'miningYield', level: 2 }] },
+  { type: 'gnosis', classIndex: 3, skills: [{ skill: 'cargoManagement', level: 2 }] },
+  { type: 'manticore', classIndex: 2, skills: [{ skill: 'gunnery', level: 3 }] },
+  { type: 'brutix', classIndex: 3, skills: [{ skill: 'miningYield', level: 4 }] },
+];
+
+for (const entry of legacyShipEntries) {
+  const shipClass = SHIP_CLASSES[entry.classIndex];
+  SHIP_PROGRESSION[entry.classIndex].ships.push({
+    type: entry.type,
+    familyKey: 'legacy',
+    classKey: shipClass.key,
+    skills: [...entry.skills, ...(entry.classIndex === 0 ? [] : [
+      { skill: `${shipClass.key}Command`, level: entry.classIndex + 1 },
+    ])],
+  });
+}
+
+for (const [classIndex, shipClass] of SHIP_CLASSES.entries()) {
+  for (const family of SHIP_FAMILIES) {
+    const type = `${family.key}_${shipClass.key}`;
+    const miner = family.role === 'miner';
+    const fast = family.role === 'fast';
+    const drone = family.weaponType === 'drone';
+    const weaponSlot = family.weaponType ? WEAPON_SLOT_BY_TYPE[family.weaponType] : null;
+    const slots = {
+      weapon: 0,
+      projectileWeapon: 0,
+      missileWeapon: 0,
+      laserWeapon: 0,
+      droneWeapon: 0,
+      shield: Math.max(1, Math.ceil(shipClass.slots * 0.6)),
+      armor: fast ? Math.max(0, Math.floor(shipClass.slots * 0.4)) : Math.max(1, Math.ceil(shipClass.slots * 0.5)),
+      mining: miner ? shipClass.slots : Math.max(0, Math.floor(shipClass.slots * 0.35)),
+      cargo: Math.max(1, Math.ceil(shipClass.slots * 0.5)),
+      range: 1,
+      miningDrone: miner ? 1 : 0,
+      combatDrone: family.weaponType ? 0 : 1,
+    };
+    if (weaponSlot) slots[weaponSlot] = Math.max(1, Math.ceil(shipClass.slots * (fast ? 1 : 0.8)));
+    const profile = miner
+      ? { mining: 3, dps: 0.35, tank: 0.8, cargo: 1.5, speed: 0.78 }
+      : fast
+        ? { mining: 0.35, dps: 1.05, tank: 0.65, cargo: 0.75, speed: 1.55 }
+        : { mining: 0.7, dps: 1, tank: 1.65, cargo: 1.1, speed: 0.65 };
+    const dpsAdjustment = drone ? 0.9 : 1;
+    SHIPS[type] = {
+      key: type,
+      name: `${shipClass.name} ${family.name}`,
+      classKey: shipClass.key,
+      className: shipClass.name,
+      familyKey: family.key,
+      role: family.role,
+      weaponType: family.weaponType,
+      weaponSlot,
+      mining: Math.round(shipClass.mining * profile.mining),
+      combat: classIndex + 1,
+      cargo: Math.round(shipClass.cargo * profile.cargo),
+      shield: Math.round(shipClass.shield * profile.tank),
+      hull: Math.round(shipClass.hull * profile.tank),
+      dps: Math.round(shipClass.dps * profile.dps * dpsAdjustment),
+      speedMultiplier: shipClass.speed * profile.speed,
+      slots,
+    };
+    const commandSkill = `${shipClass.key}Command`;
+    const skillLevel = classIndex + 1;
+    const requirements = [{ skill: commandSkill, level: skillLevel }];
+    if (miner) {
+      requirements.push(
+        { skill: 'miningYield', level: skillLevel },
+        { skill: 'miningCycle', level: skillLevel },
+      );
+    } else {
+      requirements.push({ skill: family.skill, level: skillLevel });
+      requirements.push(fast
+        ? { skill: 'evasiveManeuver', level: Math.min(5, Math.max(1, skillLevel - 1)) }
+        : { skill: 'hullUpgrades', level: Math.min(5, skillLevel) });
+      if (drone) requirements.push({ skill: 'droneDamage', level: skillLevel });
+    }
+    SHIP_PROGRESSION[classIndex].ships.push({
+      type,
+      familyKey: family.key,
+      classKey: shipClass.key,
+      role: family.role,
+      weaponType: family.weaponType,
+      skills: requirements,
+    });
+  }
+}
 
 // Fitting modules. Each module type boosts one stat by a flat bonus. Modules
 // are inventory items; fitting consumes one and un-fitting returns one.
@@ -46,6 +160,10 @@ const MODULES = {
   mining: { key: 'mining', name: 'Mining Augmenter', stat: 'mining', tiers: [ { tier: 1, bonus: 4 }, { tier: 2, bonus: 12 }, { tier: 3, bonus: 35 }, { tier: 4, bonus: 85 } ] },
   cargo:  { key: 'cargo', name: 'Cargo Expander', stat: 'cargo', tiers: [ { tier: 1, bonus: 60 }, { tier: 2, bonus: 160 }, { tier: 3, bonus: 450 }, { tier: 4, bonus: 1100 } ] },
   range:  { key: 'range', name: 'Range Amplifier', stat: 'range', tiers: [ { tier: 1, bonus: 3 }, { tier: 2, bonus: 8 }, { tier: 3, bonus: 20 }, { tier: 4, bonus: 50 } ] },
+  projectileWeapon: { key: 'projectileWeapon', name: 'Projectile Cannon', stat: 'dps', skill: 'projectileWeapons', tiers: [ { tier: 1, bonus: 6 }, { tier: 2, bonus: 18 }, { tier: 3, bonus: 45 }, { tier: 4, bonus: 110 } ] },
+  missileWeapon: { key: 'missileWeapon', name: 'Missile Launcher', stat: 'dps', skill: 'missileWeapons', tiers: [ { tier: 1, bonus: 6 }, { tier: 2, bonus: 18 }, { tier: 3, bonus: 45 }, { tier: 4, bonus: 110 } ] },
+  laserWeapon: { key: 'laserWeapon', name: 'Laser Array', stat: 'dps', skill: 'laserWeapons', tiers: [ { tier: 1, bonus: 6 }, { tier: 2, bonus: 18 }, { tier: 3, bonus: 45 }, { tier: 4, bonus: 110 } ] },
+  droneWeapon: { key: 'droneWeapon', name: 'Combat Drone Control', stat: 'dps', skill: 'droneCommand', tiers: [ { tier: 1, bonus: 8 }, { tier: 2, bonus: 22 }, { tier: 3, bonus: 60 }, { tier: 4, bonus: 150 } ] },
   miningDrone: { key: 'miningDrone', name: 'Mining Drone Control', stat: 'mining', tiers: [ { tier: 1, bonus: 5 }, { tier: 2, bonus: 14 }, { tier: 3, bonus: 40 }, { tier: 4, bonus: 200 } ] },
   combatDrone: { key: 'combatDrone', name: 'Combat Drone Control', stat: 'dps', tiers: [ { tier: 1, bonus: 8 }, { tier: 2, bonus: 22 }, { tier: 3, bonus: 60 }, { tier: 4, bonus: 300 } ] },
 };
@@ -122,17 +240,53 @@ const OVERLOAD_DURATION = 5;        // seconds the overload lasts
 const OVERLOAD_COOLDOWN = 9;        // seconds of fight time before you can overload again
 
 // ---- skill tree ----
-// Skills are player-level (apply to every ship). Skill points accrue over time,
-// including while offline, and are spent to train a skill up a level.
-// Each skill multiplies one stat by (1 + pctPerLevel * level). Training is
-// instant — the gate is the skill points you have to spend.
-const SKILLS = {
-  miningYield:     { key: 'miningYield',     name: 'Mining Yield',      category: 'Mining', maxLevel: 4, baseCost: 20, costGrowth: 1.8, effect: { stat: 'mining', pctPerLevel: 0.10 } },
-  cargoManagement: { key: 'cargoManagement', name: 'Cargo Management',  category: 'Mining', maxLevel: 3, baseCost: 15, costGrowth: 1.8, effect: { stat: 'cargo',  pctPerLevel: 0.15 } },
-  gunnery:         { key: 'gunnery',         name: 'Gunnery',           category: 'Combat', maxLevel: 4, baseCost: 20, costGrowth: 1.8, effect: { stat: 'dps',    pctPerLevel: 0.10 } },
-  shieldUpgrades:  { key: 'shieldUpgrades',  name: 'Shield Upgrades',   category: 'Combat', maxLevel: 4, baseCost: 20, costGrowth: 1.8, effect: { stat: 'shield', pctPerLevel: 0.10 } },
-  hullUpgrades:    { key: 'hullUpgrades',    name: 'Hull Upgrades',     category: 'Combat', maxLevel: 3, baseCost: 15, costGrowth: 1.8, effect: { stat: 'hull',   pctPerLevel: 0.08 } },
-};
+// Skill definitions drive training, bonuses, ship requirements, and module gates.
+const skillSpecs = [
+  ['miningYield', 'Mining Yield', 'Mining', 'Increases ore mined per cycle.', { stat: 'mining', pctPerLevel: 0.08 }],
+  ['cargoManagement', 'Cargo Management', 'Mining', 'Increases ship cargo capacity.', { stat: 'cargo', pctPerLevel: 0.08 }],
+  ['gunnery', 'Gunnery', 'Gunnery', 'Improves damage from conventional weapons.', { stat: 'dps', pctPerLevel: 0.04 }],
+  ['shieldUpgrades', 'Shield Upgrades', 'Defense', 'Increases shield capacity.', { stat: 'shield', pctPerLevel: 0.06 }],
+  ['hullUpgrades', 'Hull Upgrades', 'Defense', 'Increases hull capacity.', { stat: 'hull', pctPerLevel: 0.06 }],
+  ['miningCycle', 'Mining Cycle Optimization', 'Mining', 'Increases mining cycle speed.', { stat: 'miningCycle', pctPerLevel: 0.08 }, []],
+  ['miningSurvey', 'Asteroid Survey', 'Mining', 'Extends mining range.', { stat: 'miningRange', pctPerLevel: 0.05 }, [['miningYield', 1]]],
+  ['miningDrones', 'Mining Drone Operation', 'Mining', 'Improves mining drone output.', { stat: 'miningDrone', pctPerLevel: 0.08 }, [['miningCycle', 2]]],
+  ['oreProcessing', 'Advanced Mining Yield', 'Mining', 'Further increases ore mined per cycle.', { stat: 'mining', pctPerLevel: 0.04 }, [['miningYield', 2]]],
+  ['weaponSystems', 'Weapon Systems', 'Gunnery', 'Improves all weapon systems.', { stat: 'dps', pctPerLevel: 0.04 }, [['gunnery', 1]]],
+  ['projectileWeapons', 'Projectile Weapons', 'Gunnery', 'Unlocks projectile hulls and modules; improves projectile damage.', { stat: 'projectileDps', pctPerLevel: 0.08 }, [['weaponSystems', 1]]],
+  ['missileWeapons', 'Missile Systems', 'Gunnery', 'Unlocks missile hulls and modules; improves missile damage.', { stat: 'missileDps', pctPerLevel: 0.08 }, [['weaponSystems', 1]]],
+  ['laserWeapons', 'Laser Systems', 'Gunnery', 'Unlocks laser hulls and modules; improves laser damage.', { stat: 'laserDps', pctPerLevel: 0.08 }, [['weaponSystems', 1]]],
+  ['droneCommand', 'Drone Command', 'Drones', 'Unlocks drone hulls and drone-control modules.', null, [['weaponSystems', 1]]],
+  ['droneDamage', 'Drone Damage', 'Drones', 'Increases damage from combat drones.', { stat: 'droneDps', pctPerLevel: 0.1 }, [['droneCommand', 1]]],
+  ['targeting', 'Targeting Systems', 'Gunnery', 'Improves weapon damage through target tracking.', { stat: 'dps', pctPerLevel: 0.04 }, [['gunnery', 2]]],
+  ['navigation', 'Navigation', 'Navigation', 'Increases maximum ship speed.', { stat: 'speed', pctPerLevel: 0.05 }],
+  ['piloting', 'Advanced Piloting', 'Navigation', 'Increases ship acceleration.', { stat: 'acceleration', pctPerLevel: 0.08 }, [['navigation', 1]]],
+  ['evasiveManeuver', 'Evasive Maneuvers', 'Navigation', 'Improves speed-based combat damage mitigation.', { stat: 'evasion', pctPerLevel: 0.04 }, [['piloting', 2]]],
+  ['warpDrive', 'Warp Drive Operation', 'Navigation', 'Improves navigation speed.', { stat: 'speed', pctPerLevel: 0.04 }, [['navigation', 2]]],
+  ['shieldSystems', 'Shield Systems', 'Defense', 'Improves shield modules and capacity.', { stat: 'shield', pctPerLevel: 0.04 }, [['shieldUpgrades', 1]]],
+  ['armorSystems', 'Armor Systems', 'Defense', 'Improves armor modules and hull capacity.', { stat: 'hull', pctPerLevel: 0.04 }, [['hullUpgrades', 1]]],
+  ['damageControl', 'Damage Control', 'Defense', 'Reduces incoming combat damage.', { stat: 'damageReduction', pctPerLevel: 0.025 }, [['shieldSystems', 2], ['armorSystems', 2]]],
+  ['frigateCommand', 'Frigate Command', 'Ship Command', 'Unlocks Frigate hulls.', null],
+  ['destroyerCommand', 'Destroyer Command', 'Ship Command', 'Unlocks Destroyer hulls.', null, [['frigateCommand', 2]]],
+  ['cruiserCommand', 'Cruiser Command', 'Ship Command', 'Unlocks Cruiser hulls.', null, [['destroyerCommand', 3]]],
+  ['battlecruiserCommand', 'Battlecruiser Command', 'Ship Command', 'Unlocks Battlecruiser hulls.', null, [['cruiserCommand', 3]]],
+  ['battleshipCommand', 'Battleship Command', 'Ship Command', 'Unlocks Battleship hulls.', null, [['battlecruiserCommand', 4]]],
+  ['moduleEngineering', 'Module Engineering', 'Industry', 'Unlocks higher module tiers.', null, [['weaponSystems', 1], ['miningYield', 1]]],
+  ['moduleScience', 'Module Science', 'Industry', 'Improves the strength of fitted modules.', { stat: 'moduleEffectiveness', pctPerLevel: 0.04 }, [['moduleEngineering', 2]]],
+];
+const SKILLS = Object.fromEntries(skillSpecs.map(([key, name, category, description, effect, requirements = []]) => [
+  key,
+  {
+    key,
+    name,
+    category,
+    description,
+    maxLevel: 5,
+    baseCost: 1500,
+    costGrowth: 1.65,
+    effect,
+    requirements: requirements.map(([skill, level]) => ({ skill, level })),
+  },
+]));
 const SP_RATE_PER_SEC = 0.25;  // Skill points accrue continuously, including offline.
 const ACHIEVEMENTS = {
   miner: { key: 'miner', name: 'Prospector', description: 'Mine 1,000 units of ore', stat: 'totalMineralsMined', target: 1000 },
@@ -211,17 +365,18 @@ const BLUEPRINTS = (() => {
 })();
 const SHIP_BLUEPRINTS = (() => {
   const out = {};
-  const recipes = {
-    falcon: tierRecipe(1, 3),
-    raptor: tierRecipe(2, 3),
-    vexor: tierRecipe(2, 5),
-    gnosis: tierRecipe(3, 6),
-    manticore: tierRecipe(3, 6),
-    brutix: tierRecipe(4, 8),
-  };
-  for (const [key, recipe] of Object.entries(recipes)) {
-    const ship = SHIPS[key];
-    out[key] = { type: key, name: ship.name, recipe };
+  for (const progression of SHIP_PROGRESSION) {
+    for (const entry of progression.ships) {
+      if (entry.type === 'rifter') continue;
+      const ship = SHIPS[entry.type];
+      const classIndex = SHIP_CLASSES.findIndex((shipClass) => shipClass.key === entry.classKey);
+      const recipeTier = Math.min(4, classIndex + 1);
+      out[entry.type] = {
+        type: entry.type,
+        name: ship.name,
+        recipe: tierRecipe(recipeTier, (classIndex + 1) * 3),
+      };
+    }
   }
   return out;
 })();
@@ -245,15 +400,15 @@ const BLUEPRINT_DROP_CHANCE = {
 const BLUEPRINT_DROP_POOLS = {
   novice: {
     moduleTiers: [2],
-    ships: ['falcon', 'raptor'],
+    ships: ['falcon', 'raptor', ...SHIP_PROGRESSION[0].ships.map((entry) => entry.type).filter((type) => type !== 'rifter')],
   },
   standard: {
     moduleTiers: [2, 3],
-    ships: ['falcon', 'raptor', 'vexor', 'manticore'],
+    ships: ['falcon', 'raptor', 'vexor', 'manticore', ...SHIP_PROGRESSION[1].ships.map((entry) => entry.type), ...SHIP_PROGRESSION[2].ships.map((entry) => entry.type)],
   },
   elite: {
     moduleTiers: [3, 4],
-    ships: ['vexor', 'gnosis', 'manticore', 'brutix'],
+    ships: ['vexor', 'gnosis', 'manticore', 'brutix', ...SHIP_PROGRESSION[3].ships.map((entry) => entry.type), ...SHIP_PROGRESSION[4].ships.map((entry) => entry.type)],
   },
 };
 
@@ -320,6 +475,7 @@ const MISSIONS = {
     brief: '"Every module you fly is refined and built. Craft a Weapon I, then a Shield Extender II — haul the ore home and use the Industry tab."',
     // A cargo expander so a fresh hold can fit the recipe ore for both crafts.
     grant: {
+      skillPoints: 7500,
       modules: [{ slot: 'cargo', tier: 3 }],
       items: { iron: 3, bauxite: 3, scrap: 5, alloy: 2 },
       blueprints: [{ kind: 'module', type: 'weapon', tier: 1 }, { kind: 'module', type: 'shield', tier: 2 }],
@@ -410,7 +566,7 @@ const ARRIVE_RADIUS = 24;       // click-to-move arrival radius
 const AUTOPILOT_DOCK_WAIT_MS = 2000;
 const AUTOPILOT_DEPOSIT_ANIMATION_MS = 1200;
 const AUTOPILOT_LAUNCH_WAIT_MS = 2000;
-const STATE_VERSION = 17;
+const STATE_VERSION = 18;
 
 module.exports = {
   SHIPS,
@@ -424,6 +580,8 @@ module.exports = {
   BLUEPRINT_DROP_CHANCE,
   BLUEPRINT_DROP_POOLS,
   SHIP_PROGRESSION,
+  SHIP_CLASSES,
+  SHIP_FAMILIES,
   ENEMIES,
   ENEMY_TIERS,
   loadEnemyData,
