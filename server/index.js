@@ -103,7 +103,7 @@ function serveStatic(req, res, pathname, liveReload = false) {
 // mode keeps its own progress, so switching modes never clobbers the other.
 function normalizeStore(loaded) {
   const migrate = (state) => {
-    const current = game.migrateAgentMissionState(game.migrateEconomy(state));
+    const current = game.migrateTerminology(game.migrateAgentMissionState(game.migrateEconomy(state)));
     return game.isValidState(current) ? game.migrateWorldLayout(current) : null;
   };
   if (loaded && typeof loaded === 'object' && (loaded.demo || loaded.story || loaded.__slots)) {
@@ -294,19 +294,26 @@ function createApp({ dataFile, liveReload = false } = {}) {
       case 'deposit': {
         const r = game.deposit(state, payload.mineral, payload.amount);
         if (r.error) return r;
-        state = r.state;
+        state = game.completeAutopilotDeposit(r.state, now).state;
         persist();
         return { state };
       }
       case 'deposit-all': {
         const r = game.depositAll(state);
         if (r.error) return r;
-        state = r.state;
+        state = game.completeAutopilotDeposit(r.state, now).state;
         persist();
         return { state };
       }
       case 'deposit-filtered': {
         const r = game.depositFiltered(state, payload.filter);
+        if (r.error) return r;
+        state = game.completeAutopilotDeposit(r.state, now).state;
+        persist();
+        return { state };
+      }
+      case 'autopilot-dock-complete': {
+        const r = game.startAutopilotDockWait(state, now);
         if (r.error) return r;
         state = r.state;
         persist();
@@ -437,6 +444,10 @@ function createApp({ dataFile, liveReload = false } = {}) {
             gateRange: cfg.GATE_RANGE,
             maxSpeed: cfg.MAX_SPEED,
             maxAcceleration: cfg.MAX_ACCELERATION,
+            autopilotEfficiency: cfg.AUTOPILOT_EFFICIENCY,
+            autopilotDockWaitMs: cfg.AUTOPILOT_DOCK_WAIT_MS,
+            autopilotDepositAnimationMs: cfg.AUTOPILOT_DEPOSIT_ANIMATION_MS,
+            autopilotLaunchWaitMs: cfg.AUTOPILOT_LAUNCH_WAIT_MS,
             maxThrust: cfg.MAX_THRUST,
             damping: cfg.DAMPING,
             arriveRadius: cfg.ARRIVE_RADIUS,

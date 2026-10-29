@@ -111,7 +111,7 @@ describe('App scene tree', () => {
     assert.equal(app.root.children[0], app.world);
     assert.equal(app.root.children[1], app.ui);
     assert.deepEqual(rendered, ['world', 'ui']);
-    assert.deepEqual(app.world.children, [app.world.backdrop, app.world.system, app.world.actors, app.world.effects]);
+    assert.deepEqual(app.world.children, [app.world.backdrop, app.world.system, app.world.actors, app.world.effects, app.world.labels]);
     assert.ok(app.player.children.includes(app.player.docking));
     assert.ok(app.player.children.includes(app.ship));
 
@@ -122,6 +122,21 @@ describe('App scene tree', () => {
       }
     };
     assertAppPropagation(app.root);
+  });
+});
+
+describe('Player interpolation', () => {
+  test('caps predicted speed to the effective server max speed', async () => {
+    const { Player } = await import('../public/core/player.js');
+    const player = new Player({ docking: false, constants: { maxSpeed: 1200, maxAcceleration: 180 } });
+    const caps = { maxSpeed: 100, maxAcceleration: 100 };
+    player.setServerState({ x: 0, y: 0, vx: 30, vy: 0, heading: 0 }, null, caps);
+    player.serverTargetAge = 1;
+    player.setServerState({ x: 0, y: 0, vx: 80, vy: 0, heading: 0 }, null, caps);
+
+    player.update(0.75);
+
+    assert.ok(player.x > 67 && player.x < 68);
   });
 });
 
@@ -168,6 +183,15 @@ describe('UI panel refresh', () => {
 });
 
 describe('HUD activity log', () => {
+  test('autopilot banner describes the active efficiency multiplier', async () => {
+    const { autoPilotBannerText } = await import('../public/ui/hud.js');
+    assert.equal(
+      autoPilotBannerText(0.25),
+      'due to AI inefficiencies, all systems running at 1/4 capacity',
+    );
+    assert.throws(() => autoPilotBannerText(0), /positive number/);
+  });
+
   test('shows newest events first, fades old events, and removes expired events', async () => {
     const { HudNode, renderActivityLog } = await import('../public/ui/hud.js');
     const previousDocument = global.document;
@@ -299,7 +323,7 @@ describe('CombatNode', () => {
 });
 
 describe('EnemyNode status labels', () => {
-  test('shows the enemy name and live shield and hull above its ship', async () => {
+  test('draws the enemy name and live shield and hull for the world-label layer', async () => {
     const { EnemyNode } = await import('../public/view/world.js');
     const labels = [];
     const bars = [];
@@ -342,7 +366,7 @@ describe('EnemyNode status labels', () => {
       targetEnemyId: null,
     };
 
-    new EnemyNode(app).render(0);
+    new EnemyNode(app).drawEnemyStatus(250, 250, enemy);
 
     assert.ok(labels.includes('Pirate Frigate'));
     assert.deepEqual(bars.map(({ color, width }) => ({ color, width })), [
@@ -394,6 +418,69 @@ describe('EnemyNode status labels', () => {
   });
 });
 
+describe('edge navigation overview', () => {
+  test('shows off-screen destinations with bearings, distances, and selectable clusters', async () => {
+    const { renderEdgeMap } = await import('../public/ui/edge-map.js');
+    const createElement = () => ({
+      children: [],
+      dataset: {},
+      style: { setProperty() {} },
+      classList: { add() {} },
+      attributes: {},
+      append(...children) { this.children.push(...children); },
+      appendChild(child) { this.children.push(child); },
+      setAttribute(name, value) { this.attributes[name] = value; },
+    });
+    const container = {
+      children: [],
+      replaceChildren() { this.children = []; },
+      appendChild(child) { this.children.push(child); },
+    };
+    const previousDocument = global.document;
+    global.document = {
+      getElementById: () => container,
+      createElement,
+    };
+    const app = {
+      overviewMode: 'edge',
+      canvas: { width: 800, height: 600 },
+      player: { x: 0, y: 0 },
+      camera: {
+        worldToScreen: (x, y) => ({ x: x + 400, y: y + 300 }),
+      },
+      state: {
+        world: {
+          belts: [{ id: 'belt-1', name: 'Belt A', x: 1000, y: 0 }],
+          stations: [{ id: 'station-1', name: 'Station A', x: 1200, y: 0 }],
+          outposts: [{ id: 'outpost-1', name: 'Outpost A', x: -1000, y: 0 }],
+          gates: [{ id: 'gate-1', name: 'Gate A', x: 0, y: 1200 }],
+        },
+      },
+    };
+
+    try {
+      renderEdgeMap(app, 500);
+      assert.equal(container.children.length, 3);
+      const cluster = container.children.find((group) => group.children[0].dataset.clusterToggle);
+      assert.ok(cluster);
+      assert.equal(cluster.style.left, '800px');
+      assert.equal(cluster.style.top, '300px');
+      assert.equal(cluster.style.transform, 'translate(-100%, -50%)');
+      const toggle = cluster.children[0];
+      assert.match(toggle.attributes['aria-label'], /2 destinations/);
+      assert.match(toggle.children[0].textContent, /→|↘|↓|↙|←|↖|↑|↗/);
+      assert.equal(cluster.children[1].children.length, 2);
+      assert.deepEqual(
+        cluster.children[1].children.map((option) => option.dataset.targetId),
+        ['belt-1', 'station-1'],
+      );
+      assert.ok(cluster.children[1].children.every((option) => /m$/.test(option.textContent)));
+    } finally {
+      global.document = previousDocument;
+    }
+  });
+});
+
 describe('Ship destination indicator', () => {
   test('thruster trail is three times its original length at the same speed', async () => {
     const { ShipNode } = await import('../public/view/ship.js');
@@ -426,7 +513,7 @@ describe('Ship destination indicator', () => {
     assert.ok(lineTos.some(([x, y]) => x === 0 && Math.abs(y - 45.1) < 0.001));
   });
 
-  test('hides the blue destination crosshair when the destination is the selected rat', async () => {
+  test('hides the blue destination crosshair when the destination is the selected enemy', async () => {
     const { ShipNode } = await import('../public/view/ship.js');
     const calls = { arcs: 0, strokes: 0 };
     const ctx = {
@@ -443,7 +530,7 @@ describe('Ship destination indicator', () => {
       arc() { calls.arcs++; },
       stroke() { calls.strokes++; },
     };
-    const enemy = { id: 'rat-1', x: 300, y: 400, alive: true };
+    const enemy = { id: 'enemy-1', x: 300, y: 400, alive: true };
     const app = {
       ctx,
       canvas: { width: 800, height: 600 },
@@ -535,9 +622,9 @@ describe('Player undocking', () => {
 });
 
 describe('Player server-authoritative motion', () => {
-  test('does not locally orbit a selected rat', async () => {
+  test('does not locally orbit a selected enemy', async () => {
     const { Player } = await import('../public/core/player.js');
-    const enemy = { id: 'rat-1', x: 500, y: 500, alive: true };
+    const enemy = { id: 'enemy-1', x: 500, y: 500, alive: true };
     const app = {
       constants: {
         worldSize: 1000,
@@ -612,7 +699,7 @@ describe('Player server-authoritative motion', () => {
 
   test('server position updates control the interpolated destination', async () => {
     const { Player } = await import('../public/core/player.js');
-    const enemy = { id: 'rat-1', x: 500, y: 500, alive: true };
+    const enemy = { id: 'enemy-1', x: 500, y: 500, alive: true };
     const app = {
       constants: {
         worldSize: 1000,

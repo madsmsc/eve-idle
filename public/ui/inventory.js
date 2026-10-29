@@ -94,13 +94,39 @@ export class InventoryNode extends Node {
     this.selected = null;
     this.filter = 'all';
     this.statsTimer = 0;
+    this.lastRefreshKey = null;
   }
 
   // PUBLIC
   refresh() {
+    const { state } = this.app;
+    const ship = state.activeShip;
+    const refreshKey = JSON.stringify({
+      docked: state.docked,
+      materials: state.materials,
+      loot: state.loot,
+      blueprints: state.blueprints,
+      storage: state.storage,
+      cargoUsed: state.cargoUsed,
+      cargoCapacity: state.cargoCapacity,
+      cargoFull: state.cargoFull,
+      activeShip: ship && {
+        id: ship.id,
+        type: ship.type,
+        fitting: ship.fitting,
+        slots: ship.slots,
+      },
+      actionAvailability: state.actionAvailability,
+      shipProgression: state.shipProgression,
+      skillTraining: state.skillTraining,
+      inCombat: !!state.combat,
+    });
+    if (refreshKey === this.lastRefreshKey) return this;
+
     this.#renderFitting();
     this.#renderCargo();
     this.#renderStorage();
+    this.lastRefreshKey = refreshKey;
     return this;
   }
 
@@ -272,6 +298,8 @@ export class InventoryNode extends Node {
     if (this.selected && !this.selected.startsWith('storage:') && !cells.some((c) => c.select === this.selected)) this.selected = null;
     const storeFiltered = document.querySelector('[data-testid="inv-deposit-filtered"]');
     storeFiltered.disabled = !state.docked || cells.length === 0;
+    const storeCargo = document.querySelector('[data-testid="inv-deposit-all"]');
+    storeCargo.disabled = !state.docked || state.cargoUsed <= 0;
 
     grid.innerHTML = '';
     for (let i = 0; i < total; i++) {

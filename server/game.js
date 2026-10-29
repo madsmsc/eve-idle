@@ -50,7 +50,6 @@ const {
   MISSION_ORDER,
   MISSIONS,
   WORLD_SIZE,
-  MINING_RATE_MULTIPLIER,
   MINING_RANGE,
   ENGAGE_RANGE,
   DOCK_RANGE,
@@ -58,6 +57,9 @@ const {
   MAX_SPEED,
   MAX_ACCELERATION,
   ARRIVE_RADIUS,
+  AUTOPILOT_DOCK_WAIT_MS,
+  AUTOPILOT_DEPOSIT_ANIMATION_MS,
+  AUTOPILOT_LAUNCH_WAIT_MS,
   STATE_VERSION,
 } = require('./config');
 const {
@@ -77,6 +79,30 @@ const {
   isDocked,
 } = require('./game/state');
 const {
+  autoEfficiency,
+  shipMining,
+  miningRange,
+  shipCombat,
+  shipDps,
+  shipShield,
+  shipHull,
+  shipCargo,
+  moduleBonus,
+  emptyFitting,
+  skillMults,
+  skillCost,
+  skillTrainingView,
+  shipProgressionView,
+  emptySkills,
+  emptyDroneBay,
+  droneBonus,
+} = require('./game/stats');
+const createMovement = require('./game/movement');
+const createCombatMath = require('./game/combat');
+const createMissions = require('./game/missions');
+const createAutopilot = require('./game/autopilot');
+const createView = require('./game/view');
+const {
   deposit,
   depositAll,
   depositFiltered,
@@ -89,6 +115,130 @@ const {
   generateSystems: generateWorldSystems,
   recoverWorldSeed,
 } = require('./game/world');
+
+const { moveInOrbit, moveVelocityToward, advanceNavigation } = createMovement({
+  ARRIVE_RADIUS,
+  MAX_SPEED,
+  MAX_ACCELERATION,
+  dist,
+  clamp: (value, min, max) => Math.max(min, Math.min(max, value)),
+  miningRange,
+});
+const {
+  applyPool,
+  enemyCombatStats,
+  estimateCombatDifficulty,
+  effectivePlayerDps,
+  playerTtd,
+  enemyTtd,
+  damagePlayer,
+  damageEnemy,
+} = createCombatMath({
+  ENEMIES,
+  ENEMY_TIERS,
+  OVERLOAD_DPS_MULT,
+  skillMults,
+  shipShield,
+  shipHull,
+  shipDps,
+  moduleBonus,
+  droneBonus,
+});
+const {
+  evaluateMission,
+  checkMissionObjective,
+  missionView,
+  missionAction,
+  spawnMissionEnemies,
+  startMission,
+  missionStartNeeded,
+} = createMissions({
+  clone,
+  addStoredItems,
+  emptyCargo,
+  emptyFitting,
+  dockedStation,
+  clamp: (value, min, max) => Math.max(min, Math.min(max, value)),
+  nextId,
+});
+const {
+  nearestSafeEnemy,
+  bestBeltTarget,
+  recordAutomation,
+  setAutopilotNavigation,
+  launchForAutopilot,
+  runAutopilot,
+  setAutopilot,
+  startAutopilotDockWait,
+  completeAutopilotDeposit,
+} = createAutopilot({
+  MINERALS,
+  ENEMIES,
+  WORLD_SIZE,
+  DOCK_RANGE,
+  ENGAGE_RANGE,
+  AUTOPILOT_DOCK_WAIT_MS,
+  AUTOPILOT_LAUNCH_WAIT_MS,
+  clone,
+  dist,
+  clamp: (value, min, max) => Math.max(min, Math.min(max, value)),
+  isDocked,
+  dockedStation,
+  cargoUsed,
+  cargoCapacity,
+  activeSystem,
+  estimateCombatDifficulty,
+  setNavigation,
+  closestBeltAsteroid,
+  startCombat,
+  nearestAsteroidInRange,
+});
+const { shipView, view } = createView({
+  SHIPS,
+  MINERALS,
+  MODULES,
+  BLUEPRINTS,
+  SHIP_BLUEPRINTS,
+  ACHIEVEMENTS,
+  ENEMY_TIERS,
+  SP_RATE_PER_SEC,
+  COMPONENTS,
+  SHIELD_BOOST_ITEM,
+  OVERLOAD_ITEM,
+  MAX_SPEED,
+  MAX_ACCELERATION,
+  MINING_RANGE,
+  ENGAGE_RANGE,
+  GATE_RANGE,
+}, {
+  skillMults,
+  droneBonus,
+  emptyMaterials,
+  dockedStation,
+  missionView,
+  agentMissionView,
+  emptySkills,
+  emptyDroneBay,
+  emptyFitting,
+  moduleBonus,
+  shipMining,
+  shipCargo,
+  skillTrainingView,
+  shipProgressionView,
+  actionAvailability,
+  cargoUsed,
+  cargoCapacity,
+  shipInCombat,
+  miningRange,
+  nearestAsteroidInRange,
+  ambushChance,
+  enemyCombatStats,
+  estimateCombatDifficulty,
+  autoEfficiency,
+  dist,
+  playerTtd,
+  enemyTtd,
+});
 
 let _counter = 0;
 function nextId() {
@@ -226,111 +376,6 @@ function resetIds() {
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
-// A ship's effective stats are its base stats plus the flat bonus of every
-// fitted module, multiplied by trained skills. There is no level/upgrade system:
-// ships are what they are, and modules (or better ships) are how you get stronger.
-function shipMining(ship, mults, drone = 0) {
-  return (SHIPS[ship.type].mining + moduleBonus(ship, 'mining') + moduleBonus(ship, 'miningDrone') + drone) *
-    (mults ? mults.mining : 1) * MINING_RATE_MULTIPLIER;
-}
-function miningRange(ship) {
-  return MINING_RANGE + moduleBonus(ship, 'mining');
-}
-function shipCombat(ship) {
-  return SHIPS[ship.type].combat;
-}
-function shipDps(ship, mults, drone = 0) {
-  return (SHIPS[ship.type].dps + moduleBonus(ship, 'weapon') + moduleBonus(ship, 'combatDrone') + drone) * (mults ? mults.dps : 1);
-}
-function shipShield(ship, mults) {
-  return (SHIPS[ship.type].shield + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1);
-}
-function shipHull(ship, mults) {
-  return (SHIPS[ship.type].hull + moduleBonus(ship, 'armor')) * (mults ? mults.hull : 1);
-}
-function shipCargo(ship, mults) {
-  return (SHIPS[ship.type].cargo + moduleBonus(ship, 'cargo')) * (mults ? mults.cargo : 1);
-}
-// ---- fitting slots ----
-// A ship's `fitting` maps each module type to an array (one entry per slot) of
-// the tier fitted in that slot (0 = empty, 1..3 = tier I/II/III). The flat stat
-// bonus a ship gets from every module fitted in a given type.
-function moduleBonus(ship, slotType) {
-  const fit = ship && ship.fitting && ship.fitting[slotType];
-  if (!fit) return 0;
-  const tiers = MODULES[slotType] && MODULES[slotType].tiers;
-  if (!tiers) return 0;
-  return fit.reduce((sum, t) => sum + (t > 0 ? tiers[t - 1].bonus : 0), 0);
-}
-// A fresh, all-empty fitting sized to the ship type's slot counts.
-function emptyFitting(type) {
-  const slots = SHIPS[type].slots;
-  const fitting = {};
-  for (const slotType of Object.keys(slots)) {
-    fitting[slotType] = new Array(slots[slotType]).fill(0);
-  }
-  return fitting;
-}
-
-// ---- skill tree ----
-// The combined multiplier each trained skill applies to a stat. Skills are
-// player-level, so the same multipliers apply to every ship.
-function skillMults(state) {
-  const m = { mining: 1, cargo: 1, dps: 1, shield: 1, hull: 1 };
-  const skills = state.skills || {};
-  for (const key of Object.keys(SKILLS)) {
-    const def = SKILLS[key];
-    const lvl = skills[key] || 0;
-    if (lvl > 0) m[def.effect.stat] *= 1 + def.effect.pctPerLevel * lvl;
-  }
-  return m;
-}
-// Skill points to train from `currentLevel` to `currentLevel + 1`.
-function skillCost(def, currentLevel) {
-  return Math.round(def.baseCost * Math.pow(def.costGrowth, currentLevel));
-}
-
-function skillTrainingView(state) {
-  return Object.fromEntries(Object.entries(SKILLS).map(([key, def]) => {
-    const level = (state.skills && state.skills[key]) || 0;
-    const maxed = level >= def.maxLevel;
-    const cost = maxed ? 0 : skillCost(def, level);
-    return [key, {
-      level,
-      cost,
-      maxed,
-      canTrain: !maxed && (state.skillPoints || 0) >= cost,
-    }];
-  }));
-}
-
-function shipProgressionView(state, materials, docked) {
-  return Object.fromEntries(SHIP_PROGRESSION.flatMap((tier) => tier.ships.map((entry) => {
-    const blueprint = SHIP_BLUEPRINTS[entry.type];
-    const skillsReady = entry.skills.every((requirement) =>
-      ((state.skills && state.skills[requirement.skill]) || 0) >= requirement.level
-    );
-    const materialsReady = !blueprint || Object.entries(blueprint.recipe).every(([key, amount]) =>
-      (materials[key] || 0) >= amount
-    );
-    const materialCounts = blueprint
-      ? Object.fromEntries(Object.keys(blueprint.recipe).map((key) => [key, materials[key] || 0]))
-      : {};
-    const blueprintReady = entry.type === 'rifter' ||
-      [...(state.blueprints || []), ...((state.storage && state.storage.blueprints) || [])].some((item) =>
-        item.kind === 'ship' && item.type === entry.type
-      );
-    return [entry.type, {
-      skillsReady,
-      materialsReady,
-      blueprintReady,
-      canBuild: entry.type !== 'rifter' && docked && skillsReady && materialsReady && blueprintReady,
-      materials: blueprint ? { ...blueprint.recipe } : {},
-      materialCounts,
-    }];
-  })));
-}
-
 function actionAvailability(state, materials, docked, active) {
   const craftModules = {};
   for (const [slotType, tiers] of Object.entries(BLUEPRINTS)) {
@@ -577,33 +622,13 @@ function craftShip(state, type, blueprintId = null) {
   advanceAgentMissions(s, 'craft', 1);
   return { state: s };
 }
-// A fresh, all-level-0 skill set.
-function emptySkills() {
-  return Object.fromEntries(Object.keys(SKILLS).map((k) => [k, 0]));
-}
-
-// ---- drones ----
-// A fresh, empty drone bay (one array of owned tiers per drone type).
-function emptyDroneBay() {
-  return Object.fromEntries(Object.keys(DRONES).map((k) => [k, []]));
-}
-// The total flat bonus your drone bay grants for a drone type ('mining'/'dps').
-function droneBonus(state, droneType) {
-  const def = DRONES[droneType];
-  const bay = state && state.drones && state.drones[droneType];
-  const active = state && state.ships && state.ships.find((ship) => ship.id === state.activeShipId);
-  const fittedSlot = droneType === 'mining' ? 'miningDrone' : 'combatDrone';
-  if (active && active.fitting && active.fitting[fittedSlot] && active.fitting[fittedSlot].some((tier) => tier > 0)) return 0;
-  if (!def || !Array.isArray(bay)) return 0;
-  return bay.reduce((sum, t) => sum + (t > 0 ? def.tiers[t - 1].bonus : 0), 0);
-}
 function buyBlueprint(state, kind, type, tier = null) {
   if (kind !== 'module' && kind !== 'ship') return { error: `Unknown blueprint type: ${kind}` };
   const key = kind === 'module' ? `module:${type}:${tier}` : `ship:${type}`;
   const recipe = BLUEPRINT_COSTS[key];
   if (!recipe) return { error: `Unknown ${kind} blueprint: ${type}` };
   if (!NPC_BLUEPRINTS.includes(key)) {
-    return { error: 'This blueprint is not sold by NPCs; higher-tier blueprints are found as rat loot' };
+    return { error: 'This blueprint is not sold by NPCs; higher-tier blueprints are found as enemy loot' };
   }
   if (kind === 'module' && (!Number.isInteger(tier) || !MODULES[type].tiers[tier - 1])) {
     return { error: `Invalid module tier: ${tier}` };
@@ -665,7 +690,7 @@ function shipSkillError(state, type) {
 }
 
 // ---- loot drops ----
-// Equip a looted module (see resolveCombat for how rats drop them) into the
+// Equip a looted module (see resolveCombat for how enemies drop them) into the
 // first empty slot of its type on the active ship, free of charge.
 function equipLoot(state, lootId) {
   if (!isDocked(state)) return { error: 'Dock at a station to equip modules' };
@@ -776,46 +801,6 @@ function cargoCapacity(state) {
 // the server can tick by any step size (a 400ms sync or an offline gap) and
 // always land on the same result.
 
-// Split `damage` across a shield-then-hull pool. Returns the remaining {shield, hull}.
-function applyPool(shieldMax, hullMax, damage) {
-  const d = Math.max(0, damage);
-  const shield = Math.max(0, shieldMax - Math.min(shieldMax, d));
-  const hull = Math.max(0, hullMax - Math.max(0, d - shieldMax));
-  return { shield, hull };
-}
-
-// The enemy's combat stats: its type's base numbers times its tier multiplier,
-// straight from enemies.json. Nothing else modifies them.
-function enemyCombatStats(enemy) {
-  const def = ENEMIES[enemy.type];
-  const tier = ENEMY_TIERS[enemy.tier] || ENEMY_TIERS.standard;
-  const m = tier ? tier.multiplier : 1;
-  return {
-    shield: def ? def.shield * m : 0,
-    hull: def ? def.hull * m : 0,
-    dps: def ? def.dps * m : 0,
-    rangeDelay: enemy.rangeDelay || 0,
-  };
-}
-
-function estimateCombatDifficulty(state, ship, enemy) {
-  const enemyStats = enemyCombatStats(enemy);
-  const mults = skillMults(state);
-  const playerDurability = shipShield(ship, mults) + shipHull(ship, mults);
-  const playerDps = shipDps(ship, mults, droneBonus(state, 'combat'));
-  if (playerDps <= 0) return { key: 'unknown', label: 'Unknown', ratio: null };
-
-  const timeToKill = (enemyStats.shield + enemyStats.hull) / playerDps;
-  const timeToLose = enemyStats.dps > 0
-    ? enemyStats.rangeDelay + moduleBonus(ship, 'range') + playerDurability / enemyStats.dps
-    : Infinity;
-  const ratio = timeToLose / timeToKill;
-  if (ratio >= 1.5) return { key: 'favorable', label: 'Favorable', ratio };
-  if (ratio >= 0.85) return { key: 'even', label: 'Even', ratio };
-  if (ratio >= 0.55) return { key: 'dangerous', label: 'Dangerous', ratio };
-  return { key: 'deadly', label: 'Deadly', ratio };
-}
-
 function rollBlueprintDrop(state, enemy, rng) {
   const chance = BLUEPRINT_DROP_CHANCE[enemy.type] || 0;
   const pool = BLUEPRINT_DROP_POOLS[enemy.tier];
@@ -839,8 +824,8 @@ function rollBlueprintDrop(state, enemy, rng) {
   return blueprint;
 }
 
-// Roll a rat (type + tier) from the spawn table allowed at `security`.
-function rollRat(security, rng) {
+// Roll an enemy (type + tier) from the spawn table allowed at `security`.
+function rollEnemy(security, rng) {
   const table = spawnTable(security);
   if (!table.length) return { type: 'pirate', tier: 'novice' };
   let r = rng() * table.reduce((a, b) => a + b.weight, 0);
@@ -852,41 +837,8 @@ function rollRat(security, rng) {
   return { type: last.type, tier: last.tier };
 }
 
-// The player's effective DPS (boosted while an overload is active).
-function effectivePlayerDps(c) {
-  return c.playerDps * (c.fightTime < c.overloadUntil ? OVERLOAD_DPS_MULT : 1);
-}
-// Seconds from now until the player's hull is gone (enemy DPS vs the player's
-// remaining shield+hull pool). The enemy's guns are silent for the opening
-// volley (`enemyRangeDelay` seconds of fight time), so that window is added on.
-function playerTtd(c) {
-  const pool = c.shipShield + c.shipHull;
-  if (c.enemyDps <= 0) return Infinity;
-  const remainingWindow = Math.max(0, c.enemyRangeDelay - c.fightTime);
-  return remainingWindow + pool / c.enemyDps;
-}
-// Seconds from now until the enemy's hull is gone (effective player DPS vs the
-// enemy's remaining pool).
-function enemyTtd(c) {
-  const pool = c.enemyShield + c.enemyHull;
-  const pdps = effectivePlayerDps(c);
-  return pdps > 0 ? pool / pdps : Infinity;
-}
-// Apply `dmg` to the player's live shield-then-hull pool (mutates c).
-function damagePlayer(c, dmg) {
-  const p = applyPool(c.shipShield, c.shipHull, dmg);
-  c.shipShield = p.shield;
-  c.shipHull = p.hull;
-}
-// Apply `dmg` to the enemy's live shield-then-hull pool (mutates c).
-function damageEnemy(c, dmg) {
-  const p = applyPool(c.enemyShield, c.enemyHull, dmg);
-  c.enemyShield = p.shield;
-  c.enemyHull = p.hull;
-}
-
 function generateSystems(seed) {
-  return generateWorldSystems(seed, rollRat);
+  return generateWorldSystems(seed, rollEnemy);
 }
 
 function migrateWorldLayout(state) {
@@ -1008,7 +960,7 @@ function createInitialState(now = Date.now(), seed = (Date.now() % 1000000) + 1,
   const st = {
     version: STATE_VERSION,
     mode: MODES.includes(mode) ? mode : 'demo',
-    mission: { active: mode === 'story' ? 'm1' : null, ready: false, offered: null, step: 0, flags: {}, completed: [] },
+    mission: { active: mode === 'story' ? 'm1' : null, ready: false, offered: null, flags: {}, completed: [] },
     agentMissions: {},
     autoPilotMode: null,
     automationLog: [],
@@ -1134,6 +1086,40 @@ function migrateAgentMissionState(state) {
   return migrated;
 }
 
+function migrateTerminology(state) {
+  if (!state || !Array.isArray(state.ships)) return state;
+  if (state.version !== STATE_VERSION - 1 && state.version !== STATE_VERSION) return state;
+  const legacyModes = { hunt: 'fight', mine_hunt: 'mine_fight' };
+  const hasLegacyMode = Object.prototype.hasOwnProperty.call(legacyModes, state.autoPilotMode);
+  const hasLegacyMission = Object.values(state.agentMissions || {}).some((record) =>
+    record && (record.lastMissionKey === 'pirate-hunt' ||
+      record.active && record.active.key === 'pirate-hunt')
+  );
+  if (state.version === STATE_VERSION && !hasLegacyMode && !hasLegacyMission) return state;
+  const migrated = clone(state);
+  if (hasLegacyMode) migrated.autoPilotMode = legacyModes[state.autoPilotMode];
+  for (const record of Object.values(migrated.agentMissions || {})) {
+    if (!record) continue;
+    if (record.lastMissionKey === 'pirate-hunt') record.lastMissionKey = 'pirate-patrol';
+    if (record.active && record.active.key === 'pirate-hunt') {
+      record.active.key = 'pirate-patrol';
+      if (record.active.name === 'Pirate Hunt') record.active.name = 'Pirate Patrol';
+      if (typeof record.active.objective === 'string') {
+        record.active.objective = record.active.objective.replace(/\bRats?\b/gi, 'Enemies');
+      }
+    }
+  }
+  for (const event of migrated.automationLog || []) {
+    if (typeof event.message !== 'string') continue;
+    event.message = event.message
+      .replace(/\bmine_hunt\b/g, 'mine_fight')
+      .replace(/\bhunt\b/gi, 'fight')
+      .replace(/\brats?\b/gi, 'enemies');
+  }
+  migrated.version = STATE_VERSION;
+  return migrated;
+}
+
 // True if a persisted state is usable (right version, has systems).
 function isValidState(state) {
   return (
@@ -1170,7 +1156,10 @@ function mineActive(s, active, seconds) {
   // Mining stops once the active ship's cargo hold is full.
   const room = shipCargo(active, mults) - cargoUsed(s);
   if (room <= 0) return;
-  const budget = Math.min(shipMining(active, mults, droneBonus(s, 'mining')) * seconds, room);
+  const budget = Math.min(
+    shipMining(active, mults, droneBonus(s, 'mining')) * autoEfficiency(s) * seconds,
+    room,
+  );
   const range = miningRange(active);
   const inRange = [];
   for (const a of sys.asteroids) {
@@ -1218,280 +1207,6 @@ function setNavigation(ship, x, y, targetId = null, dockTargetId = null, orbitTa
   ship.navigation = { x, y, targetId, dockTargetId, orbitTargetId };
   ship.dockTargetId = dockTargetId;
   ship.dockedStationId = null;
-}
-
-function nearestStationFor(ship, sys) {
-  return sys.stations.reduce((best, station) => {
-    const distance = dist(ship.x, ship.y, station.x, station.y);
-    return !best || distance < best.distance ? { station, distance } : best;
-  }, null);
-}
-
-function nearestSafeRat(state, ship, sys) {
-  return sys.enemies
-    .filter((enemy) => enemy.alive)
-    .map((enemy) => ({ enemy, difficulty: estimateCombatDifficulty(state, ship, enemy) }))
-    .filter(({ difficulty }) => difficulty.ratio !== null && difficulty.ratio >= 0.85)
-    .sort((a, b) =>
-      dist(a.enemy.x, a.enemy.y, ship.x, ship.y) - dist(b.enemy.x, b.enemy.y, ship.x, ship.y)
-    )[0]?.enemy || null;
-}
-
-function bestBeltTarget(ship, sys) {
-  const values = new Map();
-  for (const asteroid of sys.asteroids) {
-    if (asteroid.amount <= 0) continue;
-    const tier = MINERALS[asteroid.mineral].tier || 1;
-    values.set(asteroid.beltId, (values.get(asteroid.beltId) || 0) + asteroid.amount * tier);
-  }
-  return sys.belts
-    .map((belt) => ({
-      belt,
-      score: (values.get(belt.id) || 0) / Math.max(1, dist(belt.x, belt.y, ship.x, ship.y)),
-    }))
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score)[0]?.belt || null;
-}
-
-function recordAutomation(state, message, at = Date.now()) {
-  if (!Array.isArray(state.automationLog)) state.automationLog = [];
-  state.automationLog.unshift({ at, message });
-  state.automationLog.length = Math.min(state.automationLog.length, 20);
-}
-
-function setAutopilotNavigation(state, ship, x, y, targetId = null, dockTargetId = null, orbitTargetId = null) {
-  const current = ship.navigation;
-  if (current && current.x === x && current.y === y && current.targetId === targetId &&
-      current.dockTargetId === dockTargetId && current.orbitTargetId === orbitTargetId) return;
-  setNavigation(ship, x, y, targetId, dockTargetId, orbitTargetId);
-  const sys = activeSystem(state);
-  const target = targetId && sys && sys.enemies.find((enemy) => enemy.id === targetId);
-  const station = dockTargetId && sys && sys.stations.find((item) => item.id === dockTargetId);
-  recordAutomation(state, target
-    ? `Engaging ${ENEMIES[target.type].name}`
-    : station ? `Returning to ${station.name}` : 'Traveling to a mining site');
-}
-
-function launchForAutopilot(ship, station) {
-  ship.x = clamp(station.x + DOCK_RANGE + 30, 0, WORLD_SIZE);
-  ship.y = station.y;
-  ship.vx = 0;
-  ship.vy = 0;
-  ship.dockedStationId = null;
-  ship.dockTargetId = null;
-}
-
-function runAutopilot(state, ship, sys, now) {
-  const mode = state.autoPilotMode;
-  if (!mode || state.combat || !ship || !sys) return;
-  const canMine = mode === 'mine' || mode === 'mine_hunt';
-  const canHunt = mode === 'hunt' || mode === 'mine_hunt';
-  const station = nearestStationFor(ship, sys);
-
-  if (isDocked(state)) {
-    if (cargoUsed(state) > 0) {
-      const stored = state.storage.items;
-      const storedCount = cargoUsed(state);
-      for (const [key, amount] of Object.entries(ship.cargo)) {
-        stored[key] = (stored[key] || 0) + amount;
-        ship.cargo[key] = 0;
-      }
-      recordAutomation(state, `Stored ${Math.floor(storedCount)} cargo`);
-    }
-    const belt = canMine ? bestBeltTarget(ship, sys) : null;
-    const rat = !belt && canHunt ? nearestSafeRat(state, ship, sys) : null;
-    const target = belt || rat;
-    if (!target) {
-      state.autoPilotMode = null;
-      ship.navigation = null;
-      recordAutomation(state, 'No suitable targets remain; auto-pilot stopped');
-      return;
-    }
-    const docked = dockedStation(state);
-    launchForAutopilot(ship, docked || station.station);
-    if (belt) {
-      const rock = closestBeltAsteroid(sys, belt, ship) || belt;
-      setAutopilotNavigation(state, ship, rock.x, rock.y, null, null, rock.id);
-    } else {
-      setAutopilotNavigation(state, ship, rat.x, rat.y, rat.id);
-    }
-    return;
-  }
-
-  if (cargoUsed(state) >= cargoCapacity(state)) {
-    if (station) setAutopilotNavigation(state, ship, station.station.x, station.station.y, null, station.station.id);
-    return;
-  }
-  const navigation = ship.navigation;
-  const navigationTarget = canHunt && navigation && navigation.targetId
-    ? sys.enemies.find((enemy) => enemy.id === navigation.targetId && enemy.alive)
-    : null;
-  if (navigationTarget && dist(navigationTarget.x, navigationTarget.y, ship.x, ship.y) <= ENGAGE_RANGE) {
-    startCombat(state, navigationTarget.id, now);
-    ship.navigation = null;
-    return;
-  }
-  const availableBelt = canMine ? bestBeltTarget(ship, sys) : null;
-  const availableRat = canHunt ? nearestSafeRat(state, ship, sys) : null;
-  if (!availableBelt && !availableRat) {
-    state.autoPilotMode = null;
-    ship.navigation = null;
-    ship.dockTargetId = null;
-    recordAutomation(state, 'No suitable targets remain; auto-pilot stopped');
-    return;
-  }
-  if (navigation && (
-    (navigation.targetId && sys.enemies.some((enemy) => enemy.id === navigation.targetId && enemy.alive)) ||
-    (navigation.dockTargetId && sys.stations.some((item) => item.id === navigation.dockTargetId)) ||
-    sys.asteroids.some((asteroid) =>
-      asteroid.amount > 0 && asteroid.x === navigation.x && asteroid.y === navigation.y)
-  )) return;
-  if (nearestAsteroidInRange(state, ship)) return;
-  if (canHunt) {
-    const rat = nearestSafeRat(state, ship, sys);
-    if (rat) {
-      setAutopilotNavigation(state, ship, rat.x, rat.y, rat.id);
-      if (dist(rat.x, rat.y, ship.x, ship.y) <= ENGAGE_RANGE) {
-        startCombat(state, rat.id, now);
-        ship.navigation = null;
-      }
-      return;
-    }
-  }
-  if (canMine) {
-    const belt = bestBeltTarget(ship, sys);
-    if (belt) {
-      const rock = closestBeltAsteroid(sys, belt, ship) || belt;
-      setAutopilotNavigation(state, ship, rock.x, rock.y, null, null, rock.id);
-      return;
-    }
-  }
-}
-
-function moveInOrbit(ship, target, radius, seconds, sys) {
-  const distance = dist(target.x, target.y, ship.x, ship.y);
-  const targetKey = target.id || `${target.x}:${target.y}`;
-  if (ship.orbitTargetKey !== targetKey) {
-    ship.orbitTargetKey = targetKey;
-    ship.orbitAngle = distance > 0 ? Math.atan2(ship.y - target.y, ship.x - target.x) : ship.heading || 0;
-  }
-  ship.orbitAngle += seconds * 0.18;
-  const desiredX = target.x + Math.cos(ship.orbitAngle) * radius;
-  const desiredY = target.y + Math.sin(ship.orbitAngle) * radius;
-  const response = 1 - Math.exp(-seconds * 4);
-  const desiredVx = ((desiredX - ship.x) * response) / seconds;
-  const desiredVy = ((desiredY - ship.y) * response) / seconds;
-  moveVelocityToward(ship, desiredVx, desiredVy, seconds);
-  const previousX = ship.x;
-  const previousY = ship.y;
-  ship.x = clamp(ship.x + ship.vx * seconds, 0, sys.width);
-  ship.y = clamp(ship.y + ship.vy * seconds, 0, sys.height);
-  if (Math.hypot(ship.vx, ship.vy) > 4) ship.heading = Math.atan2(ship.vy, ship.vx);
-  ship.distanceTravelled = (ship.distanceTravelled || 0) + Math.hypot(ship.x - previousX, ship.y - previousY);
-}
-
-function moveVelocityToward(ship, targetVx, targetVy, seconds) {
-  let vx = ship.vx || 0;
-  let vy = ship.vy || 0;
-  const deltaX = targetVx - vx;
-  const deltaY = targetVy - vy;
-  const deltaSpeed = Math.hypot(deltaX, deltaY);
-  const maxChange = MAX_ACCELERATION * seconds;
-  if (deltaSpeed <= maxChange) {
-    vx = targetVx;
-    vy = targetVy;
-  } else {
-    vx += (deltaX / deltaSpeed) * maxChange;
-    vy += (deltaY / deltaSpeed) * maxChange;
-  }
-  const speed = Math.hypot(vx, vy);
-  if (speed > MAX_SPEED) {
-    vx = (vx / speed) * MAX_SPEED;
-    vy = (vy / speed) * MAX_SPEED;
-  }
-  ship.vx = vx;
-  ship.vy = vy;
-  return Math.hypot(vx, vy);
-}
-
-function advanceNavigation(ship, sys, seconds, combat = null) {
-  if (ship.dockedStationId) return;
-  let destination = ship.navigation;
-  const combatEnemy = combat && combat.shipId === ship.id
-    ? sys.enemies.find((enemy) => enemy.id === combat.enemyId && enemy.alive)
-    : null;
-  const enemy = combatEnemy || (destination && destination.targetId
-    ? sys.enemies.find((item) => item.id === destination.targetId && item.alive)
-    : null);
-  const asteroid = destination && destination.orbitTargetId
-    ? sys.asteroids.find((item) => item.id === destination.orbitTargetId && item.amount > 0)
-    : null;
-  if (destination && destination.orbitTargetId && !asteroid) {
-    ship.navigation = null;
-    destination = null;
-  }
-  const nearbyAsteroid = !destination && !combat
-    ? sys.asteroids
-      .filter((item) => item.amount > 0)
-      .map((item) => ({ item, distance: dist(item.x, item.y, ship.x, ship.y) }))
-      .filter(({ distance }) => distance <= miningRange(ship))
-      .sort((a, b) => a.distance - b.distance)[0]?.item || null
-    : null;
-  const orbit = combatEnemy
-    ? { target: combatEnemy, radius: 150 }
-    : enemy && destination && dist(enemy.x, enemy.y, ship.x, ship.y) <= 162
-      ? { target: enemy, radius: 150 }
-      : asteroid && dist(asteroid.x, asteroid.y, ship.x, ship.y) <= 112
-        ? { target: asteroid, radius: 100 }
-        : nearbyAsteroid
-          ? { target: nearbyAsteroid, radius: 100 }
-          : null;
-  if (orbit) {
-    moveInOrbit(ship, orbit.target, orbit.radius, seconds, sys);
-    return;
-  }
-  ship.orbitTargetKey = null;
-  ship.orbitAngle = null;
-  if (!destination) {
-    const speed = moveVelocityToward(ship, 0, 0, seconds);
-    if (speed > 0) {
-      const oldX = ship.x;
-      const oldY = ship.y;
-      ship.x = clamp(ship.x + ship.vx * seconds, 0, sys.width);
-      ship.y = clamp(ship.y + ship.vy * seconds, 0, sys.height);
-      if (speed > 4) ship.heading = Math.atan2(ship.vy, ship.vx);
-      ship.distanceTravelled = (ship.distanceTravelled || 0) + Math.hypot(ship.x - oldX, ship.y - oldY);
-    }
-    return;
-  }
-  const dx = destination.x - ship.x;
-  const dy = destination.y - ship.y;
-  const distance = Math.hypot(dx, dy);
-  const currentSpeed = Math.hypot(ship.vx || 0, ship.vy || 0);
-  if (distance <= ARRIVE_RADIUS && currentSpeed <= 5) {
-    const station = destination.dockTargetId && sys.stations.find((item) => item.id === destination.dockTargetId);
-    ship.navigation = null;
-    ship.vx = 0;
-    ship.vy = 0;
-    if (station) {
-      ship.x = station.x;
-      ship.y = station.y;
-      ship.dockTargetId = station.id;
-      ship.dockedStationId = station.id;
-    }
-    return;
-  }
-  const stoppingSpeed = Math.sqrt(2 * MAX_ACCELERATION * distance);
-  const desiredSpeed = Math.min(MAX_SPEED, distance * 0.6, stoppingSpeed);
-  const desiredVx = distance > 0 ? (dx / distance) * desiredSpeed : 0;
-  const desiredVy = distance > 0 ? (dy / distance) * desiredSpeed : 0;
-  moveVelocityToward(ship, desiredVx, desiredVy, seconds);
-  const oldX = ship.x;
-  const oldY = ship.y;
-  ship.x = clamp(ship.x + ship.vx * seconds, 0, sys.width);
-  ship.y = clamp(ship.y + ship.vy * seconds, 0, sys.height);
-  ship.heading = Math.atan2(ship.vy, ship.vx);
-  ship.distanceTravelled = (ship.distanceTravelled || 0) + Math.hypot(ship.x - oldX, ship.y - oldY);
 }
 
 function recordMiningProgress(state, beforeMined, beforeOreBelts, now) {
@@ -1560,10 +1275,10 @@ function tick(state, now = Date.now(), pos = null, rng = Math.random) {
       let movementRemaining = step;
       while (movementRemaining > 0) {
         const substep = Math.min(movementStep, movementRemaining);
-        advanceNavigation(active, sys, substep, s.combat);
+        advanceNavigation(active, sys, substep, s.combat, autoEfficiency(s));
         movementRemaining -= substep;
       }
-      if (!shipInCombat(s, active.id) && ['mine', 'mine_hunt'].includes(s.autoPilotMode)) {
+      if (!shipInCombat(s, active.id) && ['mine', 'mine_fight'].includes(s.autoPilotMode)) {
         mineActive(s, active, step);
       }
       remaining -= step;
@@ -1631,7 +1346,7 @@ function resolveCombat(s, now, won, rng = Math.random) {
     if (enemy) enemy.alive = false;
     if (enemy) advanceAgentMissions(s, 'kill', 1, enemy.type);
     s.stats.combatsWon += 1;
-    // Loot: the rat can drop a module into your loot inventory. Stronger rats
+    // Loot: an enemy can drop a module into your loot inventory. Stronger enemies
     // drop better modules, more reliably (see LOOT_DROP_CHANCE / LOOT_TIERS).
     if (enemy && LOOT_DROP_CHANCE[enemy.type] != null) {
       const chance = LOOT_DROP_CHANCE[enemy.type];
@@ -1792,7 +1507,7 @@ function startCombat(s, enemyId, now) {
   const shipHullMax = (shipDef.hull + moduleBonus(ship, 'armor')) * mults.hull;
   const playerDps = (
     shipDef.dps + moduleBonus(ship, 'weapon') + moduleBonus(ship, 'combatDrone') + droneBonus(s, 'combat')
-  ) * mults.dps;
+  ) * mults.dps * autoEfficiency(s);
   s.combat = {
     shipId: ship.id,
     enemyId,
@@ -1843,9 +1558,9 @@ function engage(state, enemyId, now = Date.now()) {
 }
 
 // Perform an in-fight action: shield boost and overload consume one scrap,
-// while disengage bails out and lets the rat escape.
+// while disengage bails out and lets the enemy escape.
 // 'overload' (temp DPS boost, item + cooldown) or 'disengage' (bail out, keep
-// the ship, no reward, the rat escapes).
+// the ship, no reward, the enemy escapes).
 function combatAction(state, action, now = Date.now()) {
   const s = clone(state);
   if (!s.combat) return { error: 'Not in combat' };
@@ -1888,7 +1603,7 @@ function combatAction(state, action, now = Date.now()) {
   return { error: `Unknown combat action: ${action}` };
 }
 
-// Find a POI by id within a system (station, belt, rat, planet, moon, gate, star).
+// Find a POI by id within a system (station, belt, enemy, planet, moon, gate, star).
 function findPoi(sys, id) {
   if (!sys || !id) return null;
   const inList = (list) => (list || []).find((p) => p.id === id) || null;
@@ -1935,17 +1650,18 @@ function navigate(state, request) {
 
   let target = null;
   if (request && request.kind) {
+    const kind = request.kind === 'rat' ? 'enemy' : request.kind;
     const lists = {
       belt: sys.belts,
       station: sys.stations,
-      rat: sys.enemies.filter((enemy) => enemy.alive),
+      enemy: sys.enemies.filter((enemy) => enemy.alive),
     };
-    const candidates = lists[request.kind];
+    const candidates = lists[kind];
     if (!candidates) return { error: 'Unknown navigation target kind' };
     target = candidates.reduce((best, poi) =>
       !best || dist(poi.x, poi.y, ship.x, ship.y) < dist(best.x, best.y, ship.x, ship.y) ? poi : best
     , null);
-    if (!target) return { error: `No ${request.kind} in this system` };
+    if (!target) return { error: `No ${kind} in this system` };
   } else if (request && request.targetId) {
     target = findPoi(sys, request.targetId);
     if (!target || (sys.enemies.includes(target) && !target.alive)) {
@@ -1967,14 +1683,6 @@ function navigate(state, request) {
   return { state: s };
 }
 
-function setAutopilot(state, mode) {
-  if (![null, 'mine', 'mine_hunt', 'hunt'].includes(mode)) return { error: 'Unknown autopilot mode' };
-  const s = clone(state);
-  s.autoPilotMode = mode;
-  recordAutomation(s, mode ? `Auto-pilot set to ${mode.replace('_', '+')}` : 'Auto-pilot stopped');
-  return { state: s };
-}
-
 function launch(state) {
   const s = clone(state);
   const ship = s.ships.find((item) => item.id === s.activeShipId);
@@ -1992,7 +1700,7 @@ function launch(state) {
 }
 
 // Warp the active ship instantly within its own system. `targetId` may be a POI
-// id (belt/station/rat/planet/moon/gate/star) or, if omitted, raw {x, y}
+// id (belt/station/enemy/planet/moon/gate/star) or, if omitted, raw {x, y}
 // coordinates. This is the single-click navigation: no long flights.
 function warp(state, targetId, x, y) {
   const s = clone(state);
@@ -2036,9 +1744,9 @@ function ambushChance(state, systemId) {
   return clamp(chance, AMBUSH_MIN_CHANCE, AMBUSH_MAX_CHANCE);
 }
 // Spawn a predator near the arrival point in `sys` (a gate ambush), rolled from
-// the same security-based roster as the system's regular rats. Returns the new enemy.
+// the same security-based roster as the system's regular enemies. Returns the new enemy.
 function spawnAmbush(sys, x, y, rng) {
-  const { type, tier } = rollRat(sys.security, rng);
+  const { type, tier } = rollEnemy(sys.security, rng);
   const ang = rng() * Math.PI * 2;
   const rad = 60 + rng() * 120; // within ENGAGE_RANGE of the arrival point
   const enemy = {
@@ -2104,484 +1812,6 @@ function reset(state, now = Date.now(), seed = (Date.now() % 1000000) + 1) {
   return createInitialState(now, seed, state.mode || 'demo');
 }
 
-// ---- missions (story mode pilot training) ----
-
-function missionDef(state) {
-  const m = state.mission;
-  if (!m || !m.active) return null;
-  return MISSIONS[m.active] || null;
-}
-
-// Fit a module into the first empty slot of its type (used for mission grants).
-function fitGrantModule(ship, slotType, tier) {
-  if (!ship || !ship.fitting || !MODULES[slotType]) return false;
-  const slots = SHIPS[ship.type].slots[slotType] || 0;
-  for (let i = 0; i < slots; i++) {
-    if (!ship.fitting[slotType][i]) {
-      ship.fitting[slotType][i] = tier;
-      return true;
-    }
-  }
-  return false;
-}
-
-// Hand the player what a mission grants up front: ships, fitted modules,
-// materials and blueprints.
-// Ships are granted first so modules fit into the newly active replacement.
-function grantMissionRewards(state, def) {
-  if (!def) return;
-  const g = def.grant || {};
-  addStoredItems(state, g.items);
-  if (!Array.isArray(state.blueprints)) state.blueprints = [];
-  for (const blueprint of g.blueprints || []) {
-    state.blueprints.push({ id: nextId(), ...blueprint });
-  }
-  if (Array.isArray(g.ships)) {
-    grantShips(state, g.ships);
-  }
-  if (Array.isArray(g.modules)) {
-    const ship = state.ships.find((sh) => sh.id === state.activeShipId);
-    for (const m of g.modules) fitGrantModule(ship, m.slot, m.tier);
-  }
-}
-
-// Grant one or more ships (replacement/clone respawns), placed just outside the
-// station so a "dock at the station" objective still needs a short warp home.
-function grantShips(state, types) {
-  const ship = state.ships.find((sh) => sh.id === state.activeShipId);
-  // After a scripted death there is no active ship, so fall back to the first
-  // system (the storyline is confined to Jita until certification).
-  let sys = ship && state.systems ? state.systems[ship.systemId] : null;
-  if (!sys && state.systems) sys = Object.values(state.systems)[0] || null;
-  if (!sys) return;
-  const home = sys.stations[0];
-  for (let i = 0; i < types.length; i++) {
-    const ang = ((i + 1) / (types.length + 1)) * Math.PI;
-    const rad = DOCK_RANGE + 120;
-    const n = {
-      id: nextId(),
-      type: types[i],
-      x: clamp(home.x + Math.cos(ang) * rad, 60, sys.width - 60),
-      y: clamp(home.y + Math.sin(ang) * rad, 60, sys.height - 60),
-      systemId: sys.id,
-      dockTargetId: null,
-      dockedStationId: null,
-      cargo: emptyCargo(),
-      fitting: emptyFitting(types[i]),
-    };
-    state.ships.push(n);
-    state.activeShipId = n.id;
-  }
-}
-
-// Item rewards granted when a mission completes.
-function grantCompletionRewards(state, def) {
-  if (!def) return;
-  const c = def.completion || {};
-  addStoredItems(state, c.items);
-  if (Array.isArray(c.drones)) {
-    const ship = state.ships.find((item) => item.id === state.activeShipId);
-    for (const d of c.drones) {
-      const slotType = d.type === 'mining' ? 'miningDrone' : d.type === 'combat' ? 'combatDrone' : null;
-      if (!slotType) continue;
-      if (!fitGrantModule(ship, slotType, d.tier)) {
-        if (!Array.isArray(state.loot)) state.loot = [];
-        state.loot.push({ id: nextId(), slotType, tier: d.tier });
-      }
-    }
-  }
-}
-
-// Start a mission: hand out its up-front grant and place its targets.
-function startMission(state, id) {
-  const def = MISSIONS[id];
-  if (!def) return;
-  state.mission.active = id;
-  state.mission.flags = {};
-  state.mission.step = 0;
-  state.mission.ready = false;
-  state.mission.offered = null;
-  clearMissionEnemies(state);
-  grantMissionRewards(state, def);
-  spawnMissionEnemies(state, def);
-}
-
-// Remove any leftover living scripted targets (e.g. m3's surviving wave ships)
-// so only the current mission's spawns remain — "between missions, the space is
-// quiet". Dead targets are kept so killmails and ids stay consistent.
-function clearMissionEnemies(state) {
-  for (const sys of Object.values(state.systems)) {
-    sys.enemies = (sys.enemies || []).filter((e) => !e.missionTag || e.alive === false);
-  }
-}
-
-// True when a story save exists but the pilot-training course has never actually
-// started (no active mission and nothing completed) — e.g. a save written by an
-// earlier build before missions were wired up. Such a save should be booted into
-// m1 rather than resumed in a half-initialized state.
-function missionStartNeeded(state) {
-  const m = state && state.mission;
-  return !m || (!m.active && (!m.completed || m.completed.length === 0));
-}
-
-// Place scripted targets near an outpost so hostile activity remains clustered.
-function spawnMissionEnemies(state, def) {
-  if (!def || !def.spawn) return;
-  const ship = state.ships.find((sh) => sh.id === state.activeShipId);
-  const sys = state.systems && state.systems[def.systemId || (ship && ship.systemId)];
-  if (!sys) return;
-  const outpost = (sys.outposts || [])[0];
-  const site = outpost || sys.stations[0];
-  for (const sp of def.spawn) {
-    const eDef = ENEMIES[sp.type];
-    if (!eDef) continue;
-    for (let i = 0; i < sp.count; i++) {
-      const ang = (i / Math.max(1, sp.count)) * Math.PI * 2;
-      const rad = 420 + i * 60;
-      sys.enemies.push({
-        id: nextId(),
-        type: eDef.key,
-        tier: sp.tier || 'standard',
-        missionTag: sp.tag || sp.type,
-        x: clamp(site.x + Math.cos(ang) * rad, 60, sys.width - 60),
-        y: clamp(site.y + Math.sin(ang) * rad, 60, sys.height - 60),
-        outpostId: outpost && outpost.id,
-        rangeDelay: sp.rangeDelay || 0,
-        alive: true,
-      });
-    }
-  }
-}
-
-// True once the active mission's objective is satisfied.
-function missionDone(state) {
-  const m = state.mission;
-  const def = missionDef(state);
-  if (!m || !def) return false;
-  const o = def.objective;
-  switch (o.type) {
-    case 'kill': return (m.flags.killed || 0) >= o.count;
-    case 'mine': return (m.flags.mined || 0) >= o.target;
-    case 'craft': return o.targets.every((t) => (m.flags.crafted && m.flags.crafted[`${t.slot}:${t.tier}`] || 0) >= t.count);
-    case 'dock': return !!m.flags.docked;
-    case 'death': return !!m.flags.died;
-    case 'dialogue': return !!m.flags.done;
-    default: return false;
-  }
-}
-
-// Re-evaluate the active mission's objective without completing it. Objective
-// hooks only mark the mission ready here; completion happens at a station
-// hangar via missionAction('turnin'), which hands out rewards and offers the
-// next mission (missionAction('accept'), also docked-only).
-function checkMissionObjective(state) {
-  const m = state.mission;
-  if (!m || state.mode !== 'story' || !m.active) return;
-  const def = MISSIONS[m.active];
-  if (!def) return;
-  if (def.objective.type === 'dock' && dockedStation(state)) m.flags.docked = 1;
-  if (missionDone(state)) m.ready = true;
-}
-
-// Complete the current mission: hand out completion rewards, mark it done and
-// offer the next mission. Docked at a station hangar only — the storyline's one
-// job that happens in space is m1 (auto-started at boot) and the scripted m3
-// death, which the m4 replacement frigate resolves at the hangar.
-function evaluateMission(state) {
-  const m = state.mission;
-  if (!m || state.mode !== 'story' || !m.active) return { error: 'No active mission' };
-  if (!dockedStation(state)) return { error: 'Return to a station to turn in the mission' };
-  const def = MISSIONS[m.active];
-  if (!def) return { error: 'No active mission' };
-  if (!missionDone(state)) return { error: 'Mission objective not complete' };
-  grantCompletionRewards(state, def);
-  m.completed.push(m.active);
-  state.stats.missionsCompleted = (state.stats.missionsCompleted || 0) + 1;
-  const idx = MISSION_ORDER.indexOf(m.active);
-  const next = MISSION_ORDER[idx + 1] || null;
-  m.active = null;
-  m.flags = {};
-  m.step = 0;
-  m.ready = false;
-  m.offered = next
-    ? { id: next, title: MISSIONS[next].title, npc: MISSIONS[next].npc, brief: MISSIONS[next].brief }
-    : null;
-  return { state };
-}
-
-// Player-triggered mission actions. 'continue' acknowledges a dialogue-only
-// mission (e.g. reading your certification). 'turnin' completes the active
-// mission and 'accept' starts the offered one — both docked at a station.
-function missionAction(state, action) {
-  const s = clone(state);
-  const m = s.mission;
-  if (!m || s.mode !== 'story') return { error: 'No active mission' };
-  if (action === 'continue') {
-    if (!m.active) return { error: 'No active mission' };
-    const def = MISSIONS[m.active];
-    if (!def) return { error: 'No active mission' };
-    if (def.objective.type === 'dialogue') m.flags.done = 1;
-    checkMissionObjective(s);
-    return { state: s };
-  }
-  if (action === 'turnin') {
-    const result = evaluateMission(s);
-    if (result.error) return { error: result.error };
-    return { state: s };
-  }
-  if (action === 'accept') {
-    if (!m.offered) return { error: 'No mission offered' };
-    if (!dockedStation(s)) return { error: 'Dock at a station to accept the mission' };
-    startMission(s, m.offered.id);
-    return { state: s };
-  }
-  return { error: 'Unknown mission action' };
-}
-
-// The client-facing mission snapshot (title, brief, objective + progress).
-function missionView(state) {
-  const m = state.mission;
-  if (!m) return null;
-  const def = m.active ? MISSIONS[m.active] : null;
-  const o = def ? def.objective : null;
-  let progress = null;
-  let target = null;
-  if (o) {
-    switch (o.type) {
-      case 'kill': progress = Math.min(o.count, m.flags.killed || 0); target = o.count; break;
-      case 'mine': progress = Math.min(o.target, m.flags.mined || 0); target = o.target; break;
-      case 'craft':
-        progress = o.targets.map((t) => Math.min(t.count, (m.flags.crafted && m.flags.crafted[`${t.slot}:${t.tier}`]) || 0));
-        target = o.targets.map((t) => t.count);
-        break;
-      default: break;
-    }
-  }
-  return {
-    mode: state.mode,
-    active: m.active,
-    ready: !!m.ready,
-    offered: m.offered ? { ...m.offered } : null,
-    title: def ? def.title : null,
-    npc: def ? def.npc : null,
-    brief: def ? def.brief : null,
-    objective: o ? o.label : null,
-    progress,
-    target,
-    done: def ? missionDone(state) : false,
-    completed: m.completed.slice(),
-  };
-}
-
-function shipView(ship, mults, drone) {
-  const def = SHIPS[ship.type];
-  const d = drone || { mining: 0, dps: 0 };
-  return {
-    id: ship.id,
-    type: ship.type,
-    name: def.name,
-    x: ship.x,
-    y: ship.y,
-    vx: ship.vx || 0,
-    vy: ship.vy || 0,
-    heading: ship.heading || 0,
-    speed: Math.hypot(ship.vx || 0, ship.vy || 0),
-    systemId: ship.systemId,
-    // Effective stats: base stats plus the flat bonus of every fitted module,
-    // with drones adding a player-level bonus and trained skills multiplying
-    // the result. No level/upgrade system.
-    mining: shipMining(ship, mults, d.mining),
-    combat: def.combat,
-    dps: (def.dps + moduleBonus(ship, 'weapon') + moduleBonus(ship, 'combatDrone') + d.dps) * (mults ? mults.dps : 1),
-    shield: (def.shield + moduleBonus(ship, 'shield')) * (mults ? mults.shield : 1),
-    hull: (def.hull + moduleBonus(ship, 'armor')) * (mults ? mults.hull : 1),
-    cargo: shipCargo(ship, mults),
-    slots: def.slots,
-    fitting: ship.fitting || emptyFitting(ship.type),
-  };
-}
-
-// The combat object plus the derived values the client needs to render the
-// fight and its in-fight action buttons.
-function combatView(c) {
-  const ttd = Math.min(playerTtd(c), enemyTtd(c));
-  return {
-    ...c,
-    remaining: Math.max(0, ttd),
-    overloaded: c.fightTime < c.overloadUntil,
-    boostReady: c.fightTime >= c.boostReadyAt,
-    overloadReady: c.fightTime >= c.overloadReadyAt,
-    boostCooldown: Math.max(0, c.boostReadyAt - c.fightTime),
-    overloadCooldown: Math.max(0, c.overloadReadyAt - c.fightTime),
-    boostItem: COMPONENTS[SHIELD_BOOST_ITEM].name,
-    overloadItem: COMPONENTS[OVERLOAD_ITEM].name,
-  };
-}
-
-function view(state) {
-  const active = state.ships.find((sh) => sh.id === state.activeShipId);
-  const sys = active && state.systems ? state.systems[active.systemId] : null;
-  const mults = skillMults(state);
-  const drone = { mining: droneBonus(state, 'mining'), dps: droneBonus(state, 'combat') };
-  const materials = active ? { ...emptyMaterials(), ...active.cargo } : emptyMaterials();
-  const storageItems = (state.storage && (state.storage.items || state.storage.minerals)) || emptyMaterials();
-  const dockedAt = dockedStation(state);
-  const progressionMaterials = { ...materials };
-  for (const [key, amount] of Object.entries(storageItems)) {
-    progressionMaterials[key] = (progressionMaterials[key] || 0) + amount;
-  }
-  const v = {
-    version: state.version,
-    mode: state.mode,
-    mission: missionView(state),
-    agentMission: agentMissionView(state),
-    automationLog: state.automationLog || [],
-    materials,
-    minerals: Object.fromEntries(Object.keys(MINERALS).map((key) => [key, materials[key] || 0])),
-    ships: state.ships.map((sh) => shipView(sh, mults, drone)),
-    activeShipId: state.activeShipId,
-    lastTick: state.lastTick,
-    skillPoints: state.skillPoints || 0,
-    skillPointRate: SP_RATE_PER_SEC,
-    skills: state.skills || emptySkills(),
-    skillMults: mults,
-    drones: {
-      mining: active && active.fitting && (active.fitting.miningDrone || []).some((tier) => tier > 0)
-        ? active.fitting.miningDrone.filter((tier) => tier > 0)
-        : (state.drones || emptyDroneBay()).mining,
-      combat: active && active.fitting && (active.fitting.combatDrone || []).some((tier) => tier > 0)
-        ? active.fitting.combatDrone.filter((tier) => tier > 0)
-        : (state.drones || emptyDroneBay()).combat,
-    },
-    droneBonuses: {
-      mining: moduleBonus(active, 'miningDrone') + droneBonus(state, 'mining'),
-      dps: moduleBonus(active, 'combatDrone') + droneBonus(state, 'combat'),
-    },
-    loot: (state.loot || []).map((l) => ({
-      id: l.id,
-      slotType: l.slotType,
-      tier: l.tier,
-      name: MODULES[l.slotType] ? MODULES[l.slotType].name : l.slotType,
-    })),
-    blueprints: (state.blueprints || []).map((blueprint) => {
-      const definition = blueprint.kind === 'module'
-        ? BLUEPRINTS[blueprint.type] && BLUEPRINTS[blueprint.type][blueprint.tier]
-        : blueprint.kind === 'ship' ? SHIP_BLUEPRINTS[blueprint.type] : null;
-      return { ...blueprint, name: definition ? definition.name : 'Unknown Blueprint' };
-    }),
-    // Quantum storage (shared by every station) — mirrors of the raw state so
-    // the client can render the inventory overlay.
-    storage: {
-      items: storageItems,
-      loot: state.storage && Array.isArray(state.storage.loot) ? state.storage.loot.map((item) => ({ ...item })) : [],
-      blueprints: state.storage && Array.isArray(state.storage.blueprints)
-        ? state.storage.blueprints.map((blueprint) => ({ ...blueprint }))
-        : [],
-    },
-    combat: state.combat
-      ? combatView(state.combat)
-      : null,
-    combatLog: state.combatLog.slice(),
-    stats: { ...state.stats },
-    achievements: Object.values(ACHIEVEMENTS).map((achievement) => {
-      let progress;
-      if (achievement.stat === 'missionsCompleted') progress = state.mission && state.mission.completed ? state.mission.completed.length : 0;
-      else progress = state.stats[achievement.stat] || 0;
-      return {
-        ...achievement,
-        progress: Math.min(progress, achievement.target),
-        unlocked: progress >= achievement.target,
-      };
-    }),
-    fittingPresets: state.fittingPresets || [],
-    // The active ship's system, exposed as `world` for client compatibility.
-    world: sys
-      ? {
-          id: sys.id,
-          name: sys.name,
-          color: sys.color,
-          seed: sys.seed,
-          width: sys.width,
-          height: sys.height,
-          star: sys.star,
-          planets: sys.planets,
-          moons: sys.moons,
-          stations: sys.stations,
-          outposts: sys.outposts || [],
-          belts: sys.belts,
-          asteroids: sys.asteroids,
-          enemies: sys.enemies.map((enemy) => {
-            const stats = enemyCombatStats(enemy);
-            const tier = ENEMY_TIERS[enemy.tier] || ENEMY_TIERS.standard;
-            return {
-              ...enemy,
-              tier: tier.key,
-              tierName: tier.name,
-              shield: stats.shield,
-              hull: stats.hull,
-              dps: stats.dps,
-              difficulty: active ? estimateCombatDifficulty(state, active, enemy) : { key: 'unknown', label: 'Unknown', ratio: null },
-            };
-          }),
-          gates: sys.gates,
-          security: sys.security,
-        }
-      : null,
-    system: sys ? { id: sys.id, name: sys.name, color: sys.color, security: sys.security, gates: sys.gates } : null,
-    systemNames: Object.values(state.systems).map((s) => ({ id: s.id, name: s.name, color: s.color, security: s.security })),
-    // Gate-ambush chance by destination system security.
-    ambush: Object.fromEntries(
-      Object.values(state.systems).map((s) => [s.id, ambushChance(state, s.id)])
-    ),
-  };
-  v.activeShip = active ? shipView(active, mults, drone) : null;
-  v.docked = !!dockedAt;
-  v.dockedStation = dockedAt ? dockedAt.name : null;
-  v.dockTargetId = active ? active.dockTargetId || null : null;
-  v.navigation = active && active.navigation ? { ...active.navigation } : null;
-  v.autoPilotMode = state.autoPilotMode || null;
-  v.skillTraining = skillTrainingView(state);
-  v.shipProgression = shipProgressionView(state, progressionMaterials, v.docked);
-  v.actionAvailability = actionAvailability(state, progressionMaterials, v.docked, active);
-  v.cargoUsed = cargoUsed(state);
-  v.cargoCapacity = cargoCapacity(state);
-  v.cargoFull = v.cargoCapacity > 0 && v.cargoUsed >= v.cargoCapacity;
-  v.miningPaused = active ? shipInCombat(state, active.id) : true;
-  v.miningRange = active ? miningRange(active) : MINING_RANGE;
-  v.miningRate = 0;
-  v.miningTargetId = null;
-  if (active && !v.miningPaused) {
-    const t = nearestAsteroidInRange(state, active);
-    if (t) {
-      v.miningRate = shipMining(active, mults, drone.mining);
-      v.miningTargetId = t.id;
-    }
-  }
-  if (active && sys) {
-    const nearestStation = sys.stations
-      .map((station) => ({ station, distance: dist(active.x, active.y, station.x, station.y) }))
-      .sort((a, b) => a.distance - b.distance)[0];
-    const nearestGate = sys.gates
-      .map((gate) => ({ gate, distance: dist(active.x, active.y, gate.x, gate.y) }))
-      .filter((entry) => entry.distance <= GATE_RANGE)
-      .sort((a, b) => a.distance - b.distance)[0];
-    const nearestEnemy = sys.enemies
-      .filter((enemy) => enemy.alive)
-      .map((enemy) => ({ enemy, distance: dist(active.x, active.y, enemy.x, enemy.y) }))
-      .filter((entry) => entry.distance <= ENGAGE_RANGE)
-      .sort((a, b) => a.distance - b.distance)[0];
-    v.nearby = {
-      stationId: nearestStation ? nearestStation.station.id : null,
-      stationDistance: nearestStation ? nearestStation.distance : null,
-      gateId: nearestGate ? nearestGate.gate.id : null,
-      enemyId: nearestEnemy ? nearestEnemy.enemy.id : null,
-    };
-  } else {
-    v.nearby = { stationId: null, stationDistance: null, gateId: null, enemyId: null };
-  }
-  return v;
-}
-
 module.exports = {
   SHIPS,
   MODULES,
@@ -2636,6 +1866,7 @@ module.exports = {
   emptySkills,
   emptyDroneBay,
   droneBonus,
+  autoEfficiency,
   buyBlueprint,
   exchangeItems,
   equipLoot,
@@ -2669,7 +1900,10 @@ module.exports = {
   nearestAsteroidInRange,
   isDocked,
   dockedStation,
-  rollRat,
+  rollEnemy,
+  migrateTerminology,
+  startAutopilotDockWait,
+  completeAutopilotDeposit,
   enemyCombatStats,
   estimateCombatDifficulty,
   activeSystem,

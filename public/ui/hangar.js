@@ -34,10 +34,41 @@ export class HangarNode extends Node {
     super(app);
     this.pendingBlueprintPurchases = new Set();
     this.blueprintPurchaseCooldowns = new Map();
+    this.lastRefreshKey = null;
   }
 
   // PUBLIC
   refresh() {
+    const state = this.app.state;
+    const ship = state.activeShip;
+    const refreshKey = JSON.stringify({
+      mode: state.mode,
+      docked: state.docked,
+      dockedStation: state.dockedStation,
+      mission: state.mission,
+      agentMission: state.agentMission,
+      skillPointRate: state.skillPointRate,
+      skillTraining: state.skillTraining,
+      achievements: state.achievements,
+      shipProgression: state.shipProgression,
+      ships: state.ships.map(({ id, type }) => ({ id, type })),
+      activeShipId: state.activeShipId,
+      activeShip: ship && {
+        id: ship.id,
+        type: ship.type,
+        fitting: ship.fitting,
+        slots: ship.slots,
+      },
+      materials: state.materials,
+      loot: state.loot,
+      blueprints: state.blueprints,
+      storage: state.storage,
+      actionAvailability: state.actionAvailability,
+    });
+    document.getElementById('hangar-sp').textContent =
+      `${Math.floor(state.skillPoints || 0)} SP · ${state.skillPointRate} SP/s, offline`;
+    if (refreshKey === this.lastRefreshKey) return this;
+
     this.#renderHangar();
     this.app.ui.inventory.renderFitting();
     this.app.ui.inventory.renderStorage();
@@ -46,6 +77,7 @@ export class HangarNode extends Node {
         button.disabled = true;
       });
     }
+    this.lastRefreshKey = refreshKey;
     return this;
   }
   // Display one station service selected from the persistent menu rail.
@@ -223,7 +255,7 @@ export class HangarNode extends Node {
     }
     const dropNote = document.createElement('div');
     dropNote.className = 'sub';
-    dropNote.textContent = 'Higher-tier module and ship blueprints are recovered from rat loot; NPCs do not sell them.';
+    dropNote.textContent = 'Higher-tier module and ship blueprints are recovered from enemy loot; NPCs do not sell them.';
     blueprints.appendChild(dropNote);
   }
 

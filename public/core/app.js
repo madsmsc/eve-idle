@@ -29,7 +29,7 @@ export class App {
     this.hangarOpen = false;
     this.menuPageOpen = false;
     this.activeMenu = 'cargo';
-    this.overviewVisible = true;
+    this.overviewMode = 'mini';
     this.autoPilot = false;
     this.warpFx = 0;
     this.gateFx = 0;
@@ -37,6 +37,10 @@ export class App {
     this.warpPending = false;
     this.syncInFlight = false;
     this.pendingActions = 0;
+    this.autoPilotActionTimer = null;
+    this.autoPilotActionHighlight = null;
+    this.autoPilotActionPhase = null;
+    this.autoDockAckInFlight = false;
     this.actionVersion = 0;
     this.uiInteractionActive = false;
     this.uiRefreshPending = false;
@@ -143,17 +147,68 @@ export class App {
           if (prevSystem !== this.state.system.id) this.world.genStars();
         }
       }
-      this.player.setServerState(active, this.state.navigation);
+      this.player.setServerState(active, this.state.navigation, this.state);
     }
     this.world.effects.combat.onServerState(prevShipPos);
     this.ui.refreshPanels();
     this.syncDockedView();
+    this.handleAutoPilotSequence();
   }
 
   // Docked stations overlay services on a ship-free capture of the world.
   // PUBLIC
   syncDockedView() {
     this.ui.syncDockedView();
+  }
+
+  // PUBLIC
+  handleAutoPilotSequence() {
+    const sequence = this.state && this.state.autoPilotSequence;
+    if (!this.state || !this.state.docked || !this.autoPilotMode || !sequence) {
+      this.#clearAutoPilotAction();
+      return;
+    }
+    if (sequence.phase === 'dock_wait' && sequence.startedAt == null) {
+      if (!this.autoDockAckInFlight) {
+        this.autoDockAckInFlight = true;
+        this.doAction('autopilot-dock-complete', {}).finally(() => {
+          this.autoDockAckInFlight = false;
+        });
+      }
+      return;
+    }
+    const phase = sequence.phase;
+    if (phase !== 'deposit' && phase !== 'launch_wait') {
+      this.#clearAutoPilotAction();
+      return;
+    }
+    if (this.autoPilotActionTimer && this.autoPilotActionPhase === phase) return;
+    this.#clearAutoPilotAction();
+
+    const depositing = phase === 'deposit';
+    const button = document.querySelector(
+      depositing ? '[data-testid="inv-deposit-all"]' : '[data-testid="station-launch"]',
+    );
+    if (!button) {
+      this.toast(
+        depositing ? 'Auto-pilot cargo deposit control is unavailable' : 'Auto-pilot launch control is unavailable',
+        true,
+      );
+      return;
+    }
+    const duration = depositing
+      ? this.constants.autopilotDepositAnimationMs
+      : this.constants.autopilotLaunchWaitMs;
+    button.style.setProperty('--autopilot-action-duration', `${duration}ms`);
+    button.classList.add('autopilot-action-highlight');
+    this.autoPilotActionHighlight = button;
+    this.autoPilotActionPhase = phase;
+    this.autoPilotActionTimer = setTimeout(async () => {
+      this.autoPilotActionTimer = null;
+      this.#removeAutoPilotActionHighlight();
+      this.autoPilotActionPhase = null;
+      if (depositing) await this.doAction('deposit-all', {});
+    }, duration);
   }
 
   // Launch at the server-authoritative position outside the station.
@@ -228,15 +283,16 @@ export class App {
   }
 
   // PUBLIC
-  toggleOverview(force) {
-    this.overviewVisible = force !== undefined ? !!force : !this.overviewVisible;
-    const map = document.getElementById('minimap');
-    const button = document.getElementById('overview-toggle');
-    map.hidden = !this.overviewVisible;
-    button.textContent = this.overviewVisible ? 'X' : 'V';
-    button.setAttribute('aria-label', this.overviewVisible ? 'Hide minimap' : 'Show minimap');
-    button.title = this.overviewVisible ? 'Hide minimap' : 'Show minimap';
-    button.setAttribute('aria-expanded', String(this.overviewVisible));
+  setOverviewMode(mode, { persist = true } = {}) {
+    if (!['edge', 'mini', 'none'].includes(mode)) throw new Error(`Unknown overview mode: ${mode}`);
+    this.overviewMode = mode;
+    document.body.classList.toggle('edge-overview', mode === 'edge');
+    document.getElementById('minimap').hidden = mode !== 'mini';
+    document.getElementById('edge-map').hidden = mode !== 'edge';
+    document.querySelectorAll('[data-overview-mode]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.overviewMode === mode));
+    });
+    if (persist) localStorage.setItem('eve-idle-overview-mode', mode);
   }
 
   // PUBLIC
@@ -399,13 +455,18 @@ export class App {
     const active = this.state.ships.find((s) => s.id === this.state.activeShipId);
     if (active) {
       this.player.snap(active.x, active.y);
-      this.player.setServerState(active, this.state.navigation);
+      this.player.setServerState(active, this.state.navigation, this.state);
     }
     this.input = new Input(this);
     this.input.wire();
+    const savedOverviewMode = localStorage.getItem('eve-idle-overview-mode');
+    this.setOverviewMode(['edge', 'mini', 'none'].includes(savedOverviewMode) ? savedOverviewMode : 'mini', {
+      persist: false,
+    });
     this.ui.refreshPanels();
     if (this.state.docked) this.dockBackground = this.world.captureDockBackground(this.ship);
     this.syncDockedView();
+    this.handleAutoPilotSequence();
     this.#showFirstTimeTutorial();
     this.lastFrame = performance.now();
     requestAnimationFrame(this.frame);
@@ -421,6 +482,22 @@ export class App {
       localStorage.setItem(key, 'true');
       hint.hidden = true;
     }, { once: true });
+  }
+
+  // PRIVATE
+  #clearAutoPilotAction() {
+    if (this.autoPilotActionTimer) clearTimeout(this.autoPilotActionTimer);
+    this.autoPilotActionTimer = null;
+    this.autoPilotActionPhase = null;
+    this.#removeAutoPilotActionHighlight();
+  }
+
+  // PRIVATE
+  #removeAutoPilotActionHighlight() {
+    if (!this.autoPilotActionHighlight) return;
+    this.autoPilotActionHighlight.classList.remove('autopilot-action-highlight');
+    this.autoPilotActionHighlight.style.removeProperty('--autopilot-action-duration');
+    this.autoPilotActionHighlight = null;
   }
 
   // PRIVATE

@@ -54,7 +54,7 @@ function gateSlot(index) {
     : { x: center + 1700, y: center + 500 };
 }
 
-function generateWorld(seed, profile, rollRat) {
+function generateWorld(seed, profile, rollEnemy) {
   const random = mulberry32(seed);
   const size = WORLD_SIZE;
   const centerX = size / 2;
@@ -144,10 +144,37 @@ function generateWorld(seed, profile, rollRat) {
     const count = ASTEROIDS_PER_FIELD[0] +
       Math.floor(random() * (ASTEROIDS_PER_FIELD[1] - ASTEROIDS_PER_FIELD[0] + 1));
     for (let i = 0; i < count; i++) {
-      const angle = random() * Math.PI * 2;
-      const radius = i === 0 ? 40 + random() * 50 : 60 + random() * 260;
-      const x = clamp(fieldX + Math.cos(angle) * radius, 60, size - 60);
-      const y = clamp(fieldY + Math.sin(angle) * radius, 60, size - 60);
+      const asteroidSize = 14 + random() * 22;
+      const minRadius = i === 0 ? 40 : 60;
+      const maxRadius = i === 0 ? 90 : 320;
+      const isSeparated = (x, y) => asteroids
+        .filter((asteroid) => asteroid.beltId === beltId)
+        .every((asteroid) =>
+          Math.hypot(asteroid.x - x, asteroid.y - y) >= (asteroid.size + asteroidSize) * 1.04 + 4
+        );
+      let position = null;
+      for (let attempt = 0; attempt < 120; attempt++) {
+        const angle = random() * Math.PI * 2;
+        const radius = minRadius + random() * (maxRadius - minRadius);
+        const x = fieldX + Math.cos(angle) * radius;
+        const y = fieldY + Math.sin(angle) * radius;
+        if (x >= 60 && x <= size - 60 && y >= 60 && y <= size - 60 && isSeparated(x, y)) {
+          position = { x, y };
+          break;
+        }
+      }
+      if (!position) {
+        for (let radius = minRadius; radius <= maxRadius && !position; radius += 8) {
+          for (let angle = 0; angle < Math.PI * 2 && !position; angle += Math.PI / 18) {
+            const x = fieldX + Math.cos(angle) * radius;
+            const y = fieldY + Math.sin(angle) * radius;
+            if (x >= 60 && x <= size - 60 && y >= 60 && y <= size - 60 && isSeparated(x, y)) {
+              position = { x, y };
+            }
+          }
+        }
+      }
+      if (!position) throw new Error(`Unable to place asteroid in ${beltId} without overlap`);
       const mineral = random() < 0.8
         ? fieldMineral
         : mineralKeys[Math.floor(random() * mineralKeys.length)];
@@ -155,13 +182,13 @@ function generateWorld(seed, profile, rollRat) {
         Math.floor(random() * (ASTEROID_AMOUNT[1] - ASTEROID_AMOUNT[0] + 1));
       asteroids.push({
         id: `ast_${asteroidId++}`,
-        x,
-        y,
+        x: position.x,
+        y: position.y,
         mineral,
         amount,
         maxAmount: amount,
         seed: Math.floor(random() * 1e9),
-        size: 14 + random() * 22,
+        size: asteroidSize,
         beltId,
       });
     }
@@ -172,7 +199,7 @@ function generateWorld(seed, profile, rollRat) {
     for (let i = 0; i < count; i++) {
       const angle = random() * Math.PI * 2;
       const radius = 180 + random() * 260;
-      const { type, tier } = rollRat(profile.security, random);
+      const { type, tier } = rollEnemy(profile.security, random);
       enemies.push({
         id: `en_${enemies.length + 1}`,
         x: clamp(outpost.x + Math.cos(angle) * radius, 60, size - 60),
@@ -206,10 +233,10 @@ function generateWorld(seed, profile, rollRat) {
   };
 }
 
-function generateSystems(seed, rollRat) {
+function generateSystems(seed, rollEnemy) {
   const systems = {};
   for (const definition of SYSTEM_DEFS) {
-    systems[definition.id] = generateWorld((seed + hashStr(definition.id)) >>> 0, definition, rollRat);
+    systems[definition.id] = generateWorld((seed + hashStr(definition.id)) >>> 0, definition, rollEnemy);
   }
   for (const [a, b] of GATE_LINKS) {
     const definitionA = SYSTEM_DEFS[a];

@@ -46,13 +46,14 @@ export class Input {
       if (k === 'l') app.toggleLoot();
       if (k === 'q') app.toggleStorage();
       if (k === 'a') app.setAutoPilotMode('mine');
+      if (k === 'f') app.setAutoPilotMode('fight');
+      if (k === 'b') app.setAutoPilotMode('mine_fight');
       if (k === 'm' && app.state.miningTargetId && !app.state.miningPaused && !app.state.cargoFull && !app.state.docked) {
         app.doAction('mine', {});
       }
       if (k === 'j' && app.state.nearby.gateId && !app.state.combat) app.doGateJump();
-      if (k === 'b') app.navigateToNearest('belt');
       if (k === 's') app.navigateToNearest('station');
-      if (k === 'r') app.navigateToNearest('rat');
+      if (k === 'r') app.navigateToNearest('enemy');
       if (k === 'escape') {
         app.closeMenu();
       }
@@ -63,7 +64,7 @@ export class Input {
       const rect = canvas.getBoundingClientRect();
       const sx = ev.clientX - rect.left;
       const sy = ev.clientY - rect.top;
-      // 1) clicking a rat sets a flight destination and marks it as the target
+      // 1) clicking an enemy sets a flight destination and marks it as the target
       let hit = null;
       let bd = 22;
       for (const e of app.state.world.enemies) {
@@ -129,7 +130,21 @@ export class Input {
 
     document.getElementById('engage').addEventListener('click', () => app.doEngage());
     document.getElementById('mine').addEventListener('click', () => app.doAction('mine', {}));
-    document.getElementById('overview-toggle').addEventListener('click', () => app.toggleOverview());
+    document.querySelectorAll('[data-overview-mode]').forEach((button) => {
+      button.addEventListener('click', () => app.setOverviewMode(button.dataset.overviewMode));
+    });
+    document.getElementById('edge-map').addEventListener('click', (ev) => {
+      const toggle = ev.target.closest('[data-cluster-toggle]');
+      if (toggle) {
+        const options = toggle.nextElementSibling;
+        options.hidden = !options.hidden;
+        toggle.setAttribute('aria-expanded', String(!options.hidden));
+        return;
+      }
+      const marker = ev.target.closest('[data-target-id]');
+      if (!marker) return;
+      app.navigate(marker.dataset.targetId, null, { silent: true });
+    });
     document.getElementById('left-menu').addEventListener('click', (ev) => {
       const button = ev.target.closest('.menu-card');
       if (button) app.openMenu(button.dataset.menu);
@@ -137,7 +152,7 @@ export class Input {
     document.getElementById('death-dismiss').addEventListener('click', () => app.overlays.hideDeath());
     document.getElementById('navigate-belt').addEventListener('click', () => app.navigateToNearest('belt'));
     document.getElementById('navigate-station').addEventListener('click', () => app.navigateToNearest('station'));
-    document.getElementById('navigate-rat').addEventListener('click', () => app.navigateToNearest('rat'));
+    document.getElementById('navigate-enemy').addEventListener('click', () => app.navigateToNearest('enemy'));
     document.getElementById('gate-jump').addEventListener('click', () => app.doGateJump());
     document.querySelectorAll('[data-auto-mode]').forEach((button) => {
       button.addEventListener('click', () => app.setAutoPilotMode(button.dataset.autoMode));
@@ -192,6 +207,7 @@ export class Input {
       if (!el || el.disabled) return;
       const a = el.dataset.action;
       if (a === 'deposit-filtered') app.doAction('deposit-filtered', { filter: app.ui.inventory.filter });
+      else if (a === 'deposit-all') app.doAction('deposit-all', {});
       else if (a === 'craft-module') app.doAction('craft-module', { slotType: el.dataset.slot, tier: Number(el.dataset.tier), blueprintId: el.dataset.blueprint });
       else if (a === 'craft-ship') app.doAction('craft-ship', { type: el.dataset.type, blueprintId: el.dataset.blueprint });
       else if (a === 'deposit') app.doAction('deposit', { mineral: el.dataset.mineral, amount: el.dataset.amount });

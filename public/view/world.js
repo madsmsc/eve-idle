@@ -91,11 +91,6 @@ export class BeltNode extends Node {
         ctx.stroke();
         ctx.lineWidth = 1;
       }
-      ctx.fillStyle = 'rgba(150, 175, 220, 0.7)';
-      ctx.font = `${Math.max(9, 11 * zoom)}px sans-serif`;
-      ctx.textAlign = 'center';
-      const pct = Math.round(frac * 100);
-      ctx.fillText(`${b.name} ${pct}%`, p.x, p.y - r - 6);
     }
     return super.render(now);
   }
@@ -262,6 +257,8 @@ export class AsteroidNode extends Node {
       ctx.lineWidth = Math.max(0.6, zoom);
       ctx.stroke();
     }
+    polygonPath(ctx, points);
+    // Mineral color intentionally marks the asteroid silhouette and core.
     ctx.lineWidth = Math.max(1, 2 * zoom);
     ctx.strokeStyle = color;
     ctx.stroke();
@@ -319,10 +316,6 @@ export class StationNode extends Node {
       ctx.fillStyle = 'rgba(170, 235, 255, 0.95)';
       regularPolygonPath(ctx, r * 0.17, 4, Math.PI / 4);
       ctx.fill();
-      ctx.fillStyle = 'rgba(120, 200, 255, 0.9)';
-      ctx.font = `${Math.max(10, 12 * zoom)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText(st.name, 0, r + 18 * zoom);
       ctx.restore();
     }
     return super.render(now);
@@ -363,10 +356,6 @@ export class OutpostNode extends Node {
       regularPolygonPath(ctx, r * 0.24, 4, Math.PI / 4);
       ctx.fill();
       ctx.restore();
-      ctx.fillStyle = 'rgba(255, 210, 160, 0.9)';
-      ctx.font = `${Math.max(10, 12 * zoom)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText(outpost.name, p.x, p.y + r + 18 * zoom);
     }
     return super.render(now);
   }
@@ -413,11 +402,6 @@ export class GateNode extends Node {
         ctx.lineTo(Math.cos(a) * r * 1.18, Math.sin(a) * r * 1.18);
         ctx.stroke();
       }
-      const target = (this.app.state.systemNames || []).find((s) => s.id === g.targetSystemId);
-      ctx.fillStyle = target && target.color ? target.color : 'rgba(200, 180, 255, 0.9)';
-      ctx.font = `${Math.max(9, 11 * zoom)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText('Gate → ' + (target ? target.name : '?'), 0, r + 18 * zoom);
       ctx.restore();
     }
     return super.render(now);
@@ -435,7 +419,6 @@ export class EnemyNode extends Node {
       if (e.x < view.minX - 60 || e.x > view.maxX + 60 || e.y < view.minY - 60 || e.y > view.maxY + 60) continue;
       const p = camera.worldToScreen(e.x, e.y);
       this.#drawEnemyShip(p.x, p.y, e);
-      this.#drawEnemyStatus(p.x, p.y, e);
       if (e.id === this.app.targetEnemyId) {
         this.#drawTargetIndicator(p.x, p.y, e, now);
       }
@@ -517,8 +500,8 @@ export class EnemyNode extends Node {
     ctx.restore();
   }
 
-  // PRIVATE
-  #drawEnemyStatus(sx, sy, e) {
+  // PUBLIC
+  drawEnemyStatus(sx, sy, e, offsetY = 0) {
     const ctx = this.app.ctx;
     const zoom = this.app.camera.zoom;
     const radius = this.#enemySize(e.type) * zoom;
@@ -535,7 +518,7 @@ export class EnemyNode extends Node {
     const hull = liveCombat ? liveCombat.enemyHull : hullMax;
     const name = (enemyDef && enemyDef.name) || e.type;
     const width = Math.max(42, Math.min(84, 66 * zoom));
-    const top = sy - radius - 36;
+    const top = sy - radius - 36 - offsetY;
     const label = Math.max(9, Math.min(12, 10 * zoom));
     const small = Math.max(9, Math.min(11, 10 * zoom));
     const tierName = (e.tierName || e.tier || '').toUpperCase();
@@ -543,6 +526,11 @@ export class EnemyNode extends Node {
     const stats = `🛡${Math.round(shieldMax)}  🧱${Math.round(hullMax)}  ⚔${Math.round(e.dps || 0)}`;
 
     ctx.save();
+    ctx.fillStyle = 'rgba(5, 9, 17, 0.9)';
+    ctx.fillRect(sx - 82, top - 7, 164, 47);
+    ctx.strokeStyle = 'rgba(255, 92, 122, 0.55)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx - 82, top - 7, 164, 47);
     ctx.font = `600 ${label}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -758,9 +746,111 @@ class ActorsNode extends Node {
   // PUBLIC
   constructor(app) {
     super(app);
-    this.add(new EnemyNode());
+    this.enemy = this.add(new EnemyNode());
     this.player = this.add(new Player(app));
     this.ship = this.player.add(new ShipNode(app));
+  }
+}
+
+class WorldLabelsNode extends Node {
+  // PUBLIC
+  render(now) {
+    const app = this.app;
+    const ctx = app.ctx;
+    const camera = app.camera;
+    const zoom = camera.zoom;
+    const world = app.state.world;
+    const labels = [];
+    const add = (entity, text, color, y, kind = 'plain') => {
+      const point = camera.worldToScreen(entity.x, entity.y);
+      if (point.x < -100 || point.x > app.canvas.width + 100 ||
+          point.y < -100 || point.y > app.canvas.height + 100) return;
+      labels.push({ id: entity.id, x: point.x, y, text, color, kind, entity });
+    };
+
+    for (const belt of world.belts) {
+      const asteroids = world.asteroids.filter((asteroid) => asteroid.beltId === belt.id);
+      const remaining = asteroids.reduce((sum, asteroid) => sum + asteroid.amount, 0);
+      const total = asteroids.reduce((sum, asteroid) => sum + (asteroid.maxAmount || asteroid.amount), 0);
+      const percent = total > 0 ? Math.round((remaining / total) * 100) : 0;
+      const point = camera.worldToScreen(belt.x, belt.y);
+      add(belt, `${belt.name} ${percent}%`, '#b4bed2', point.y - 300 * zoom - 6);
+    }
+    for (const planet of world.planets) {
+      const point = camera.worldToScreen(planet.x, planet.y);
+      add(planet, planet.name, planet.color, point.y - planet.size * zoom - 8);
+    }
+    for (const moon of world.moons) {
+      const point = camera.worldToScreen(moon.x, moon.y);
+      add(moon, moon.name, '#b4bed2', point.y - moon.size * zoom - 8);
+    }
+    for (const station of world.stations) {
+      const point = camera.worldToScreen(station.x, station.y);
+      add(station, station.name, '#78c8ff', point.y - 34 * zoom - 8);
+    }
+    for (const outpost of world.outposts || []) {
+      const point = camera.worldToScreen(outpost.x, outpost.y);
+      add(outpost, outpost.name, '#ffd2a0', point.y - 24 * zoom - 8);
+    }
+    for (const gate of world.gates || []) {
+      const target = (app.state.systemNames || []).find((system) => system.id === gate.targetSystemId);
+      const point = camera.worldToScreen(gate.x, gate.y);
+      add(gate, `Gate to ${target ? target.name : 'unknown system'}`,
+        target && target.color ? target.color : '#c8b4ff', point.y - 60 * zoom - 8);
+    }
+    for (const enemy of world.enemies) {
+      if (!enemy.alive) continue;
+      const point = camera.worldToScreen(enemy.x, enemy.y);
+      const radius = enemy.type === 'dread' ? 26 : enemy.type === 'faction' ? 20 : enemy.type === 'gang' ? 16 : 13;
+      add({ ...enemy, labelPoint: point }, '', '', point.y - radius * zoom - 43, 'enemy');
+    }
+
+    labels.sort((left, right) => left.y - right.y || String(left.id).localeCompare(String(right.id)));
+    const placed = [{ x: app.canvas.width / 2 - 30, y: app.canvas.height / 2 - 30, width: 60, height: 60 }];
+    for (const label of labels) {
+      const enemy = label.kind === 'enemy';
+      ctx.font = enemy ? '600 11px sans-serif' : `${Math.max(9, Math.min(12, 11 * zoom))}px sans-serif`;
+      const width = enemy ? 164 : Math.max(34, ctx.measureText(label.text).width + 12);
+      const height = enemy ? 47 : 18;
+      const baseTop = enemy ? label.y : label.y - 14;
+      const x = Math.max(width / 2 + 4, Math.min(app.canvas.width - width / 2 - 4, label.x));
+      let chosenTop = baseTop;
+      let chosenRect = null;
+      for (let attempt = 0; attempt < 18; attempt++) {
+        const top = Math.max(4, baseTop - attempt * (height + 4));
+        const rect = { x: x - width / 2, y: top, width, height };
+        if (!placed.some((other) =>
+          rect.x < other.x + other.width + 4 && rect.x + rect.width + 4 > other.x &&
+          rect.y < other.y + other.height + 3 && rect.y + rect.height + 3 > other.y
+        )) {
+          chosenTop = top;
+          chosenRect = rect;
+          break;
+        }
+      }
+      if (!chosenRect) chosenRect = { x: x - width / 2, y: chosenTop, width, height };
+      placed.push(chosenRect);
+      if (enemy) {
+        const offset = baseTop - chosenTop;
+        app.world.actors.enemy.drawEnemyStatus(x, label.entity.labelPoint.y, label.entity, offset);
+        continue;
+      }
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `${Math.max(9, Math.min(12, 11 * zoom))}px sans-serif`;
+      ctx.fillStyle = 'rgba(5, 9, 17, 0.82)';
+      ctx.fillRect(x - width / 2, chosenTop, width, height);
+      ctx.strokeStyle = `${label.color}70`;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x - width / 2, chosenTop, width, height);
+      ctx.fillStyle = label.color;
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur = 3;
+      ctx.fillText(label.text, x, chosenTop + height / 2);
+      ctx.restore();
+    }
+    return super.render(now);
   }
 }
 
@@ -781,6 +871,7 @@ export class WorldNode extends Node {
     this.system = this.add(new SystemNode(app));
     this.actors = this.add(new ActorsNode(app));
     this.effects = this.add(new WorldEffectsNode(app));
+    this.labels = this.add(new WorldLabelsNode(app));
     this.player = this.actors.player;
     this.ship = this.actors.ship;
   }

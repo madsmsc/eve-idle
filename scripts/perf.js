@@ -105,10 +105,8 @@ async function runServerBenchmarks(baseUrl, app) {
   };
 }
 
-async function runClientScenario(page, durationSeconds, minimapVisible) {
-  const mapToggle = page.getByTestId('overview-toggle');
-  const currentlyVisible = await page.getByTestId('minimap').isVisible();
-  if (currentlyVisible !== minimapVisible) await mapToggle.click();
+async function runClientScenario(page, durationSeconds, overviewMode) {
+  await page.getByTestId(`overview-${overviewMode}`).click();
   await page.waitForTimeout(1000);
   await page.evaluate(() => window.__eve.perf.reset());
   await page.waitForTimeout(durationSeconds * 1000);
@@ -153,8 +151,8 @@ async function runClientBenchmarks(baseUrl, durationSeconds) {
       belts: window.__eve.state.world.belts.length,
     }));
     const scenarios = [];
-    for (const visible of [true, false]) {
-      scenarios.push(await runClientScenario(page, durationSeconds, visible));
+    for (const mode of ['mini', 'none']) {
+      scenarios.push(await runClientScenario(page, durationSeconds, mode));
     }
     return { viewport: '1280x720', world, scenarios, chromium: browser.version() };
   } finally {

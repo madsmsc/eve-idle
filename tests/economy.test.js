@@ -48,10 +48,10 @@ describe('item economy', () => {
     );
   });
 
-  test('higher-tier module and ship blueprints are found from rat loot, not bought from NPCs', () => {
+  test('higher-tier module and ship blueprints are found from enemy loot, not bought from NPCs', () => {
     const state = fresh();
-    assert.match(game.buyBlueprint(state, 'module', 'weapon', 2).error, /rat loot/i);
-    assert.match(game.buyBlueprint(state, 'ship', 'falcon').error, /rat loot/i);
+    assert.match(game.buyBlueprint(state, 'module', 'weapon', 2).error, /enemy loot/i);
+    assert.match(game.buyBlueprint(state, 'ship', 'falcon').error, /enemy loot/i);
 
     const enemy = state.systems.sys_0.enemies[0];
     enemy.type = 'pirate';
@@ -107,7 +107,7 @@ describe('item economy', () => {
     assert.equal(salvaged.state.stats.modulesSalvaged, 1);
   });
 
-  test('rats drop scrap but killing them grants no extra skill points', () => {
+  test('enemies drop scrap but defeating them grants no extra skill points', () => {
     const state = fresh();
     const enemy = state.systems.sys_0.enemies[0];
     enemy.type = 'pirate';

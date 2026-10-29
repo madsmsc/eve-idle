@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth for enemy combat stats and spawn rules. Rats roll from each type's `spawn` rules by system security; missions pick a type and tier by id. Types with an empty `spawn` list never appear as random rats.",
+  "_comment": "Single source of truth for enemy combat stats and spawn rules. Enemies roll from each type's `spawn` rules by system security; missions pick a type and tier by id. Types with an empty `spawn` list never appear randomly.",
   "tiers": {
     "novice":   { "name": "Novice",   "multiplier": 0.5 },
     "standard": { "name": "Standard", "multiplier": 1.0 },

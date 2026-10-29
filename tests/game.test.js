@@ -145,9 +145,9 @@ describe('world generation', () => {
         assert.ok(system.asteroids.filter((a) => a.beltId === belt.id).length >= cfg.ASTEROIDS_PER_FIELD[0]);
       }
       for (const outpost of system.outposts) {
-        const outpostRats = system.enemies.filter((enemy) => enemy.outpostId === outpost.id);
-        assert.ok(outpostRats.length >= 3 && outpostRats.length <= 5);
-        for (const enemy of outpostRats) {
+        const outpostEnemies = system.enemies.filter((enemy) => enemy.outpostId === outpost.id);
+        assert.ok(outpostEnemies.length >= 3 && outpostEnemies.length <= 5);
+        for (const enemy of outpostEnemies) {
           assert.ok(Math.hypot(enemy.x - outpost.x, enemy.y - outpost.y) <= 440);
         }
       }
@@ -216,16 +216,46 @@ describe('world generation', () => {
     }
   });
 
-  test('generated rats stay clustered around the two outposts', () => {
+  test('seeded asteroids remain within their belt and never overlap', () => {
+    for (let seed = 1; seed <= 25; seed++) {
+      const state = fresh(seed);
+      const duplicate = fresh(seed);
+      for (const system of Object.values(state.systems)) {
+        const duplicateSystem = duplicate.systems[system.id];
+        assert.deepEqual(
+          system.asteroids.map(({ x, y, size, seed: asteroidSeed }) => ({ x, y, size, seed: asteroidSeed })),
+          duplicateSystem.asteroids.map(({ x, y, size, seed: asteroidSeed }) => ({ x, y, size, seed: asteroidSeed })),
+        );
+        for (let i = 0; i < system.asteroids.length; i++) {
+          const asteroid = system.asteroids[i];
+          const belt = system.belts.find((item) => item.id === asteroid.beltId);
+          assert.ok(Math.hypot(asteroid.x - belt.x, asteroid.y - belt.y) <= 320);
+          assert.ok(asteroid.x >= 60 && asteroid.x <= system.width - 60);
+          assert.ok(asteroid.y >= 60 && asteroid.y <= system.height - 60);
+          for (let j = i + 1; j < system.asteroids.length; j++) {
+            const other = system.asteroids[j];
+            if (other.beltId !== asteroid.beltId) continue;
+            const minimum = (asteroid.size + other.size) * 1.04 + 4;
+            assert.ok(
+              Math.hypot(asteroid.x - other.x, asteroid.y - other.y) >= minimum,
+              `${system.name}: ${asteroid.id} overlaps ${other.id}`,
+            );
+          }
+        }
+      }
+    }
+  });
+
+  test('generated enemies stay clustered around the two outposts', () => {
     for (let seed = 1; seed <= 15; seed++) {
       const state = fresh(seed);
       for (const system of Object.values(state.systems)) {
         assert.equal(system.outposts.length, 2);
         assert.equal(system.belts.length, 2);
-        for (const rat of system.enemies) {
-          const outpost = system.outposts.find((site) => site.id === rat.outpostId);
-          assert.ok(outpost, `${rat.id} is assigned to an outpost`);
-          assert.ok(Math.hypot(rat.x - outpost.x, rat.y - outpost.y) <= 440);
+        for (const enemy of system.enemies) {
+          const outpost = system.outposts.find((site) => site.id === enemy.outpostId);
+          assert.ok(outpost, `${enemy.id} is assigned to an outpost`);
+          assert.ok(Math.hypot(enemy.x - outpost.x, enemy.y - outpost.y) <= 440);
         }
       }
     }
@@ -310,7 +340,7 @@ describe('blueprints and materials', () => {
   test('buyBlueprint rejects unknown blueprints, unsold blueprints and a bad tier', () => {
     const s = fresh();
     assert.ok(game.buyBlueprint(s, 'module', 'weapon', 9).error);
-    assert.ok(game.buyBlueprint(s, 'ship', 'brutix').error, 'tier-4 blueprints are rat loot only');
+    assert.ok(game.buyBlueprint(s, 'ship', 'brutix').error, 'tier-4 blueprints are enemy loot only');
     assert.ok(game.buyBlueprint(s, 'minerals', 'iron').error);
   });
 
@@ -359,7 +389,7 @@ describe('modes', () => {
     assert.equal(s.isk, undefined);
     assert.equal(s.storage.items.iron, 18);
     assert.equal(s.storage.items.scrap, 12);
-    assert.deepEqual(s.mission, { active: null, ready: false, offered: null, step: 0, flags: {}, completed: [] });
+    assert.deepEqual(s.mission, { active: null, ready: false, offered: null, flags: {}, completed: [] });
   });
   test('story mode keeps its mode through reset', () => {
     const s = story();
@@ -493,6 +523,10 @@ describe('missions (storyline)', () => {
   test('m7 crafting objective counts each target recipe', () => {
     let s = story();
     game.startMission(s, 'm7');
+    assert.deepEqual(game.view(s).mission.objectives, [
+      { label: 'Craft Weapon I', progress: 0, target: 1 },
+      { label: 'Craft Shield Extender II', progress: 0, target: 1 },
+    ]);
     assert.equal(s.ships[0].fitting.cargo[0], 3, 'm7 grant fits a cargo expander');
     s.skillPoints = 1000;
     s = game.trainSkill(s, 'shieldUpgrades').state; // crafting a tier-II module needs the skill
@@ -635,6 +669,24 @@ describe('missions (storyline)', () => {
 });
 
 describe('spatial mining', () => {
+  test('autopilot reduces mining yield, including the drone contribution, to one quarter', () => {
+    const manual = fresh();
+    atAsteroid(manual);
+    manual.drones.mining = [1];
+    const manualResult = game.mine(manual, T0 + 1000).state;
+    const manualYield = manualResult.stats.totalMineralsMined;
+
+    const automatic = fresh();
+    atAsteroid(automatic);
+    automatic.drones.mining = [1];
+    automatic.autoPilotMode = 'mine';
+    const automaticResult = game.mine(automatic, T0 + 1000).state;
+    const automaticYield = automaticResult.stats.totalMineralsMined;
+
+    assert.equal(game.autoEfficiency(automatic), cfg.AUTOPILOT_EFFICIENCY);
+    assert.ok(Math.abs(automaticYield / manualYield - cfg.AUTOPILOT_EFFICIENCY) < 1e-9);
+  });
+
   test('manual mine action extracts one cycle from an asteroid in range', () => {
     const s = fresh();
     const a = atAsteroid(s);
@@ -664,7 +716,7 @@ describe('spatial mining', () => {
     const s = fresh();
     const a = atAsteroid(s);
     s.autoPilotMode = 'mine';
-    const s2 = game.tick(s, T0 + 1000);
+    const s2 = game.tick(s, T0 + 5000);
     assert.ok(s2.stats.totalMineralsMined > 0);
     assert.ok(s2.automationLog.some((event) => /^Mined [1-9]\d* ore$/.test(event.message)));
     assert.ok(!s2.automationLog.some((event) => event.message === 'Mined 0 ore'));
@@ -1096,7 +1148,7 @@ describe('engage + combat', () => {
     assert.equal(r.state.combat, null, 'combat should be over');
     assert.equal(r.state.ships.length, 1, 'ship should survive');
     assert.equal(r.state.ships[0].cargo.scrap, scrapBefore, 'no reward for a disengage');
-    assert.equal(sys(r.state).enemies.find((e) => e.id === enemyId).alive, true, 'rat escapes');
+    assert.equal(sys(r.state).enemies.find((e) => e.id === enemyId).alive, true, 'enemy escapes');
     assert.equal(r.state.combatLog[0].disengaged, true);
     assert.equal(r.state.combatLog[0].won, false);
   });
@@ -1139,14 +1191,50 @@ describe('range free-fire window', () => {
     assert.equal(c.enemyRangeDelay, 2 + cfg.MODULES.range.tiers[0].bonus);
   });
 
-  test('a normal rat has no free-fire window', () => {
+  test('a normal enemy has no free-fire window', () => {
     const s = engageEnemyOfType(fresh(), 'pirate');
     assert.equal(s.combat.enemyRangeDelay, 0);
   });
 });
 
+describe('autopilot efficiency', () => {
+  test('reduces movement acceleration and speed without changing the catalog caps', () => {
+    const state = fresh();
+    const ship = state.ships[0];
+    const station = sys(state).stations[0];
+    station.x = 7000;
+    station.y = 7000;
+    openSpace(state);
+    ship.cargo.iron = game.cargoCapacity(state);
+    state.autoPilotMode = 'mine';
+
+    const accelerated = game.tick(state, T0 + 50).ships[0];
+    assert.ok(Math.hypot(accelerated.vx, accelerated.vy) <=
+      cfg.MAX_ACCELERATION * cfg.AUTOPILOT_EFFICIENCY * 0.05 + 0.001);
+    const cruising = game.tick(state, T0 + 10_000).ships[0];
+    assert.ok(Math.hypot(cruising.vx, cruising.vy) <=
+      cfg.MAX_SPEED * cfg.AUTOPILOT_EFFICIENCY + 0.001);
+    assert.ok(Math.hypot(cruising.vx, cruising.vy) > 250);
+    assert.equal(cfg.MAX_SPEED, 1200);
+    assert.equal(cfg.MAX_ACCELERATION, 180);
+  });
+
+  test('reduces player and drone combat damage when combat starts under autopilot', () => {
+    const manualState = fresh();
+    manualState.drones.combat = [1];
+    const manual = setupFight(manualState, 'brutix', 'pirate');
+    const automaticState = fresh();
+    automaticState.autoPilotMode = 'mine';
+    automaticState.drones.combat = [1];
+    const automatic = setupFight(automaticState, 'brutix', 'pirate');
+    assert.ok(Math.abs(
+      automatic.combat.playerDps / manual.combat.playerDps - cfg.AUTOPILOT_EFFICIENCY,
+    ) < 1e-9);
+  });
+});
+
 describe('autopilot target selection', () => {
-  test('hunt selects a viable standard pirate and launches from station', () => {
+  test('fight selects a viable standard pirate and launches from station', () => {
     const state = fresh();
     const system = sys(state);
     for (const enemy of system.enemies) {
@@ -1154,17 +1242,17 @@ describe('autopilot target selection', () => {
       enemy.tier = 'standard';
       enemy.alive = true;
     }
-    state.autoPilotMode = 'hunt';
+    state.autoPilotMode = 'fight';
 
     const after = game.tick(state, T0 + 1000);
     const ship = after.ships.find((item) => item.id === after.activeShipId);
 
-    assert.equal(after.autoPilotMode, 'hunt');
+    assert.equal(after.autoPilotMode, 'fight');
     assert.equal(game.isDocked(after), false);
     assert.ok(ship.navigation && ship.navigation.targetId);
   });
 
-  test('hunt automatically engages a viable target when already in range', () => {
+  test('fight automatically engages a viable target when already in range', () => {
     const state = fresh();
     const system = sys(state);
     const ship = state.ships.find((item) => item.id === state.activeShipId);
@@ -1177,12 +1265,49 @@ describe('autopilot target selection', () => {
     ship.y = enemy.y;
     ship.dockedStationId = null;
     ship.dockTargetId = null;
-    state.autoPilotMode = 'hunt';
+    state.autoPilotMode = 'fight';
 
     const after = game.tick(state, T0 + 1000);
 
-    assert.equal(after.autoPilotMode, 'hunt');
+    assert.equal(after.autoPilotMode, 'fight');
     assert.equal(after.combat.enemyId, enemy.id);
+  });
+
+  test('autopilot waits for docking, deposit animation, and post-deposit delay', () => {
+    const state = atStation(fresh());
+    const ship = state.ships.find((item) => item.id === state.activeShipId);
+    state.autoPilotMode = 'mine';
+    ship.cargo.iron = 50;
+
+    const docked = game.tick(state, T0 + 1000);
+    assert.deepEqual(docked.autoPilotSequence, { phase: 'dock_wait', startedAt: null });
+    const acknowledged = game.startAutopilotDockWait(docked, T0 + 1000);
+    const waiting = game.tick(acknowledged.state, T0 + 1000 + cfg.AUTOPILOT_DOCK_WAIT_MS - 1);
+    assert.equal(waiting.autoPilotSequence.phase, 'dock_wait');
+
+    const depositReady = game.tick(
+      acknowledged.state,
+      T0 + 1000 + cfg.AUTOPILOT_DOCK_WAIT_MS + 1500,
+    );
+    assert.equal(depositReady.autoPilotSequence.phase, 'deposit');
+    assert.equal(game.cargoUsed(depositReady), 50);
+
+    const deposit = game.depositAll(depositReady);
+    const deposited = game.completeAutopilotDeposit(deposit.state, T0 + 4000).state;
+    assert.equal(deposited.autoPilotSequence.phase, 'launch_wait');
+    assert.equal(game.cargoUsed(deposited), 0);
+
+    const stillDocked = game.tick(
+      deposited,
+      T0 + 4000 + cfg.AUTOPILOT_LAUNCH_WAIT_MS - 1,
+    );
+    assert.equal(game.isDocked(stillDocked), true);
+    const launched = game.tick(
+      deposited,
+      T0 + 4000 + cfg.AUTOPILOT_LAUNCH_WAIT_MS + 1500,
+    );
+    assert.equal(game.isDocked(launched), false);
+    assert.equal(launched.autoPilotSequence, undefined);
   });
 
   test('stops in space instead of docking when no targets remain and cargo is empty', () => {
@@ -1294,7 +1419,7 @@ describe('server-authoritative target orbit', () => {
     assert.ok(speedBeforeCancel - speedAfterCancel <= cfg.MAX_ACCELERATION * 0.5 + 0.001);
   });
 
-  test('orbits a selected rat and continues orbiting during combat', () => {
+  test('orbits a selected enemy and continues orbiting during combat', () => {
     const state = fresh();
     const enemy = sys(state).enemies.find((item) => item.alive);
     const ship = placeUndockedShip(state, enemy.x + 150, enemy.y);
@@ -1604,16 +1729,16 @@ describe('warp', () => {
     assert.ok(Math.abs(out.y - rocks[1].y) < 1e-6);
   });
 
-  test('warps to a station and to a rat', () => {
+  test('warps to a station and to an enemy', () => {
     const s = fresh();
     const st = sys(s).stations[0];
     let r = game.warp(s, st.id);
     assert.ok(!r.error);
     assert.ok(Math.abs(r.state.ships[0].x - st.x) < 1e-6);
-    const rat = sys(s).enemies[0];
-    r = game.warp(s, rat.id);
+    const enemy = sys(s).enemies[0];
+    r = game.warp(s, enemy.id);
     assert.ok(!r.error);
-    assert.ok(Math.abs(r.state.ships[0].x - rat.x) < 1e-6);
+    assert.ok(Math.abs(r.state.ships[0].x - enemy.x) < 1e-6);
   });
 
   test('rejects an unknown warp target', () => {
@@ -1851,6 +1976,30 @@ describe('repeatable agent missions', () => {
     assert.equal(mission.progress, 30);
     assert.equal(migrated.agentMission, undefined);
   });
+
+  test('legacy autopilot and agent mission values migrate without losing progress', () => {
+    const state = fresh();
+    state.version = 16;
+    state.autoPilotMode = 'mine_hunt';
+    state.agentMissions = {
+      agent_1: {
+        completed: 3,
+        lastMissionKey: 'pirate-hunt',
+        active: { key: 'pirate-hunt', name: 'Pirate Hunt', objective: 'Destroy 3 rats', progress: 2 },
+      },
+    };
+
+    const migrated = game.migrateTerminology(state);
+
+    assert.equal(migrated.version, cfg.STATE_VERSION);
+    assert.equal(migrated.autoPilotMode, 'mine_fight');
+    assert.equal(migrated.agentMissions.agent_1.completed, 3);
+    assert.equal(migrated.agentMissions.agent_1.lastMissionKey, 'pirate-patrol');
+    assert.equal(migrated.agentMissions.agent_1.active.key, 'pirate-patrol');
+    assert.equal(migrated.agentMissions.agent_1.active.name, 'Pirate Patrol');
+    assert.equal(migrated.agentMissions.agent_1.active.progress, 2);
+    assert.equal(migrated.agentMissions.agent_1.active.objective, 'Destroy 3 Enemies');
+  });
 });
 
 describe('loot drops', () => {
@@ -2035,7 +2184,7 @@ describe('enemy tiers and security rosters', () => {
     }
   });
 
-  test('every rat in a system comes from that security level\'s roster', () => {
+  test('every enemy in a system comes from that security level\'s roster', () => {
     const expected = {
       sys_0: { types: ['pirate'], tiers: ['novice', 'standard'] },
       sys_1: { types: ['pirate', 'gang'], tiers: ['novice', 'standard', 'elite'] },
@@ -2064,7 +2213,7 @@ describe('enemy tiers and security rosters', () => {
       let n = 0;
       const rng = () => ((n = (n + 0.137) % 1), n);
       for (let i = 0; i < 20; i++) {
-        const ambusher = game.rollRat(s.systems[id].security, rng);
+        const ambusher = game.rollEnemy(s.systems[id].security, rng);
         assert.ok(allowed.has(`${ambusher.type}:${ambusher.tier}`));
       }
     }
@@ -2089,7 +2238,7 @@ describe('enemy tiers and security rosters', () => {
     assert.ok(game.ambushChance(s, high.id) < game.ambushChance(s, low.id));
   });
 
-  test('a starter Rifter beats every rat that can spawn in Jita', () => {
+  test('a starter Rifter beats every enemy that can spawn in Jita', () => {
     for (const row of cfg.spawnTable(sys(fresh()).security)) {
       const state = fresh();
       const enemy = sys(state).enemies[0];

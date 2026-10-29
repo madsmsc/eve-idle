@@ -108,6 +108,8 @@ test('renders the world, minimap and HUD', async ({ page }) => {
   await expect(page.getByTestId('context-state')).toHaveText(/\S/);
   const minimap = page.locator('#minimap');
   await expect(minimap).toBeVisible();
+  await expect.poll(() => minimap.evaluate((canvas) => getComputedStyle(canvas).backgroundColor))
+    .toBe('rgba(0, 0, 0, 0)');
   await expect.poll(() => minimap.evaluate((canvas) => {
     const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
     const colors = new Set();
@@ -155,11 +157,17 @@ test('offline report is modal above game UI and blocks game actions until contin
 
 test('space status bars persist, docked status is hidden, and shortcuts are labeled', async ({ page }) => {
   await expect(page.getByTestId('ship-status')).toBeHidden();
+  await expect(page.locator('.system-kicker')).toHaveText('SYSTEM');
+  await expect(page.getByTestId('system-name')).toHaveText(/\S/);
+  await expect(page.getByTestId('system-security')).toHaveText(/\d+\.\d/);
+  await expect(page.getByTestId('mission-objectives')).toContainText('No active mission');
   await expect(page.locator('#controls-hint')).toHaveCount(0);
   await expect(page.getByTestId('auto-mine')).toHaveAttribute('data-shortcut', 'A');
-  await expect(page.getByTestId('navigate-belt')).toHaveAttribute('data-shortcut', 'B');
+  await expect(page.getByTestId('navigate-belt')).not.toHaveAttribute('data-shortcut');
   await expect(page.getByTestId('navigate-station')).toHaveAttribute('data-shortcut', 'S');
-  await expect(page.getByTestId('navigate-rat')).toHaveAttribute('data-shortcut', 'R');
+  await expect(page.getByTestId('navigate-enemy')).toHaveAttribute('data-shortcut', 'R');
+  await expect(page.getByTestId('auto-fight')).toHaveAttribute('data-shortcut', 'F');
+  await expect(page.getByTestId('auto-both')).toHaveAttribute('data-shortcut', 'B');
   await expect(page.getByTestId('engage-btn')).toHaveAttribute('data-shortcut', 'E');
   await expect(page.getByTestId('mine-btn')).toHaveAttribute('data-shortcut', 'M');
   await expect(page.getByTestId('gate-jump')).toHaveAttribute('data-shortcut', 'J');
@@ -202,6 +210,10 @@ test('space status bars persist, docked status is hidden, and shortcuts are labe
   await expect(page.getByTestId('auto-mine')).toHaveClass(/auto-mode-selected/);
   await page.keyboard.press('a');
   await expect(page.getByTestId('auto-mine')).not.toHaveClass(/auto-mode-selected/);
+  await page.keyboard.press('f');
+  await expect(page.getByTestId('auto-fight')).toHaveClass(/auto-mode-selected/);
+  await page.keyboard.press('b');
+  await expect(page.getByTestId('auto-both')).toHaveClass(/auto-mode-selected/);
   await page.evaluate(() => window.__eve.setAutoPilot(false));
   await expect(page.getByTestId('auto-mine')).not.toHaveClass(/auto-mode-selected/);
 });
@@ -211,8 +223,11 @@ test('right-side Actions and Auto panels stay visible beside ship status', async
   await expect(page.getByTestId('navigation-actions')).toBeVisible();
   await expect(page.getByTestId('actions-panel')).toBeVisible();
   await expect(page.getByTestId('auto-panel')).toBeVisible();
-  await expect(page.getByTestId('engage-btn')).toBeHidden();
-  for (const testId of ['navigate-belt', 'navigate-station', 'navigate-rat', 'mine-btn', 'auto-mine', 'auto-mine-hunt', 'auto-hunt']) {
+  await expect(page.getByTestId('engage-btn')).toBeVisible();
+  await expect(page.getByTestId('engage-btn')).toBeDisabled();
+  await expect(page.getByTestId('gate-jump')).toBeVisible();
+  await expect(page.getByTestId('gate-jump')).toBeDisabled();
+  for (const testId of ['navigate-belt', 'navigate-station', 'navigate-enemy', 'mine-btn', 'auto-mine', 'auto-both', 'auto-fight']) {
     await expect(page.getByTestId(testId)).toBeVisible();
   }
   const layout = await page.evaluate(() => {
@@ -276,17 +291,40 @@ test('right-side Actions and Auto panels stay visible beside ship status', async
 
   await expect(page.getByTestId('minimap')).toBeVisible();
   const minimapBounds = await page.getByTestId('minimap').boundingBox();
-  const toggleBounds = await page.getByTestId('overview-toggle').boundingBox();
-  expect(toggleBounds.x + toggleBounds.width).toBeCloseTo(minimapBounds.x + minimapBounds.width - 4, 0);
-  expect(toggleBounds.y).toBeCloseTo(minimapBounds.y + 4, 0);
-  await expect(page.getByTestId('overview-toggle')).toHaveText('X');
-  await page.getByTestId('overview-toggle').click();
+  await expect(page.getByTestId('overview-edge')).toBeVisible();
+  await expect(page.getByTestId('overview-mini')).toHaveAttribute('aria-pressed', 'true');
+  const modeButtonStyle = await page.getByTestId('overview-mini').evaluate((button) => {
+    const style = getComputedStyle(button);
+    return { padding: style.padding, fontSize: style.fontSize };
+  });
+  expect(modeButtonStyle).toEqual({ padding: '4.5px 8px', fontSize: '6.3px' });
+  await page.getByTestId('overview-edge').click();
   await expect(page.getByTestId('minimap')).toBeHidden();
-  await expect(page.getByTestId('overview-toggle')).toHaveText('V');
-  await expect(page.getByTestId('overview-toggle')).toHaveAttribute('aria-label', 'Show minimap');
-  await page.keyboard.press('m');
+  await expect(page.getByTestId('edge-map')).toBeVisible();
+  await expect(page.getByTestId('edge-map').locator('.edge-marker').first()).toBeVisible();
+  await expect(page.getByTestId('edge-map').locator('.edge-marker-distance').first()).toHaveText(/\d/);
+  expect(await page.locator('.hud-tl').evaluate((element) => {
+    const { left, top } = element.getBoundingClientRect();
+    return left >= 42 && top >= 42;
+  })).toBe(true);
+  expect(await page.locator('.edge-marker-group').first().evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return Math.min(rect.left, rect.top, innerWidth - rect.right, innerHeight - rect.bottom) <= 1;
+  })).toBe(true);
+  await page.getByTestId('overview-none').click();
   await expect(page.getByTestId('minimap')).toBeHidden();
-  await expect(page.getByTestId('overview-toggle')).toHaveText('V');
+  await expect(page.getByTestId('edge-map')).toBeHidden();
+  await expect(page.getByTestId('overview-none')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('body')).not.toHaveClass(/edge-overview/);
+  await page.getByTestId('overview-mini').click();
+  await expect(page.getByTestId('minimap')).toBeVisible();
+  await expect(page.getByTestId('edge-map')).toBeHidden();
+  await page.getByTestId('overview-none').click();
+  await page.reload();
+  await page.getByTestId('mode-demo').click();
+  await expect(page.getByTestId('context-state')).toHaveText(/\S/, { timeout: 15000 });
+  await expect(page.getByTestId('overview-none')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('minimap')).toBeHidden();
 });
 
 test('cargo shows the hold alone and fitting is a separate ship menu', async ({ page }) => {
@@ -451,7 +489,7 @@ test('overview map sets a flight path and empty world clicks leave it unchanged'
   const target = { x: 0.72 * cfg.WORLD_SIZE, y: 0.28 * cfg.WORLD_SIZE };
   await expect.poll(async () => {
     const destination = await page.evaluate(() => window.__eve.getDestination());
-    return Math.hypot(destination.x - target.x, destination.y - target.y);
+    return destination ? Math.hypot(destination.x - target.x, destination.y - target.y) : Infinity;
   }).toBeLessThan(50);
   const destinationBeforeEmptyClick = await page.evaluate(() => window.__eve.getDestination());
   await page.waitForTimeout(700);
@@ -502,6 +540,58 @@ test('system HUD shows the system name and color', async ({ page }) => {
   }).toPass({ timeout: 5000 });
 });
 
+test('autopilot highlights its staged deposit while manual deposits remain immediate', async ({ page }) => {
+  const withdrawn = await page.request.post('/api/withdraw', { data: { mineral: 'scrap', amount: 1 } });
+  expect(withdrawn.ok(), await withdrawn.text()).toBe(true);
+  await page.reload();
+  await page.getByTestId('mode-demo').click();
+  await expect(page.getByTestId('context-state')).toHaveText(/\S/, { timeout: 15000 });
+  const catalogResponse = await page.request.get('/api/catalog');
+  expect((await catalogResponse.json()).constants.autopilotDockWaitMs).toBe(2000);
+
+  const depositButton = page.getByTestId('inv-deposit-all');
+  await expect(depositButton).toBeVisible();
+  await expect(depositButton).toBeEnabled();
+  await expect(depositButton).not.toHaveClass(/autopilot-action-highlight/);
+
+  const storageBefore = (await getState(page)).storage.items.scrap;
+  await depositButton.click();
+  await expect.poll(async () => (await getState(page)).cargoUsed).toBe(0);
+  expect((await getState(page)).storage.items.scrap).toBe(storageBefore + 1);
+  await expect(depositButton).not.toHaveClass(/autopilot-action-highlight/);
+
+  await page.route('**/api/tick', (route) => route.abort());
+  await page.route('**/api/deposit-all', (route) => route.abort());
+  const depositRequest = page.waitForRequest((request) =>
+    request.url().endsWith('/api/deposit-all') && request.method() === 'POST'
+  );
+  await page.evaluate(() => {
+    const state = structuredClone(window.__eve.state);
+    state.autoPilotMode = 'mine';
+    state.autoPilotSequence = { phase: 'deposit', startedAt: Date.now() };
+    window.__eve.applyServerState(state);
+  });
+
+  await expect(depositButton).toHaveClass(/autopilot-action-highlight/);
+  expect(await depositButton.evaluate((button) =>
+    getComputedStyle(button).getPropertyValue('--autopilot-action-duration')
+  )).toBe('1200ms');
+  await depositRequest;
+  await expect(depositButton).not.toHaveClass(/autopilot-action-highlight/);
+
+  const launchButton = page.getByTestId('station-launch');
+  await page.evaluate(() => {
+    const state = structuredClone(window.__eve.state);
+    state.autoPilotSequence = { phase: 'launch_wait', startedAt: Date.now() };
+    window.__eve.applyServerState(state);
+  });
+  await expect(launchButton).toHaveClass(/autopilot-action-highlight/);
+  expect(await launchButton.evaluate((button) =>
+    getComputedStyle(button).getPropertyValue('--autopilot-action-duration')
+  )).toBe('2000ms');
+  await expect(launchButton).not.toHaveClass(/autopilot-action-highlight/, { timeout: 5000 });
+});
+
 test('navigation buttons route the ship to belts, hostiles, and stations', async ({ page }) => {
   await undock(page);
   let state = await getState(page);
@@ -517,13 +607,13 @@ test('navigation buttons route the ship to belts, hostiles, and stations', async
   expect(dist(moving, rock)).toBeLessThan(dist(start, rock));
 
   state = await getState(page);
-  const rat = nearest(state.world.enemies.filter((enemy) => enemy.alive), moving);
-  await page.getByTestId('navigate-rat').click();
-  await expect.poll(() => page.evaluate(() => window.__eve.getDestination())).toMatchObject({ x: rat.x, y: rat.y });
-  const ratRouteStart = await page.evaluate(() => window.__eve.getShip());
+  const enemy = nearest(state.world.enemies.filter((item) => item.alive), moving);
+  await page.getByTestId('navigate-enemy').click();
+  await expect.poll(() => page.evaluate(() => window.__eve.getDestination())).toMatchObject({ x: enemy.x, y: enemy.y });
+  const enemyRouteStart = await page.evaluate(() => window.__eve.getShip());
   await page.waitForTimeout(700);
   moving = await page.evaluate(() => window.__eve.getShip());
-  expect(dist(moving, ratRouteStart)).toBeGreaterThan(10);
+  expect(dist(moving, enemyRouteStart)).toBeGreaterThan(10);
 
   state = await getState(page);
   const station = nearest(state.world.stations, moving);
@@ -575,6 +665,7 @@ test('manual mining: fly to an asteroid, press M, and cargo grows', async ({ pag
 });
 
 test('belt mining grows cargo and auto-recalls on a full hold @slow', async ({ page }) => {
+  test.setTimeout(180000);
   await undock(page);
   await page.getByTestId('auto-mine').click();
   const st = await getState(page);
@@ -587,8 +678,8 @@ test('belt mining grows cargo and auto-recalls on a full hold @slow', async ({ p
     expect(Object.values(s.minerals).reduce((total, amount) => total + amount, 0)).toBeGreaterThan(0);
   }).toPass({ timeout: 10000 });
 
-  // The rifter's small hold fills in ~10s; once full the ship turns for home.
-  await expect(page.getByTestId('context')).toContainText(/Cargo full/i, { timeout: 45000 });
+  // Autopilot mining efficiency means the starter hold needs about two minutes to fill.
+  await expect(page.getByTestId('context')).toContainText(/Cargo full/i, { timeout: 150000 });
 });
 
 test('combat engages and resolves as a win or loss @slow', async ({ page }) => {
@@ -627,7 +718,7 @@ test('combat engages and resolves as a win or loss @slow', async ({ page }) => {
 });
 
 test('death screen shows the killmail when a ship is destroyed', async ({ page }) => {
-  // Jita only spawns rats the starter ship beats, so a real loss isn't possible
+  // Jita only spawns enemies the starter ship beats, so a real loss isn't possible
   // here (the server-side loss path is covered in game.test.js); drive the overlay.
   await page.evaluate(() => window.__eve.showDeath({ ship: 'Rifter', enemy: 'Faction Destroyer', system: 'Jita', cargoLost: 5, insurance: 0 }));
   await expect(page.getByTestId('death-screen')).toBeVisible();
@@ -641,7 +732,7 @@ test('death screen shows the killmail when a ship is destroyed', async ({ page }
 test('in-fight actions: boost costs scrap, disengage bails out and keeps the ship', async ({ page }) => {
   // Boost and overload consume one scrap from the cargo hold; the demo save
   // starts with scrap in quantum storage, so withdraw a unit before undocking.
-  const withdrawn = await page.request.post('/api/withdraw', { mineral: 'scrap', amount: 1 });
+  const withdrawn = await page.request.post('/api/withdraw', { data: { mineral: 'scrap', amount: 1 } });
   expect(withdrawn.ok(), await withdrawn.text()).toBe(true);
   await undock(page);
   const st = await getState(page);
@@ -800,22 +891,22 @@ test('mission and achievement completions show temporary celebration toasts', as
     next.mission = { ...next.mission, active: 'm2', title: 'Help the Buddies', completed: ['m1'] };
     next.agentMission = {
       ...next.agentMission,
-      completed: [{ id: 'agent-test:1', name: 'Pirate Hunt', agentName: 'Ari Venn' }],
+      completed: [{ id: 'agent-test:1', name: 'Pirate Patrol', agentName: 'Ari Venn' }],
     };
     next.achievements[0].unlocked = true;
     window.__eve.applyServerState(next);
   });
   const toasts = page.getByTestId('celebration-toast');
   await expect(toasts).toHaveCount(3);
-  await expect(page.getByTestId('celebration-toast-label')).toHaveText([
+  expect(await page.getByTestId('celebration-toast-label').allTextContents()).toEqual([
     'Achievement Unlocked',
     'Mission Complete',
     'Mission Complete',
   ]);
-  await expect(page.getByTestId('celebration-toast-title')).toHaveText([
+  expect(await page.getByTestId('celebration-toast-title').allTextContents()).toEqual([
     'Prospector',
     'Under Attack',
-    'Pirate Hunt',
+    'Pirate Patrol · Ari Venn',
   ]);
   await expect(toasts).toHaveCount(0, { timeout: 5000 });
 });
@@ -876,6 +967,11 @@ test('station services overlay a blurred world capture and launching returns to 
   const station = initial.world.stations[0];
   const asteroid = initial.world.asteroids[0];
   await page.evaluate(({ x, y }) => window.__eve.warp(null, { x, y }), asteroid);
+  await expect.poll(async () => (await getState(page)).miningTargetId).toBeTruthy();
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if ((await getState(page)).cargoFull) break;
+    await manualMine(page);
+  }
   await expect.poll(async () => (await getState(page)).cargoFull, { timeout: 30000 }).toBe(true);
   await page.evaluate((id) => window.__eve.warp(id), station.id);
   await expect.poll(async () => (await getState(page)).docked, { timeout: 5000 }).toBe(true);
@@ -949,8 +1045,9 @@ test('the same left-side menu remains available docked and in space', async ({ p
   const spaceMenu = await page.getByTestId('left-menu').boundingBox();
   expect(spaceMenu.x).toBeCloseTo(initialMenu.x, 0);
   expect(spaceMenu.width).toBeCloseTo(initialMenu.width, 0);
-  await expect(page.getByTestId('menu-ship-tree')).toBeDisabled();
-  await expect(page.getByTestId('hangar')).toBeHidden();
+  await expect(page.getByTestId('menu-ship-tree')).toBeEnabled();
+  await expect(page.getByTestId('hangar')).toBeVisible();
+  await expect(page.getByTestId('service-readonly-notice')).toBeVisible();
   await page.getByTestId('menu-cargo').click();
   await expect(page.getByTestId('inventory')).toBeVisible();
 });
@@ -1149,7 +1246,8 @@ test('auto-pilot modes are selected directly and the active mode toggles off', a
   await undock(page);
   await page.getByTestId('auto-mine').click();
   await expect(page.getByTestId('auto-mine')).toHaveClass(/auto-mode-selected/);
-  await expect(page.getByTestId('auto-mine-hunt')).not.toHaveClass(/auto-mode-selected/);
+  await expect(page.getByTestId('auto-banner')).toContainText('1/4 capacity');
+  await expect(page.getByTestId('auto-both')).not.toHaveClass(/auto-mode-selected/);
   await expect(page.getByTestId('auto-log')).toHaveCount(0);
   await expect(page.getByTestId('auto-log-panel')).toHaveCount(0);
   // Auto flies to the nearest belt, where it starts mining.
@@ -1157,11 +1255,12 @@ test('auto-pilot modes are selected directly and the active mode toggles off', a
     .toBeGreaterThan(0);
   await expect(page.getByTestId('context')).toContainText('Mining', { timeout: 30000 });
   await expect(page.getByTestId('context-state')).toContainText('Mining', { timeout: 5000 });
-  await page.getByTestId('auto-mine-hunt').click();
-  await expect(page.getByTestId('auto-mine-hunt')).toHaveClass(/auto-mode-selected/);
+  await page.getByTestId('auto-both').click();
+  await expect(page.getByTestId('auto-both')).toHaveClass(/auto-mode-selected/);
   await expect(page.getByTestId('auto-mine')).not.toHaveClass(/auto-mode-selected/);
-  await page.getByTestId('auto-mine-hunt').click();
-  await expect(page.getByTestId('auto-mine-hunt')).not.toHaveClass(/auto-mode-selected/);
+  await page.getByTestId('auto-both').click();
+  await expect(page.getByTestId('auto-both')).not.toHaveClass(/auto-mode-selected/);
+  await expect(page.getByTestId('auto-banner')).toBeHidden();
 });
 
 test('mode menu: START boots the storyline with m1, DEMO resumes the sandbox', async ({ page }) => {
@@ -1199,12 +1298,14 @@ test('storyline: pilot training from rookie to certification (m1-m9) unlocks the
   // m1 - Under Attack: the handed-out weapon beats the attacker, then a docked
   // hangar turn-in offers m2.
   await expect(page.getByTestId('mission-tracker')).toContainText('Under Attack');
+  await expect(page.getByTestId('mission-objectives')).toContainText('Destroy the attacker frigate');
   await expect(page.getByTestId('mission-dialogue')).toBeVisible();
-  await page.getByTestId('mission-continue').click();
+  await continueMission(page);
   await expect(page.getByTestId('mission-dialogue')).toBeHidden();
   await killMissionEnemy(page, 'attacker');
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
   await turnInAndAccept(page);
+  await launchFromStation(page);
 
   // m2 - Help the Buddies: three short-range frigates; the first fight shows the
   // free-fire window the Range Amplifier grants.
@@ -1216,6 +1317,7 @@ test('storyline: pilot training from rookie to certification (m1-m9) unlocks the
   await killMissionEnemy(page, 'shortrange');
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
   await turnInAndAccept(page);
+  await launchFromStation(page);
 
   // m3 - Last Stand: the unwinnable wave destroys the ship (scripted death).
   await expect(page.getByTestId('mission-tracker')).toContainText('Last Stand');
@@ -1234,13 +1336,14 @@ test('storyline: pilot training from rookie to certification (m1-m9) unlocks the
   // m4 - A New Clone: the replacement frigate waits outside the dock; warp home,
   // dock, and the hangar turn-in hands off to m5.
   await expect(page.getByTestId('mission-tracker')).toContainText('A New Clone');
-  await page.getByTestId('mission-continue').click();
+  await continueMission(page);
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.mission.ready === true);
   await turnInAndAccept(page);
+  await launchFromStation(page);
 
   // m5 - Mining 101: warp to a belt and mine 40 ore.
   await expect(page.getByTestId('mission-tracker')).toContainText('Mining 101');
-  await page.getByTestId('mission-continue').click();
+  await continueMission(page);
   const belt = (await getState(page)).world.belts[0];
   await page.evaluate((id) => window.__eve.warp(id), belt.id);
   await expect(page.getByTestId('mine-btn')).toBeEnabled({ timeout: 30000 });
@@ -1253,10 +1356,11 @@ test('storyline: pilot training from rookie to certification (m1-m9) unlocks the
   }).toPass({ timeout: 10000 });
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
   await turnInAndAccept(page);
+  await launchFromStation(page);
 
   // m6 - Rogue Drones: destroy the drone hub and earn a mining drone.
   await expect(page.getByTestId('mission-tracker')).toContainText('Rogue Drones');
-  await page.getByTestId('mission-continue').click();
+  await continueMission(page);
   await killMissionEnemy(page, 'dronhub');
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
   await turnInAndAccept(page);
@@ -1264,7 +1368,7 @@ test('storyline: pilot training from rookie to certification (m1-m9) unlocks the
   // m7 - The Forge: the grant ships both recipes' ore, so train the shield skill
   // and craft both modules in the hangar.
   await expect(page.getByTestId('mission-tracker')).toContainText('The Forge');
-  await page.getByTestId('mission-continue').click();
+  await continueMission(page);
   await page.getByTestId('menu-skills').click();
   await expect(page.getByTestId('skill-shieldUpgrades')).toBeEnabled({ timeout: 30000 });
   await page.getByTestId('skill-shieldUpgrades').click();
@@ -1272,7 +1376,10 @@ test('storyline: pilot training from rookie to certification (m1-m9) unlocks the
   await page.getByTestId('menu-cargo').click();
   await page.getByTestId('cargo-filter-blueprints').click();
   for (const type of ['weapon', 'shield']) {
-    const blueprint = blueprints.find((item) => item.kind === 'module' && item.type === type);
+    const tier = type === 'weapon' ? 1 : 2;
+    const blueprint = blueprints.find((item) =>
+      item.kind === 'module' && item.type === type && item.tier === tier
+    );
     expect(blueprint).toBeTruthy();
     await page.getByTestId(`inv-cell-${blueprint.id}`).click();
     await page.getByTestId(`craft-blueprint-${blueprint.id}`).click();
@@ -1285,13 +1392,14 @@ test('storyline: pilot training from rookie to certification (m1-m9) unlocks the
 
   // m8 - Certification: acknowledge the dialogue, turn it in, and accept m9.
   await expect(page.getByTestId('mission-tracker')).toContainText('Certification');
-  await page.getByTestId('mission-continue').click();
+  await continueMission(page);
   await turnInAndAccept(page);
+  await launchFromStation(page);
 
   // m9 - Beyond the Gates: the gates are open, so jump, clear the two raiders and
   // turn the course in. The storyline ends and the sandbox opens.
   await expect(page.getByTestId('mission-tracker')).toContainText('Beyond the Gates');
-  await page.getByTestId('mission-continue').click();
+  await continueMission(page);
   const gate = (await getState(page)).world.gates[0];
   await page.evaluate((id) => window.__eve.warp(id), gate.id);
   await expect(async () => {
@@ -1307,6 +1415,7 @@ test('storyline: pilot training from rookie to certification (m1-m9) unlocks the
   await killMissionEnemy(page, 'placidraider');
   await killMissionEnemy(page, 'placidraider');
   await warpUntil(page, (await getState(page)).world.stations[0].id, (s) => s.docked === true);
+  await page.getByTestId('menu-missions').click();
   await page.getByTestId('turnin-mission').click();
   await expect(page.getByTestId('storyline-card')).toContainText('Story complete', { timeout: 10000 });
   const finished = await getState(page);
@@ -1340,4 +1449,27 @@ async function turnInAndAccept(page) {
     const s = await getState(page);
     expect(s.mission.active).toBeTruthy();
   }).toPass({ timeout: 10000 });
+}
+
+async function launchFromStation(page) {
+  const hangar = page.getByTestId('hangar');
+  if (await hangar.isVisible()) {
+    await page.getByTestId('menu-missions').click({ timeout: 15000 });
+    await expect(hangar).toBeHidden();
+  }
+  await page.getByTestId('station-launch').click({ timeout: 15000 });
+  await expect(async () => {
+    const s = await getState(page);
+    expect(s.docked).toBe(false);
+  }).toPass({ timeout: 10000 });
+  await expect(page.getByTestId('station-view')).toBeHidden();
+}
+
+async function continueMission(page) {
+  const hangar = page.getByTestId('hangar');
+  if (await hangar.isVisible()) {
+    await page.getByTestId('menu-missions').click({ timeout: 15000 });
+    await expect(hangar).toBeHidden();
+  }
+  await page.getByTestId('mission-continue').click({ timeout: 15000 });
 }

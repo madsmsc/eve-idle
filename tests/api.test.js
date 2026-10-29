@@ -94,6 +94,7 @@ describe('HTTP API', () => {
     assert.ok(r.data.achievements.miner);
     assert.equal(r.data.constants.worldSize, cfg.WORLD_SIZE);
     assert.ok(r.data.constants.miningRange > 0);
+    assert.equal(r.data.constants.autopilotEfficiency, cfg.AUTOPILOT_EFFICIENCY);
   });
 
   test('POST /api/refine-loot salvages a module into a component', async () => {
@@ -172,10 +173,10 @@ describe('HTTP API', () => {
     assert.equal(basic.data.state.blueprints[0].kind, 'module');
     const higherTier = await api(srv.base, '/api/buy-blueprint', { kind: 'module', type: 'weapon', tier: 2 });
     assert.equal(higherTier.status, 400);
-    assert.match(higherTier.data.error, /rat loot/i);
+    assert.match(higherTier.data.error, /enemy loot/i);
     const ship = await api(srv.base, '/api/buy-blueprint', { kind: 'ship', type: 'falcon' });
     assert.equal(ship.status, 400);
-    assert.match(ship.data.error, /rat loot/i);
+    assert.match(ship.data.error, /enemy loot/i);
   });
 
   test('world enemies expose an approximate difficulty for the active ship', async () => {
@@ -239,7 +240,7 @@ describe('HTTP API', () => {
   });
 
   test('POST /api/engage exposes the range free-fire window for short-range enemies', async () => {
-    // Turn a rat into a mission-style short-range frigate (stats on the object,
+    // Turn an enemy into a mission-style short-range frigate (stats on the object,
     // like spawnMissionEnemies does) and engage it through the API.
     const st = srv.app.getState();
     const e = st.systems[st.ships[0].systemId].enemies[0];
@@ -392,6 +393,16 @@ describe('HTTP API', () => {
     assert.deepEqual(r.data.state.drones, { mining: [], combat: [] });
     assert.ok(Array.isArray(r.data.state.loot));
     assert.ok('mining' in r.data.state.droneBonuses && 'dps' in r.data.state.droneBonuses);
+    assert.equal(r.data.state.autoPilotEfficiency, 1);
+    assert.equal(r.data.state.maxSpeed, cfg.MAX_SPEED);
+    assert.equal(r.data.state.maxAcceleration, cfg.MAX_ACCELERATION);
+    const state = srv.app.getState();
+    state.autoPilotMode = 'mine';
+    srv.app.setState(state);
+    const automatic = await api(srv.base, '/api/state');
+    assert.equal(automatic.data.state.autoPilotEfficiency, cfg.AUTOPILOT_EFFICIENCY);
+    assert.equal(automatic.data.state.maxSpeed, cfg.MAX_SPEED * cfg.AUTOPILOT_EFFICIENCY);
+    assert.equal(automatic.data.state.maxAcceleration, cfg.MAX_ACCELERATION * cfg.AUTOPILOT_EFFICIENCY);
   });
 
   test('POST /api/equip-loot fits a looted module into the active ship', async () => {
@@ -725,6 +736,17 @@ describe('HTTP API', () => {
     assert.equal(turnin.data.state.mission.ready, false);
     const scrapBefore = (started.data.state.storage.items.scrap || 0);
     assert.equal(turnin.data.state.storage.items.scrap, scrapBefore + 3, 'completion items land in storage');
+
+    state = srv.app.getState();
+    state.ships.find((ship) => ship.id === state.activeShipId).dockedStationId = null;
+    srv.app.setState(state);
+    const spaceAccept = await api(srv.base, '/api/mission', { action: 'accept' });
+    assert.equal(spaceAccept.status, 400);
+    assert.match(spaceAccept.data.error, /dock/i);
+
+    state = srv.app.getState();
+    state.ships.find((ship) => ship.id === state.activeShipId).dockedStationId = home.id;
+    srv.app.setState(state);
     const accept = await api(srv.base, '/api/mission', { action: 'accept' });
     assert.equal(accept.status, 200);
     assert.equal(accept.data.state.mission.active, 'm2');

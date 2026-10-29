@@ -12,6 +12,13 @@ const EVENT_LIFETIME_MS = 6000;
 const EVENT_FADE_AFTER_MS = 2500;
 const MAX_VISIBLE_EVENTS = 6;
 
+export function autoPilotBannerText(efficiency) {
+  if (!Number.isFinite(efficiency) || efficiency <= 0) {
+    throw new Error('Autopilot efficiency must be a positive number');
+  }
+  return `due to AI inefficiencies, all systems running at 1/${1 / efficiency} capacity`;
+}
+
 export function countAutomationEvents(log = []) {
   const counts = new Map();
   for (const event of log) {
@@ -74,11 +81,15 @@ export class HudNode extends Node {
       sysNameEl.textContent = this.app.state.system.name;
       sysNameEl.style.color = this.app.state.system.color;
       sysNameEl.style.textShadow = `0 0 10px ${this.app.state.system.color}80`;
+      document.getElementById('system-security').textContent =
+        Number(this.app.state.system.security).toFixed(1);
     } else {
       sysNameEl.textContent = '';
       sysNameEl.style.color = '';
       sysNameEl.style.textShadow = '';
+      document.getElementById('system-security').textContent = '';
     }
+    this.#renderSystemObjectives();
     this.#collectEvents();
   }
 
@@ -168,7 +179,7 @@ export class HudNode extends Node {
       const hull = state.combat ? state.combat.shipHull : active.hull;
       const hullMax = state.combat ? state.combat.shipHullMax : active.hull;
       const speed = active.speed || 0;
-      const speedMax = this.app.constants.maxSpeed;
+      const speedMax = state.maxSpeed || this.app.constants.maxSpeed;
       const setStatusBar = (name, value, max, label) => {
         const bar = status.querySelector(`[data-testid="status-${name}"]`);
         bar.querySelector('.status-track i').style.width = pct(value, max);
@@ -182,8 +193,8 @@ export class HudNode extends Node {
     const btn = document.getElementById('engage');
     const target = state.world.enemies.find((enemy) => enemy.id === state.nearby.enemyId);
     const canEngage = !!target && !state.combat;
-    btn.hidden = !canEngage;
     btn.disabled = !canEngage;
+    btn.title = canEngage ? `Engage ${target.name || 'enemy'}` : 'An enemy must be in range to engage';
     if (canEngage) {
       btn.classList.add('engage-ready');
     } else {
@@ -193,18 +204,26 @@ export class HudNode extends Node {
     const gateBtn = document.getElementById('gate-jump');
     const atGate = state.world.gates.find((gate) => gate.id === state.nearby.gateId);
     if (atGate && !state.combat) {
-      gateBtn.hidden = false;
       const targetName = (state.systemNames || []).find((s) => s.id === atGate.targetSystemId);
       const chance = state.ambush ? state.ambush[atGate.targetSystemId] : null;
       const risk = chance != null ? ` · ${Math.round(chance * 100)}%` : '';
       gateBtn.textContent = '⇄ ' + (targetName ? targetName.name : 'Jump') + risk;
+      gateBtn.disabled = false;
+      gateBtn.title = `Jump to ${targetName ? targetName.name : 'the next system'}`;
     } else {
-      gateBtn.hidden = true;
+      gateBtn.textContent = '⇄ Jump';
+      gateBtn.disabled = true;
+      gateBtn.title = 'A jump gate must be in range to jump';
     }
     const mineButton = document.getElementById('mine');
     mineButton.disabled = state.docked || state.combat || state.cargoFull || !state.miningTargetId;
 
     const banner = document.getElementById('combat-banner');
+    const autoBanner = document.getElementById('auto-banner');
+    autoBanner.hidden = !state.autoPilotMode || state.docked;
+    if (!autoBanner.hidden) {
+      autoBanner.textContent = autoPilotBannerText(state.autoPilotEfficiency);
+    }
     const chud = document.getElementById('combat-hud');
     if (state.combat) {
       const c = state.combat;
@@ -272,6 +291,50 @@ export class HudNode extends Node {
     }
   }
 
+  // PRIVATE
+  #renderSystemObjectives() {
+      const list = document.getElementById('mission-objectives');
+      const objectives = [];
+      const mission = this.app.state.mission;
+      if (mission && mission.active && mission.objective) {
+        for (const objective of mission.objectives || [{
+          label: mission.objective,
+          progress: mission.progress,
+          target: mission.target,
+        }]) {
+          objectives.push({ ...objective, ready: mission.ready });
+        }
+      }
+      for (const agentMission of this.app.state.agentMission && this.app.state.agentMission.active || []) {
+        objectives.push({
+          label: agentMission.objective,
+          progress: agentMission.progress,
+          target: agentMission.target,
+        });
+      }
+
+      list.replaceChildren();
+      if (!objectives.length) {
+        const empty = document.createElement('li');
+        empty.textContent = 'No active mission';
+        list.appendChild(empty);
+        return;
+      }
+      for (const objective of objectives) {
+        const line = document.createElement('li');
+        let progress = '';
+        if (Array.isArray(objective.progress)) {
+          progress = ` — ${objective.progress.map((value, index) =>
+            `${value}/${objective.target[index]}`
+          ).join(', ')}`;
+        } else if (objective.progress != null && objective.target != null) {
+          progress = ` — ${objective.progress}/${objective.target}`;
+        }
+        line.textContent = `${objective.label}${progress}${objective.ready ? ' — return to a station' : ''}`;
+        list.appendChild(line);
+      }
+  }
+
   // What the pilot is doing right now: a colored state plus a detail line.
   // PRIVATE
   #getContext() {
@@ -311,7 +374,7 @@ export class HudNode extends Node {
       return {
         label: inRange ? 'Hostile in range' : 'Target acquired',
         color: CTX_COLORS.warn,
-        detail: `${def ? def.name : 'Rat'}${tier} · Approx. ${difficulty} · ${fmt(distance)} m${inRange ? ' — press E to engage' : ''}`,
+        detail: `${def ? def.name : 'Enemy'}${tier} · Approx. ${difficulty} · ${fmt(distance)} m${inRange ? ' — press E to engage' : ''}`,
       };
     }
     const a = state.miningTargetId
@@ -322,7 +385,7 @@ export class HudNode extends Node {
       const ore = this.app.catalog.minerals[a.mineral].name;
       const rate = active.mining.toFixed(1);
       const cargo = `${fmt(state.cargoUsed)}/${fmt(state.cargoCapacity)}`;
-      if (['mine', 'mine_hunt'].includes(state.autoPilotMode)) {
+      if (['mine', 'mine_fight'].includes(state.autoPilotMode)) {
         return { label: 'Mining', color: CTX_COLORS.mining, detail: `${ore}${belt ? ' · ' + belt.name : ''} · +${rate}/s · Cargo ${cargo}` };
       }
       return { label: 'Ore in range', color: CTX_COLORS.mining, detail: `${ore}${belt ? ' · ' + belt.name : ''} · press M to mine · Cargo ${cargo}` };
@@ -341,7 +404,7 @@ export class HudNode extends Node {
       return {
         label: 'Hostile in range',
         color: CTX_COLORS.warn,
-        detail: `${def ? def.name : 'Rat'}${tier} · Approx. ${difficulty} — press E to engage`,
+        detail: `${def ? def.name : 'Enemy'}${tier} · Approx. ${difficulty} — press E to engage`,
       };
     }
     return { label: 'Idle', color: CTX_COLORS.idle, detail: 'Select a destination to fly there' };

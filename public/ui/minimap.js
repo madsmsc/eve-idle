@@ -3,7 +3,7 @@
 // Whole-system minimap. It redraws current world/player state every frame;
 // camera zoom does not affect its fixed scale.
 import { Node } from '../core/node.js';
-import { mixRgb, rgbStr } from '../core/util.js';
+import { renderEdgeMap } from './edge-map.js';
 
 export class MinimapNode extends Node {
   // PUBLIC
@@ -16,14 +16,13 @@ export class MinimapNode extends Node {
     this.#drawBackground(this.app.mctx, w, h);
     this.#drawWorld(state, sc);
     this.#drawPlayer(sc);
+    renderEdgeMap(this.app, now);
     return super.render(now);
   }
 
   // PRIVATE
   #drawBackground(ctx, width, height) {
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = rgbStr(mixRgb({ r: 6, g: 10, b: 20 }, this.app.systemColor, 0.2), 0.9);
-    ctx.fillRect(0, 0, width, height);
   }
 
   // PRIVATE

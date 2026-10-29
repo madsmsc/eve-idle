@@ -36,7 +36,7 @@ export class OverlaysNode extends Node {
       const items = Object.entries(report.items).map(([key, amount]) => `${key} ${fmt(amount)}`);
       if (items.length) lines.push(`Items gained: ${items.join(', ')}`);
     }
-    if (report.kills > 0) lines.push(`Rats killed: ${fmt(report.kills)}`);
+    if (report.kills > 0) lines.push(`Enemies defeated: ${fmt(report.kills)}`);
     if (report.beltsCompleted > 0) lines.push(`Belts completed: ${fmt(report.beltsCompleted)}`);
     if (report.distance > 0) lines.push(`Distance traveled: ${fmt(report.distance)} u`);
     if (report.skillPoints > 0) lines.push(`Skill points: ${fmt(report.skillPoints)} SP`);

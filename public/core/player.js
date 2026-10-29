@@ -18,12 +18,20 @@ export class Player extends Node {
     this.destination = null;
     this.serverTarget = null;
     this.serverTargetAge = 0;
+    this.maxSpeed = null;
+    this.maxAcceleration = null;
     this.docking = this.add(new DockingNode(app));
   }
 
   // PUBLIC
-  setServerState(ship, navigation) {
+  setServerState(ship, navigation, state) {
     if (!ship) return;
+    this.maxSpeed = state && Number.isFinite(state.maxSpeed)
+      ? state.maxSpeed
+      : (this.app.constants && this.app.constants.maxSpeed) || 1200;
+    this.maxAcceleration = state && Number.isFinite(state.maxAcceleration)
+      ? state.maxAcceleration
+      : (this.app.constants && this.app.constants.maxAcceleration) || 180;
     const velocityX = ship.vx || 0;
     const velocityY = ship.vy || 0;
     let accelerationX = 0;
@@ -31,7 +39,7 @@ export class Player extends Node {
     if (this.serverTarget && this.serverTargetAge >= 0.1) {
       accelerationX = (velocityX - this.serverTarget.vx) / this.serverTargetAge;
       accelerationY = (velocityY - this.serverTarget.vy) / this.serverTargetAge;
-      const maxAcceleration = (this.app.constants && this.app.constants.maxAcceleration) || 180;
+      const maxAcceleration = this.maxAcceleration;
       const acceleration = Math.hypot(accelerationX, accelerationY);
       if (acceleration > maxAcceleration) {
         accelerationX = (accelerationX / acceleration) * maxAcceleration;
@@ -79,10 +87,19 @@ export class Player extends Node {
       const previousY = this.y;
       this.serverTargetAge += dt;
       const predictionAge = Math.min(this.serverTargetAge, MAX_POSITION_PREDICTION_SECONDS);
+      let predictedVelocityX = this.serverTarget.vx + this.serverTarget.ax * predictionAge;
+      let predictedVelocityY = this.serverTarget.vy + this.serverTarget.ay * predictionAge;
+      const currentSpeed = Math.hypot(this.serverTarget.vx, this.serverTarget.vy);
+      const predictedSpeed = Math.hypot(predictedVelocityX, predictedVelocityY);
+      if (currentSpeed <= this.maxSpeed && predictedSpeed > this.maxSpeed) {
+        const scale = this.maxSpeed / predictedSpeed;
+        predictedVelocityX *= scale;
+        predictedVelocityY *= scale;
+      }
       const targetX = this.serverTarget.x +
-        this.serverTarget.vx * predictionAge + 0.5 * this.serverTarget.ax * predictionAge ** 2;
+        ((this.serverTarget.vx + predictedVelocityX) / 2) * predictionAge;
       const targetY = this.serverTarget.y +
-        this.serverTarget.vy * predictionAge + 0.5 * this.serverTarget.ay * predictionAge ** 2;
+        ((this.serverTarget.vy + predictedVelocityY) / 2) * predictionAge;
       const response = 1 - Math.exp(-dt * 12);
       this.x += (targetX - this.x) * response;
       this.y += (targetY - this.y) * response;
@@ -111,7 +128,7 @@ export class Player extends Node {
         ...asteroid,
         name: `${this.app.catalog.minerals[asteroid.mineral].name} asteroid`,
       })),
-      ...world.enemies.filter((enemy) => enemy.alive).map((enemy) => ({ ...enemy, name: 'a rat' })),
+      ...world.enemies.filter((enemy) => enemy.alive).map((enemy) => ({ ...enemy, name: 'an enemy' })),
     ];
     const nearest = candidates
       .map((point) => ({ point, distance: dist(point.x, point.y, x, y) }))
@@ -189,6 +206,7 @@ class DockingNode extends Node {
       this.app.state.dockedStation = dock.dockedStation;
       this.app.ui.refreshPanels();
       this.app.syncDockedView();
+      this.app.handleAutoPilotSequence();
     }
     this.setFade(false);
   }

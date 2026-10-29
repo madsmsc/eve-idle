@@ -113,7 +113,7 @@ const MAX_OFFLINE_SECONDS = 8 * 3600;
 
 // ---- in-fight actions (interactive combat) ----
 // During a real-time fight you can spend scrap to change the odds, or disengage
-// to bail out and keep the ship (no reward, the rat escapes).
+// to bail out and keep the ship (no reward, the enemy escapes).
 const SHIELD_BOOST_ITEM = 'scrap';
 const SHIELD_BOOST_COOLDOWN = 6;    // seconds of fight time before you can boost again
 const OVERLOAD_ITEM = 'scrap';
@@ -166,10 +166,10 @@ const DRONES = {
 const DRONE_MAX_PER_TYPE = 5; // max drones of each type in the bay
 
 // ---- loot drops ----
-// Destroying a rat can drop a module (matching the fitting MODULES, tier I/II/III)
+// Destroying an enemy can drop a module (matching the fitting MODULES, tier I/II/III)
 // into your loot inventory. It is equipped into an empty fitting slot on the
 // active ship (see game.equipLoot).
-// Bigger rats drop better modules, more reliably.
+// Bigger enemies drop better modules, more reliably.
 const LOOT_DROP_CHANCE = {
   pirate: 0.35,
   gang: 0.55,
@@ -396,6 +396,7 @@ const ASTEROID_FIELDS = 2;      // number of asteroid belts (clusters)
 const ASTEROIDS_PER_FIELD = [18, 24]; // min..max asteroids per belt
 const ASTEROID_AMOUNT = [400, 1200]; // min..max units per asteroid
 const MINING_RATE_MULTIPLIER = 0.5;
+const AUTOPILOT_EFFICIENCY = 0.25;
 const PLANET_COUNT = 3;         // landmark planets
 const MINING_RANGE = 160;       // must be this close to an asteroid to mine it
 const ENGAGE_RANGE = 240;       // must be this close to an enemy to engage it
@@ -406,7 +407,10 @@ const MAX_ACCELERATION = 180;   // units/sec^2
 const MAX_THRUST = 260;         // legacy constant retained for catalog compatibility
 const DAMPING = 0.985;          // legacy constant retained for catalog compatibility
 const ARRIVE_RADIUS = 24;       // click-to-move arrival radius
-const STATE_VERSION = 16;
+const AUTOPILOT_DOCK_WAIT_MS = 2000;
+const AUTOPILOT_DEPOSIT_ANIMATION_MS = 1200;
+const AUTOPILOT_LAUNCH_WAIT_MS = 2000;
+const STATE_VERSION = 17;
 
 module.exports = {
   SHIPS,
@@ -453,6 +457,7 @@ module.exports = {
   ASTEROIDS_PER_FIELD,
   ASTEROID_AMOUNT,
   MINING_RATE_MULTIPLIER,
+  AUTOPILOT_EFFICIENCY,
   PLANET_COUNT,
   MINING_RANGE,
   ENGAGE_RANGE,
@@ -463,5 +468,8 @@ module.exports = {
   MAX_THRUST,
   DAMPING,
   ARRIVE_RADIUS,
+  AUTOPILOT_DOCK_WAIT_MS,
+  AUTOPILOT_DEPOSIT_ANIMATION_MS,
+  AUTOPILOT_LAUNCH_WAIT_MS,
   STATE_VERSION,
 };

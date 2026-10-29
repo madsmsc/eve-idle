@@ -124,7 +124,7 @@ export class ShipNode extends Node {
   async doCombatAction(action) {
     const ok = await this.app.doAction('combat-action', { action });
     if (ok) {
-      if (action === 'disengage') this.app.toast('Disengaged — rat escaped');
+      if (action === 'disengage') this.app.toast('Disengaged — enemy escaped');
       else if (action === 'shieldBoost') this.app.toast('Shield boosted');
       else if (action === 'overload') this.app.toast('Weapons overloaded');
     }
