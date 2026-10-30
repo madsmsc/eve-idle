@@ -343,6 +343,7 @@ describe('EnemyNode status labels', () => {
       },
       strokeRect() {},
       fillText(text) { labels.push(text); },
+      measureText(text) { return { width: text.length * 5 }; },
     };
     const enemy = { id: 'enemy-1', x: 100, y: 200, type: 'pirate', alive: true, seed: 1 };
     const app = {

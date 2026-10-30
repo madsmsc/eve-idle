@@ -518,32 +518,30 @@ export class EnemyNode extends Node {
     const hull = liveCombat ? liveCombat.enemyHull : hullMax;
     const name = (enemyDef && enemyDef.name) || e.type;
     const width = Math.max(42, Math.min(84, 66 * zoom));
-    const top = sy - radius - 36 - offsetY;
+    const top = sy - radius - 26 - offsetY;
     const label = Math.max(9, Math.min(12, 10 * zoom));
-    const small = Math.max(9, Math.min(11, 10 * zoom));
-    const tierName = (e.tierName || e.tier || '').toUpperCase();
+    const tierName = e.tierName || e.tier || '';
     const tierColor = TIER_COLORS[e.tier] || TIER_COLORS.standard;
-    const stats = `SHD ${Math.round(shieldMax)}  HULL ${Math.round(hullMax)}  DPS ${Math.round(e.dps || 0)}`;
 
     ctx.save();
     ctx.font = `600 ${label}px sans-serif`;
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#ffd7de';
     ctx.shadowColor = '#000';
     ctx.shadowBlur = 3;
-    ctx.fillText(name, sx, top, 150);
+    const tierText = tierName ? ` (${tierName})` : '';
+    const nameWidth = ctx.measureText(name).width;
+    const tierWidth = ctx.measureText(tierText).width;
+    const left = sx - (nameWidth + tierWidth) / 2;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffd7de';
+    ctx.fillText(name, left, top, 150);
+    if (tierText) {
+      ctx.fillStyle = tierColor;
+      ctx.fillText(tierText, left + nameWidth, top, 150);
+    }
     ctx.shadowBlur = 0;
     this.#drawHealthBar(sx, top + 8, width, shieldMax > 0 ? shield / shieldMax : 0, '#4fd1ff');
     this.#drawHealthBar(sx, top + 14, width, hullMax > 0 ? hull / hullMax : 0, '#ff657a');
-    ctx.shadowColor = '#000';
-    ctx.shadowBlur = 3;
-    ctx.font = `700 ${small}px sans-serif`;
-    ctx.fillStyle = tierColor;
-    ctx.fillText(tierName, sx, top + 24);
-    ctx.font = `600 ${small}px sans-serif`;
-    ctx.fillStyle = '#c9d4e6';
-    ctx.fillText(stats, sx, top + 35, 150);
     ctx.restore();
   }
 

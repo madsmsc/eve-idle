@@ -163,7 +163,7 @@ const MODULES = {
   projectileWeapon: { key: 'projectileWeapon', name: 'Projectile Cannon', stat: 'dps', skill: 'projectileWeapons', tiers: [ { tier: 1, bonus: 6 }, { tier: 2, bonus: 18 }, { tier: 3, bonus: 45 }, { tier: 4, bonus: 110 } ] },
   missileWeapon: { key: 'missileWeapon', name: 'Missile Launcher', stat: 'dps', skill: 'missileWeapons', tiers: [ { tier: 1, bonus: 6 }, { tier: 2, bonus: 18 }, { tier: 3, bonus: 45 }, { tier: 4, bonus: 110 } ] },
   laserWeapon: { key: 'laserWeapon', name: 'Laser Array', stat: 'dps', skill: 'laserWeapons', tiers: [ { tier: 1, bonus: 6 }, { tier: 2, bonus: 18 }, { tier: 3, bonus: 45 }, { tier: 4, bonus: 110 } ] },
-  droneWeapon: { key: 'droneWeapon', name: 'Combat Drone Control', stat: 'dps', skill: 'droneCommand', tiers: [ { tier: 1, bonus: 8 }, { tier: 2, bonus: 22 }, { tier: 3, bonus: 60 }, { tier: 4, bonus: 150 } ] },
+  droneWeapon: { key: 'droneWeapon', name: 'Drone Launcher', stat: 'dps', skill: 'droneCommand', tiers: [ { tier: 1, bonus: 8 }, { tier: 2, bonus: 22 }, { tier: 3, bonus: 60 }, { tier: 4, bonus: 150 } ] },
   miningDrone: { key: 'miningDrone', name: 'Mining Drone Control', stat: 'mining', tiers: [ { tier: 1, bonus: 5 }, { tier: 2, bonus: 14 }, { tier: 3, bonus: 40 }, { tier: 4, bonus: 200 } ] },
   combatDrone: { key: 'combatDrone', name: 'Combat Drone Control', stat: 'dps', tiers: [ { tier: 1, bonus: 8 }, { tier: 2, bonus: 22 }, { tier: 3, bonus: 60 }, { tier: 4, bonus: 300 } ] },
 };
